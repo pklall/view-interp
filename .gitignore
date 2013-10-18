@@ -1,0 +1,8 @@
+bin/*
+obj/*
+samples/*
+results/*
+tags
+main
+*.swo
+*.swp
