@@ -13,6 +13,37 @@ using namespace cimg_library;
 
 extern template struct cimg_library::CImg<float>;
 
+void visualizeCorrespondence(
+        const CImg<float>& from,
+        const CImg<int>& corr,
+        const CImg<float>& to) {
+    CImgDisplay fromDisp(from);
+    CImgDisplay corrDisp(corr.get_normalize(0, 255).get_equalize(0, 255));
+    CImgDisplay toDisp(to);
+
+    CImg<float> toAnnotated = to;
+
+    while (!fromDisp.is_closed()) {
+        fromDisp.wait();
+        
+        // mouse coordinates
+        int mx = fromDisp.mouse_x();
+        int my = fromDisp.mouse_y();
+
+        toAnnotated = to;
+        if (mx >= 0 && mx < corr.width() &&
+                my >= 0 && my < corr.height()) {
+            int corrX = mx + corr(mx, my, 0);
+            int corrY = my + corr(mx, my, 1);
+
+            float circleColor[3] = {255.0f, 0.0f, 0.0f};
+            toAnnotated.draw_circle(corrX, corrY, 5, circleColor, 1.0f, 0);
+        }
+
+        toDisp.display(toAnnotated);
+    }
+}
+
 void visualizeVectorImg(const CImg<float>& vec) {
     CImg<float> proj(vec.get_channel(0));
 
@@ -205,7 +236,7 @@ void patchMatchFieldDist(
 
     // Weight each component differently
     float labWeight[3]{1.0f, 1.0f, 1.0f};
-    auto patchDist = [&lab1, &lab2, wndSize]
+    auto patchDist = [&lab1, &lab2, wndSize, &labWeight]
     (int sx, int sy, int dx, int dy) -> float {
         float ssd = 0.0f;
         cimg_forZC(lab1, z, c) {
@@ -386,9 +417,11 @@ int main(int argc, char** argv) {
         lst.resize_halfXY();
     }
 
-    patchMatchFieldDist(fst, lst, corr, error, 7, 7);
+    patchMatchFieldDist(fst, lst, corr, error, 7, 9);
 
-    CImgList<float>(fst, lst, corr.get_equalize(255), error).display();
+    // CImgList<float>(fst, lst, corr.get_equalize(255), error).display();
+    
+    visualizeCorrespondence(fst, corr, lst);
 
     /*
     // Flow based experiments:
