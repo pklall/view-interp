@@ -5,7 +5,11 @@
 #include "stdio.h"
 #include <cassert>
 
+#include <omp.h>
+
 #include "common.h"
+
+#include "files.h"
 
 using namespace std;
 
@@ -25,7 +29,7 @@ void visualizeCorrespondence(
 
     while (!fromDisp.is_closed()) {
         fromDisp.wait();
-        
+
         // mouse coordinates
         int mx = fromDisp.mouse_x();
         int my = fromDisp.mouse_y();
@@ -59,7 +63,7 @@ void visualizeVectorImg(const CImg<float>& vec) {
         float mvx = mx - (projDisp.width()/2.0f);
         float mvy = my - (projDisp.height()/2.0f);
         float mvnorm = norm(mvx, mvy);
-        
+
         // normalized mouse...
         float nmvx = mvx / mvnorm;
         float nmvy = mvy / mvnorm;
@@ -78,7 +82,7 @@ void visualizeVectorImg(const CImg<float>& vec) {
 }
 
 void displayClickable(CImg<float>& img,
-    std::function<void(int, int)> onClick) {
+        std::function<void(int, int)> onClick) {
     CImgDisplay disp(img);
     while (!disp.is_closed()) {
         disp.wait();
@@ -93,187 +97,397 @@ void displayClickable(CImg<float>& img,
 }
 
 /**
- * Implementation of PatchMatch generalized to arbitrary
- * patch comparison functions.
+ * Implementation of extremely-generalized PatchMatch optimization of
+ * arbitrary-dimension parameters over a 2D grid.
  *
- * patchDist(srcX, srcY, dstX, dstY) must return the "distance" between
- * patches with the top-left corner at (dstX, dstY) and (dstX, dstY) in the
- * src and dst images, respectively.
+ * Note that `field`, and `dist` must have the same width and height.
  *
- * Returns nnf, the nearest-neighbor field.
+ * `dist` must be 1 dimensional.
  *
- * nnf(sx, sy) = (dx, dy, dist) indicating that the (dx, dy) in dest is
- * closest to (dx, dy) in src, differing by dist.  Note that nnf is not defined
- * for the boundary of (wndSize - 1) pixels on the bottom and right sides
- * of the image.
+ * `field` may have spectrum of arbitrary size, each channel representing
+ * one element of the vector to optimize per pixel.  For example, a 2-channel
+ * field may be used to optimize translational displacements.
  *
+ * randomSample(int iteration, float[] value) must randomly mutate the given
+ * value.  Note that the iteration number is included to allow for progressive
+ * refinement.
+ *
+ * patchDist(int x, int y, float[] value) must return the error resulting
+ * from assigning `value` to `field(x, y)`
+ *
+ * Returns the number of modified values.
  */
-tuple<CImg<int>, CImg<float>> patchMatch(
-        const CImg<float>& src,
-        const CImg<float>& dst,
-        function<float(int, int, int, int)> patchDist,
-        int wndSize,
+inline int patchMatch(
+        CImg<float>& field,
+        CImg<float>& dist,
+        function<void(int, float[])> randomSample,
+        function<float(int, int, float[])> patchDist,
         int iterations) {
-    // The nearest-neighbor field stores a 2-tuple (x delta, y delta)
-    CImg<int> nnf(src.width() - wndSize + 1,
-                  src.height() - wndSize + 1,
-                  1,
-                  2);
-
-    CImg<float> bestDist(nnf.width(), nnf.height());
-
-    // Initialize with a random field and associated distances
-    cimg_forXY(nnf, x, y) {
-        nnf(x, y, 0) = x;
-        nnf(x, y, 1) = y;
-        // nnf(x, y, 0) = (int) (cimg::rand() * (dst.width() - 1));
-        // nnf(x, y, 1) = (int) (cimg::rand() * (dst.height() - 1));
-
-        bestDist(x, y) =
-            patchDist(x, y, nnf(x, y, 0), nnf(x, y, 1));
-    }
-
     int propDirection = 1;
+
+    int totalNumChanged = 0;
+
     for (int iter = 0; iter < iterations; iter++) {
+        int numChanged = 0;
         // Switch propagation direction during each iteration.
         propDirection *= -1;
-        
-        // propagation
-        cimg_forXY(nnf, x, y) {
-            // try the adjacent pixels along propDirection
-            int adjY = y + propDirection;
-            int adjX = x + propDirection;
 
-            if (adjY >= 0 && adjY < nnf.height()) {
-                int adjDx = nnf(x, adjY, 0);
-                int adjDy = nnf(x, adjY, 1) - propDirection;
+#pragma omp parallel for shared(numChanged)
+        for (int y = 0; y < field.height(); y++) {
+            for (int x = 0; x < field.width(); x++) {
+                // propagation
+                // try the adjacent pixels along propDirection
+                int adjY = y + propDirection;
+                int adjX = x + propDirection;
 
-                if (adjDx >= 0 && adjDx < dst.width() &&
-                    adjDy >= 0 && adjDy < dst.height()) {
+                float tmp[field.spectrum()];
 
-                    float dist = patchDist(x, y, adjDx, adjDy);
+                if (adjY >= 0 && adjY < field.height()) {
+                    bool different = false;
 
-                    if (dist < bestDist(x, y)) {
-                        bestDist(x, y) = dist;
-                        nnf(x, y, 0) = adjDx;
-                        nnf(x, y, 1) = adjDy;
+                    cimg_forC(field, c) {
+                        different |= field(x, adjY, c) != field(x, y, c);
+                        tmp[c] = field(x, adjY, c);
+                    }
+
+                    if (different) {
+                        float d = patchDist(x, y, tmp);
+
+                        if (d < dist(x, y)) {
+                            dist(x, y) = d;
+                            cimg_forC(field, c) {
+                                field(x, y, c) = tmp[c];
+                            }
+#pragma omp critical
+                            {
+                                numChanged++;
+                            }
+                        }
                     }
                 }
-            }
 
-            if (adjX >= 0 && adjX < nnf.width()) {
-                int adjDx = nnf(adjX, y, 0) - propDirection;
-                int adjDy = nnf(adjX, y, 1);
+                if (adjX >= 0 && adjX < field.width()) {
+                    bool different = false;
 
-                if (adjDx >= 0 && adjDx < dst.width() &&
-                    adjDy >= 0 && adjDy < dst.height()) {
+                    cimg_forC(field, c) {
+                        different |= field(adjX, y, c) != field(x, y, c);
+                        tmp[c] = field(adjX, y, c);
+                    }
 
-                    float dist = patchDist(x, y, adjDx, adjDy);
+                    if (different) {
+                        float d = patchDist(x, y, tmp);
 
-                    if (dist < bestDist(x, y)) {
-                        bestDist(x, y) = dist;
-                        nnf(x, y, 0) = adjDx;
-                        nnf(x, y, 1) = adjDy;
+                        if (d < dist(x, y)) {
+                            dist(x, y) = d;
+                            cimg_forC(field, c) {
+                                field(x, y, c) = tmp[c];
+                            }
+#pragma omp critical
+                            {
+                                numChanged++;
+                            }
+                        }
+                    }
+                }
+
+                
+                // Random search
+                cimg_forC(field, c) {
+                    tmp[c] = field(x, y, c);
+                }
+
+                randomSample(iter, tmp);
+
+                float d = patchDist(x, y, tmp);
+
+                if (d < dist(x, y)) {
+                    dist(x, y) = d;
+                    cimg_forC(field, c) {
+                        field(x, y, c) = tmp[c];
+                    }
+#pragma omp critical
+                    {
+                        numChanged++;
                     }
                 }
             }
         }
-        
-        // Random search
-        cimg_forXY(nnf, x, y) {
-            float searchWndRadiusFactor = 1.0f / pow(2.0f, iter);
 
-            float searchWndWidth = searchWndRadiusFactor * src.width();
-            float searchWndHeight= searchWndRadiusFactor * src.height();
+        printf("PatchMatch iteration %d/%d, numChanged = %d\n", iter, iterations, numChanged);
 
-            int minSearchWndX = (int) (nnf(x, y, 0) - searchWndWidth);
-            int minSearchWndY = (int) (nnf(x, y, 1) - searchWndHeight);
-
-            int maxSearchWndX = (int) (nnf(x, y, 0) + searchWndWidth);
-            int maxSearchWndY = (int) (nnf(x, y, 1) + searchWndHeight);
-
-            // Clamp the search box to the image.
-            minSearchWndX = min(max(minSearchWndX, 0),
-                                nnf.width() - 1);
-            minSearchWndY = min(max(minSearchWndY, 0),
-                                nnf.height() - 1);
-            maxSearchWndX = min(max(maxSearchWndX, 0),
-                                nnf.width() - 1);
-            maxSearchWndY = min(max(maxSearchWndY, 0),
-                                nnf.height() - 1);
-
-            // The point we have chosen to randomly sample from
-            int randX = (int) (minSearchWndX +
-                    cimg::rand() * (maxSearchWndX - minSearchWndX));
-            int randY = (int) (minSearchWndY +
-                    cimg::rand() * (maxSearchWndY - minSearchWndY));
-
-            float dist = patchDist(x, y, randX, randY);
-
-            if (dist < bestDist(x, y)) {
-                bestDist(x, y) = dist;
-                nnf(x, y, 0) = randX;
-                nnf(x, y, 1) = randY;
-            }
-        }
+        totalNumChanged += numChanged;
     }
-
-    return tuple<CImg<int>, CImg<float>>(nnf, bestDist);
+    return totalNumChanged;
 }
 
-void patchMatchFieldDist(
+int patchMatchTranslationCorrespondence(
         const CImg<float>& img1,
         const CImg<float>& img2,
-        CImg<int>& field,
+        CImg<float>& field,
         CImg<float>& dist,
         int wndSize = 15,
-        int iterations = 5) {
-    const CImg<float> lab1 = img1.get_RGBtoLab();
-    const CImg<float> lab2 = img2.get_RGBtoLab();
+        int iterations = 5,
+        float randomSearchFactor = 1.0f,
+        bool recomputeDist = false) {
+    CImg<float> lab1 = img1.get_RGBtoLab();
+    CImg<float> lab2 = img2.get_RGBtoLab();
 
-    // CImgList<float> grad1 = lab1.get_channel(0).get_gradient();
-    // CImgList<float> grad2 = lab2.get_channel(0).get_gradient();
+    auto sample = [&lab1, &lab2, wndSize, randomSearchFactor]
+        (int iter, float* value) {
+            float searchWndRadiusFactor = randomSearchFactor / (iter + 1);
 
-    // Weight each component differently
-    float labWeight[3]{1.0f, 1.0f, 1.0f};
-    auto patchDist = [&lab1, &lab2, wndSize, &labWeight]
-    (int sx, int sy, int dx, int dy) -> float {
-        float ssd = 0.0f;
-        cimg_forZC(lab1, z, c) {
-            for (int y = 0; y < wndSize; y++) {
-                for (int x = 0; x < wndSize; x++) {
-                    float diff = lab1(x + sx, y + sy, z, c) -
-                                 lab2(x + dx, y + dy, z, c);
-                    ssd += diff * diff * labWeight[c];
+            float searchWndWidth  = searchWndRadiusFactor * lab2.width();
+            float searchWndHeight = searchWndRadiusFactor * lab2.height();
+
+            int minSearchWndX = (int) (-searchWndWidth / 2.0f);
+            int minSearchWndY = (int) (-searchWndHeight / 2.0f);
+
+            // The point we have chosen to randomly sample from
+            int randX = (int) (cimg::rand() * searchWndWidth + minSearchWndX);
+            int randY = (int) (cimg::rand() * searchWndHeight + minSearchWndY);
+
+            value[0] = randX;
+            value[1] = randY;
+        };
+
+    auto patchDist = [&lab1, &lab2, wndSize]
+        (int sx, int sy, float* value) -> float {
+            int dx = sx + (int) value[0];
+            int dy = sy + (int) value[1];
+
+            // if (dx < 0 || dx >= lab2.width() ||
+                    // dy < 0 || dy >= lab2.height()) {
+                // return numeric_limits<float>::infinity();
+            // }
+            
+            if (dx - wndSize / 2 < 0 || dx + wndSize / 2 >= lab2.width() ||
+                    dy -wndSize / 2 < 0 || dy + wndSize / 2 >= lab2.height()) {
+                return numeric_limits<float>::infinity();
+            }
+
+            int minSX = max(0, sx - wndSize / 2);
+            int maxSX = min(lab1.width() - 1, sx + wndSize / 2);
+
+            int minSY = max(0, sy - wndSize / 2);
+            int maxSY = min(lab1.height() - 1, sy + wndSize / 2);
+
+            int minDX = max(0, dx - wndSize / 2);
+            int maxDX = min(lab2.width() - 1, dx + wndSize / 2);
+
+            int minDY = max(0, dy - wndSize / 2);
+            int maxDY = min(lab2.height() - 1, dy + wndSize / 2);
+
+            // The extent of the valid window around (sx, sy) and (dx, dy)
+            // to compare.
+            int minX = -min(sx - minSX, dx - minDX);
+            int maxX = min(maxSX - sx, maxDX - dx);
+
+            int minY = -min(sy - minSY, dy - minDY);
+            int maxY = min(maxSY - sy, maxDY - dy);
+
+            float totalWeight = 0.0f;
+            float ssd = 0.0f;
+            for (int y = minY; y <= maxY; y++) {
+                for (int x = minX; x <= maxX; x++) {
+                    // Weight pixels with a bilateral-esque filter
+                    float lab1Diff = 0.0f;
+                    cimg_forZC(lab1, z, c) {
+                        float lDiff = lab1(x + sx, y + sy, z, c) -
+                            lab1(sx, sy, z, c);
+                        lab1Diff = lDiff * lDiff;
+                    }
+                    float weight = exp(-(x * x + y * y) / wndSize);
+                    weight *= exp(-(lab1Diff) / 30.0f);
+
+                    cimg_forZC(lab1, z, c) {
+                        float diff =
+                            lab1(x + sx, y + sy, z, c) -
+                            lab2(x + dx, y + dy, z, c);
+
+                        totalWeight += weight;
+
+                        ssd += diff * diff * weight;
+                    }
                 }
             }
+
+            return ssd / totalWeight;
+        };
+
+    if (recomputeDist) {
+#pragma omp parallel for
+        for (int y = 0; y < dist.height(); y++) {
+            for (int x = 0; x < dist.width(); x++) {
+                float tmp[field.spectrum()];
+
+                cimg_forC(field, c) {
+                    tmp[c] = field(x, y, c);
+                }
+
+                float d = patchDist(x, y, tmp);
+                dist(x, y) = d;
+            }
         }
-        return ssd;
-    };
-
-    tuple<CImg<int>, CImg<float>> nnf_dist = patchMatch(
-            img1, img2, patchDist, wndSize, iterations);
-
-    // These are smaller than img1 because they only
-    // contain valid points (the right and bottom border are empty)
-    const CImg<int>& nnfKnown = get<0>(nnf_dist);
-    const CImg<float>& distKnown = get<1>(nnf_dist);
-
-    // For consistancy, the returned nnf and distance will be
-    // of the same size as img1.
-    // Also, the resulting field will only hold relative offsets
-
-    field = CImg<int>(img1.width(), img1.height(), 2);
-    field = 0;
-    dist = CImg<float>(img1.width(), img1.height(), 1);
-    dist = numeric_limits<float>::max();
-
-    cimg_forXY(nnfKnown, x, y) {
-        field(x, y, 0) = nnfKnown(x, y, 0) - x;
-        field(x, y, 1) = nnfKnown(x, y, 1) - y;
-        dist(x, y) = distKnown(x, y);
     }
+
+    return patchMatch(field, dist, sample, patchDist, iterations);
 }
+
+/**
+ * Same as patchMatchTranslationalCorrespondence, but solves for
+ * an affine transform where field contains 6 values (a, b, c, d, e, f)
+ * and the effective translation for each point (srcX, srcY) -> (dstX, dstY) is
+ * (dstX, dstY) = (srcX + srcX * a + srcY * b + c,
+ *                 srcY + srcX * d + srcY * e + f)
+ *
+ */
+void patchMatchAffineCorrespondence(
+        const CImg<float>& img1,
+        const CImg<float>& img2,
+        CImg<float>& field,
+        CImg<float>& dist,
+        int wndSize = 15,
+        int iterations = 5,
+        float randomSearchFactor = 1.0f,
+        float bilateralSigma = 10.0f) {
+    CImg<float> lab1 = img1.get_RGBtoLab();
+    CImg<float> lab2 = img2.get_RGBtoLab();
+
+    CImgList<float> grad1 = img1.get_gradient();
+    CImgList<float> grad2 = img2.get_gradient();
+
+    // CImg<float> gradMag1 = (grad1(0).get_sqr() + grad1(1).get_sqr()).sqrt();
+    // CImg<float> gradMag2 = (grad2(0).get_sqr() + grad2(1).get_sqr()).sqrt();
+
+    auto sample = [&lab1, &lab2, wndSize, randomSearchFactor]
+        (int iter, float* value) {
+            float searchWndRadiusFactor =
+                randomSearchFactor / pow(2.0f, iter + 1);
+
+            float searchWndWidth  = searchWndRadiusFactor * lab2.width();
+            float searchWndHeight = searchWndRadiusFactor * lab2.height();
+
+            int minSearchWndX = (int) (-searchWndWidth / 2.0f);
+            int minSearchWndY = (int) (-searchWndHeight / 2.0f);
+
+            // The point we have chosen to randomly sample from
+            int randX = (int) (cimg::rand() * searchWndWidth + minSearchWndX);
+            int randY = (int) (cimg::rand() * searchWndHeight + minSearchWndY);
+
+            value[0] = randX;
+            value[1] = randY;
+        };
+
+    // Weight each component differently
+    auto patchDist = [&lab1, &lab2, wndSize]
+        (int sx, int sy, float* value) -> float {
+            int dx = sx + (int) value[0];
+            int dy = sy + (int) value[1];
+
+            if (dx < 0 || dx >= lab2.width() ||
+                    dy < 0 || dy >= lab2.height()) {
+                return numeric_limits<float>::infinity();
+            }
+
+            int minSX = max(0, sx - wndSize / 2);
+            int maxSX = min(lab1.width() - 1, sx + wndSize / 2);
+
+            int minSY = max(0, sy - wndSize / 2);
+            int maxSY = min(lab1.height() - 1, sy + wndSize / 2);
+
+            int minDX = max(0, dx - wndSize / 2);
+            int maxDX = min(lab2.width() - 1, dx + wndSize / 2);
+
+            int minDY = max(0, dy - wndSize / 2);
+            int maxDY = min(lab2.height() - 1, dy + wndSize / 2);
+
+            // The extent of the valid window around (sx, sy) and (dx, dy)
+            // to compare.
+            int minX = -min(sx - minSX, dx - minDX);
+            int maxX = min(maxSX - sx, maxDX - dx);
+
+            int minY = -min(sy - minSY, dy - minDY);
+            int maxY = min(maxSY - sy, maxDY - dy);
+
+            float numPixels = (maxX - minX + 1) * (maxY - minY + 1);
+            float ssd = 0.0f;
+            cimg_forZC(lab1, z, c) {
+                for (int y = minY; y <= maxY; y++) {
+                    for (int x = minX; x <= maxX; x++) {
+                        float diff =
+                            lab1(x + sx, y + sy, z, c) -
+                            lab2(x + dx, y + dy, z, c);
+                        ssd += diff * diff;
+                    }
+                }
+            }
+
+            return ssd / numPixels;
+        };
+
+    patchMatch(field, dist, sample, patchDist, iterations);
+}
+
+inline void pyramidPatchMatch(
+        const CImg<float>& img1,
+        const CImg<float>& img2,
+        CImg<float>& field,
+        CImg<float>& dist,
+        int wndSize = 30,
+        int iterations = 5,
+        int levels = 3) {
+    if (levels > 1) {
+        CImg<float> fieldHalf = field.get_resize_halfXY();
+        CImg<float> distHalf = dist.get_resize_halfXY();
+        CImg<float> img1Half = img1.get_resize_halfXY();
+        CImg<float> img2Half = img2.get_resize_halfXY();
+
+        pyramidPatchMatch(img1Half, img2Half, fieldHalf, distHalf,
+                wndSize, iterations, levels - 1);
+
+        // cimg_forXYC(field, x, y, c) {
+            // field(x, y, c) = fieldHalf(x / 2, y / 2, c) * 2.0f;
+        // }
+        field = fieldHalf.get_resize_doubleXY();
+    }
+
+    patchMatchTranslationCorrespondence(img1, img2, field, dist,
+            wndSize, iterations, 1.0f / levels, true);
+}
+
+int main(int argc, char** argv) {
+    for (int sampleIndex = 0; sampleIndex < NUM_SAMPLES; sampleIndex++) {
+        CImg<float> fst(SAMPLES[sampleIndex][0].c_str());
+        CImg<float> lst(SAMPLES[sampleIndex][1].c_str());
+
+        while (fst.width() > 1024 || fst.height() > 1024) {
+            fst.resize_halfXY();
+            lst.resize_halfXY();
+        }
+
+        CImg<float> corr(fst.width(), fst.height(), 2);
+        CImg<float> error(fst.width(), fst.height());
+
+        corr = 0.0f;
+        error = std::numeric_limits<float>::infinity();
+
+        // patchMatchFieldDist(fst, lst, corr, error, 7, 9);
+        // patchMatchTranslationCorrespondence(fst, lst, corr, error, 15, 5, 0.5f);
+        pyramidPatchMatch(fst, lst, corr, error, 30, 5, 2);
+
+        // CImgList<float>(fst, lst, corr.get_equalize(255), error).display();
+
+        // visualizeCorrespondence(fst, corr, lst);
+
+        CImgDisplay fstDisp(fst);
+        // CImgDisplay lstDisp(lst);
+        // CImgDisplay errDisp(error);
+        corr.get_equalize(255).display();
+    }
+
+    return 1;
+}
+
 
 /**
  * Computes optical flow from a to b and places the displacement field
@@ -285,7 +499,7 @@ void flowLK(
         float sigma,
         CImg<float>& flow) {
     assert(a.width() == b.width() && a.width() == flow.width() &&
-           a.height() == b.height() && a.height() == flow.height());
+            a.height() == b.height() && a.height() == flow.height());
 
     assert(flow.depth() == 2);
 
@@ -298,7 +512,7 @@ void flowLK(
 
     CImg<float> It(a.width(), a.height());
     It = b - a;
-    
+
     CImg<float> A00 = Ix.get_sqr();
     CImg<float> Adiag = Ix.get_mul(Iy);
     CImg<float> A11 = Iy.get_sqr();
@@ -329,10 +543,10 @@ void stereoBMCV(
         const CImg<float>& b,
         CImg<float>& flow) {
     assert(a.depth() == 1 && a.spectrum() == 1 &&
-           b.depth() == 1 && b.spectrum() == 1);
+            b.depth() == 1 && b.spectrum() == 1);
 
     assert(a.width() == b.width() && a.width() == flow.width() &&
-           a.height() == b.height() && a.height() == flow.height());
+            a.height() == b.height() && a.height() == flow.height());
 
     assert(flow.depth() == 2);
 
@@ -357,10 +571,10 @@ void flowCV(
         const CImg<float>& b,
         CImg<float>& flow) {
     assert(a.depth() == 1 && a.spectrum() == 1 &&
-           b.depth() == 1 && b.spectrum() == 1);
+            b.depth() == 1 && b.spectrum() == 1);
 
     assert(a.width() == b.width() && a.width() == flow.width() &&
-           a.height() == b.height() && a.height() == flow.height());
+            a.height() == b.height() && a.height() == flow.height());
 
     assert(flow.depth() == 2);
 
@@ -395,84 +609,3 @@ void flowCV(
 
     cv::split(cvFlow, output);
 }
-
-int main(int argc, char** argv) {
-    string files[] = {"samples/hall0.jpg",
-                      "samples/hall1.jpg",
-                      "samples/synth0.png",
-                      "samples/synth1.png",
-                      "samples/poster0.ppm",
-                      "samples/poster1.ppm",
-                      "samples/bed0.jpg",
-                      "samples/bed1.jpg"};
-
-    CImg<float> fst(files[6].c_str());
-    CImg<float> lst(files[7].c_str());
-
-    CImg<int> corr;
-    CImg<float> error;
-
-    while (fst.width() > 512 || fst.height() > 512) {
-        fst.resize_halfXY();
-        lst.resize_halfXY();
-    }
-
-    patchMatchFieldDist(fst, lst, corr, error, 7, 9);
-
-    // CImgList<float>(fst, lst, corr.get_equalize(255), error).display();
-    
-    visualizeCorrespondence(fst, corr, lst);
-
-    /*
-    // Flow based experiments:
-
-    // Isolate luminance from color.
-    fst.RGBtoLab();
-    lst.RGBtoLab();
-
-    while (fst.width() > 2048 || fst.height() > 2048) {
-        fst.resize_halfXY();
-        lst.resize_halfXY();
-    }
-
-    CImg<float> fstL = fst.get_channel(0);
-    CImg<float> lstL = lst.get_channel(0);
-    
-    CImg<float> flow(fstL.width(), fstL.height(), 2);
-
-    flowCV(fstL, lstL, flow);
-
-    // flowLK(fstL, lstL, 8.0f, flow);
-
-    CImg<float> flowMag = 
-        (
-         flow.get_shared_slice(0).get_sqr() +
-         flow.get_shared_slice(1).get_sqr()
-        ).sqrt();
-
-    CImgList<float> grad = fstL.get_gradient();
-    CImg<float> gradMag =
-        (grad(0).get_sqr() + grad(1).get_sqr()).sqrt();
-
-    CImg<float> flowMagMultGrad = flowMag.get_mul(gradMag);
-    flowMagMultGrad.blur(3.0f);
-    CImg<float> filteredFlowMag = flowMagMultGrad.div(gradMag.get_blur(3.0f));
-
-    CImg<float> logMag = filteredFlowMag.get_log2();// mag.get_log2();
-    logMag.get_histogram(1024).display_graph(0, 3);
-
-    fstL.normalize(0.0f, 1.0f);
-
-    CImgList<float> result(
-            fstL,
-            gradMag,
-            flowMag,
-            filteredFlowMag,
-            logMag
-            );
-    result.display();
-    */
-
-    return 1;
-}
-
