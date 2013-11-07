@@ -6,7 +6,9 @@
 #include <limits>
 #include "stdio.h"
 
-#include <limits>
+#include <cassert>
+
+#include <omp.h>
 
 #include "opencv2/opencv.hpp"
 #include "opencv2/features2d/features2d.hpp"

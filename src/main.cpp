@@ -1,12 +1,3 @@
-#include <vector>
-#include <string>
-#include <functional>
-#include <limits>
-#include "stdio.h"
-#include <cassert>
-
-#include <omp.h>
-
 #include "common.h"
 
 #include "files.h"
@@ -242,32 +233,25 @@ int patchMatchTranslationCorrespondence(
             float searchWndRadiusFactor = randomSearchFactor / (iter + 1);
 
             float searchWndWidth  = searchWndRadiusFactor * lab2.width();
-            float searchWndHeight = searchWndRadiusFactor * lab2.height();
 
             float minSearchWndX = (sx - searchWndWidth / 2.0f);
-            float minSearchWndY = (sy - searchWndHeight / 2.0f);
 
             float maxSearchWndX = (sx + searchWndWidth / 2.0f);
-            float maxSearchWndY = (sy + searchWndHeight / 2.0f);
 
             minSearchWndX = max(0.0f, minSearchWndX);
-            minSearchWndY = max(0.0f, minSearchWndY);
 
             maxSearchWndX = max((float) lab2.width(), maxSearchWndX);
-            maxSearchWndY = max((float) lab2.height(), maxSearchWndY);
 
             // The point we have chosen to randomly sample from
             int randX = (int) (cimg::rand() * (maxSearchWndX - minSearchWndX) + minSearchWndX);
-            int randY = (int) (cimg::rand() * (maxSearchWndY - minSearchWndY) + minSearchWndY);
 
             value[0] = randX - sx;
-            value[1] = randY - sy;
         };
 
     auto patchDist = [&lab1, &lab2, wndSize]
         (int sx, int sy, float* value) -> float {
             int dx = sx + (int) value[0];
-            int dy = sy + (int) value[1];
+            int dy = sy;
 
             // if (dx < 0 || dx >= lab2.width() ||
                     // dy < 0 || dy >= lab2.height()) {
@@ -348,13 +332,11 @@ int patchMatchTranslationCorrespondence(
 
 /**
  * Same as patchMatchTranslationalCorrespondence, but solves for
- * an affine transform where field contains 6 values (a, b, c, d, e, f)
+ * an affine transform where field contains 3 values (a, b, c)
  * and the effective translation for each point (srcX, srcY) -> (dstX, dstY) is
- * (dstX, dstY) = (srcX + a + b * srcX + c * srcY),
- *                 srcY + d + e * srcX + f * srcY)
  *
- * Note that this is NOT the same as PatchMatch Stereo since it doens't assume
- * that img1 and img2 have been rectified.
+ * (dstX, dstY) = (srcX + a + b * srcX + c * srcY, srcY)
+ *
  */
 void patchMatchAffine(
         const CImg<float>& img1,
@@ -370,44 +352,31 @@ void patchMatchAffine(
 
     auto sample = [&lab1, &lab2, wndSize, randomSearchFactor]
         (int sx, int sy, int iter, float* value) {
-            float b, c, e, f;
-
-            b = cimg::rand() * 1.0f - 0.5f;
-            c = cimg::rand() * 1.0f - 0.5f;
-            e = cimg::rand() * 1.0f - 0.5f;
-            f = cimg::rand() * 1.0f - 0.5f;
-
-            b = c = e = f = 0;
-
-            float aCenter = sx + (b * sx + c * sy);
-            float dCenter = sy + (e * sx + f * sy);
+            float oldDstX = sx + value[0] + sx * value[1] + sy * value[2];
 
             float searchWndRadiusFactor = randomSearchFactor / (iter + 1);
 
             float searchWndWidth  = searchWndRadiusFactor * lab2.width();
-            float searchWndHeight = searchWndRadiusFactor * lab2.height();
 
-            float minSearchWndX = (aCenter - searchWndWidth / 2.0f);
-            float minSearchWndY = (dCenter - searchWndHeight / 2.0f);
+            float minNewDstX = (oldDstX - searchWndWidth / 2.0f);
+            minNewDstX = max(0.0f, minNewDstX);
 
-            float maxSearchWndX = (aCenter + searchWndWidth / 2.0f);
-            float maxSearchWndY = (dCenter + searchWndHeight / 2.0f);
+            float maxNewDstX = (oldDstX + searchWndWidth / 2.0f);
+            maxNewDstX = min((float) lab2.width(), maxNewDstX);
 
-            minSearchWndX = max(0.0f, minSearchWndX);
-            minSearchWndY = max(0.0f, minSearchWndY);
+            float newDstX = cimg::rand() * (maxNewDstX - minNewDstX) +
+                minNewDstX;
 
-            maxSearchWndX = max((float) lab2.width(), maxSearchWndX);
-            maxSearchWndY = max((float) lab2.height(), maxSearchWndY);
+            float b, c;
 
-            int randX = (int) (cimg::rand() * (maxSearchWndX - minSearchWndX) + minSearchWndX);
-            int randY = (int) (cimg::rand() * (maxSearchWndY - minSearchWndY) + minSearchWndY);
-
-            value[0] = randX;
+            // This is equivalent to sampling a random normal vector
+            // and computing nx/nz and ny/nz as per the original paper.
+            b = cos(cimg::rand() * cimg::PI);
+            c = cos(cimg::rand() * cimg::PI);
+            
+            value[0] = newDstX - (sx + b * sx + c * sy);
             value[1] = b;
             value[2] = c;
-            value[3] = randY;
-            value[4] = e;
-            value[5] = f;
         };
 
     auto patchDist = [&lab1, &lab2, wndSize]
@@ -415,39 +384,40 @@ void patchMatchAffine(
             float ssd = 0.0f;
             float totalWeight = 0.0f;
 
-            for (int y = wndSize / 2; y <= wndSize / 2; y++) {
-                for (int x = wndSize / 2; x <= wndSize / 2; x++) {
+            for (int y = -wndSize / 2; y <= wndSize / 2; y++) {
+                for (int x = -wndSize / 2; x <= wndSize / 2; x++) {
                     int srcX = x + sx;
                     int srcY = y + sy;
 
-                    float dstX = srcX +
-                        value[0] + value[1] * srcX + value[2] * srcY;
-                    float dstY = srcY +
-                        value[3] + value[4] * srcX + value[5] * srcY;
-                    
-                    float lab1Diff = 0.0f;
-                    cimg_forZC(lab1, z, c) {
-                        float lDiff = lab1(srcX, srcY, z, c) -
-                            lab1(sx, sy, z, c);
-                        lab1Diff += lDiff * lDiff;
-                    }
-                    float weight = exp(-(lab1Diff) / 30.0f);
-
                     if (srcX >= 0 && srcX < lab1.width() &&
-                            srcY >= 0 && srcY < lab1.height() &&
-                            dstX >= 0 && dstX < lab2.width() &&
-                            dstY >= 0 && dstY < lab2.height()) {
+                            srcY >= 0 && srcY < lab1.height()) {
+
+                        float dstX = srcX +
+                            value[0] + value[1] * srcX + value[2] * srcY;
+                        float dstY = srcY;
+
+                        float lab1Diff = 0.0f;
                         cimg_forZC(lab1, z, c) {
-                            float diff = lab1(srcX, srcY, z, c) -
-                                lab2.linear_atXYZC(dstX, dstY, z, c);
-                            // lab1(x + sx, y + sy, z, c) -
-                            // lab2(x + dx, y + dy, z, c);
-                            ssd += diff * diff * weight;
-                            totalWeight += weight;
+                            float lDiff = lab1(srcX, srcY, z, c) -
+                                lab1(sx, sy, z, c);
+                            lab1Diff += lDiff * lDiff;
+                        }
+                        float weight = exp(-(lab1Diff) / 30.0f);
+
+                        if (dstX >= 0 && dstX < lab2.width() &&
+                                dstY >= 0 && dstY < lab2.height()) {
+                            cimg_forZC(lab1, z, c) {
+                                float diff = lab1(srcX, srcY, z, c) -
+                                    lab2.linear_atXYZC(dstX, dstY, z, c);
+
+                                ssd += diff * diff * weight;
+                                totalWeight += weight;
+                            }
                         }
                     }
                 }
             }
+
             if (totalWeight == 0.0f) {
                 return std::numeric_limits<float>::max();
             }
@@ -495,10 +465,10 @@ inline void pyramidPatchMatch(
     }
 
     printf("Processing pyramid level: %d\n", levels);
-    // patchMatchAffine(img1, img2, field, dist,
-            // wndSize, iterations, 1.0f / levels, true);
-    patchMatchTranslationCorrespondence(img1, img2, field, dist,
+    patchMatchAffine(img1, img2, field, dist,
             wndSize, iterations, 1.0f / levels, true);
+    // patchMatchTranslationCorrespondence(img1, img2, field, dist,
+            // wndSize, iterations, 1.0f / levels, true);
 }
 
 int main(int argc, char** argv) {
@@ -506,12 +476,15 @@ int main(int argc, char** argv) {
         CImg<float> fst(SAMPLES[sampleIndex][0].c_str());
         CImg<float> lst(SAMPLES[sampleIndex][1].c_str());
 
-        while (fst.width() > 1024 || fst.height() > 1024) {
+        // int MAX_SIZE = 512;
+        int MAX_SIZE = 1024;
+
+        while (fst.width() > MAX_SIZE || fst.height() > MAX_SIZE) {
             fst.resize_halfXY();
             lst.resize_halfXY();
         }
 
-        CImg<float> corr(fst.width(), fst.height(), 1, 2);
+        CImg<float> corr(fst.width(), fst.height(), 1, 3);
         CImg<float> error(fst.width(), fst.height());
 
         corr = 0.0f;
@@ -520,9 +493,21 @@ int main(int argc, char** argv) {
         // patchMatchFieldDist(fst, lst, corr, error, 7, 9);
         // patchMatchTranslationCorrespondence(fst, lst, corr, error, 15, 5, 0.5f);
         
-        // pyramidPatchMatch(fst, lst, corr, error, 21, 5, 2);
+        pyramidPatchMatch(fst, lst, corr, error, 21, 3, 5);
 
-        // visualizeCorrespondence(fst, corr, lst);
+        CImgDisplay fstDisp(fst);
+
+        CImg<float> disp(corr.width(), corr.height(), 2);
+        cimg_forXY(disp, x, y) {
+            disp(x, y, 0) = corr(x, y, 0, 0) + corr(x, y, 0, 1) * x + corr(x, y, 0, 2) * y;
+            disp(x, y, 1) = 0.0f;
+        }
+
+        CImgList<float>(disp.get_equalize(255)).display();
+
+        visualizeCorrespondence(fst, disp, lst);
+
+        /*
         CImg<float> matches;
         featureMatchCV(
                 fst.get_RGBtoLab().channel(0),
@@ -530,16 +515,9 @@ int main(int argc, char** argv) {
                 matches);
 
         matches.display();
-
-        /*
-        CImgDisplay fstDisp(fst);
+        */
         // CImgDisplay lstDisp(lst);
         // CImgDisplay errDisp(error);
-        CImgList<float>(
-                corr.get_channel(0).get_equalize(255),
-                corr.get_channel(1).get_equalize(255)
-                ).display();
-        */
     }
 
     return 1;
