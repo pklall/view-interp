@@ -6,7 +6,7 @@ TARGET = main
 
 CXX = g++
 
-CXXFLAGS = -std=c++11 -g -Wall -pthread -fopenmp -O1 -finline-functions -ffast-math
+CXXFLAGS = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math
 # Use address sanitizer to detect bad memory access
 # CXXFLAGS = -std=c++11 -g -Wall -pthread -fsanitize-address -O1 -fno-omit-frame-pointer
 INC_FLAGS =
