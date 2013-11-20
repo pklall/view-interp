@@ -123,16 +123,17 @@ inline void patchMatch(
         CImg<float>& field,
         CImg<float>& dist,
         function<void(int, int, float[])> randomSample,
-        function<float(int, int, float[])> patchDist) {
-    int propDirection = 1;
+        function<float(int, int, float[])> patchDist,
+        int increment = 1) {
+    int propDirection = increment;
 
-    for (int iter = 0; iter < 2; iter++) {
+    for (int iter = 0; iter < 2; iter ++) {
         // Switch propagation direction during each iteration.
         propDirection *= -1;
 
 #pragma omp parallel for
-        for (int y = 0; y < field.height(); y++) {
-            for (int x = 0; x < field.width(); x++) {
+        for (int y = 0; y < field.height(); y += increment) {
+            for (int x = 0; x < field.width(); x += increment) {
                 // propagation
                 // try the adjacent pixels along propDirection
                 int adjY = y + propDirection;
@@ -224,15 +225,18 @@ inline void patchMatchLeftRight(
         function<float(int, int, float[])> patchDistRight,
         function<void(int, int, float[], int&, int&, float[])> leftToRight,
         function<void(int, int, float[], int&, int&, float[])> rightToLeft,
-        function<bool(int, int, float[], float[])> viewConsistent) {
+        function<bool(int, int, float[], float[])> viewConsistent,
+        int increment = 1) {
     // Perform PatchMatch on left and right sides
-    patchMatch(fieldLeft, distLeft, randomSampleLeft, patchDistLeft);
-    patchMatch(fieldRight, distRight, randomSampleRight, patchDistRight);
-    
+    patchMatch(fieldLeft, distLeft,
+            randomSampleLeft, patchDistLeft, increment);
+    patchMatch(fieldRight, distRight,
+            randomSampleRight, patchDistRight, increment); 
+
     // Propagate from left to right
 #pragma omp parallel for
-    for (int y = 0; y < fieldLeft.height(); y++) {
-        for (int x = 0; x < fieldLeft.width(); x++) {
+    for (int y = 0; y < fieldLeft.height(); y += increment) {
+        for (int x = 0; x < fieldLeft.width(); x += increment) {
             float lvalue[fieldLeft.spectrum()];
 
             cimg_forC(fieldLeft, c) {
@@ -243,6 +247,12 @@ inline void patchMatchLeftRight(
             float rvalue[fieldRight.spectrum()];
 
             leftToRight(x, y, lvalue, rx, ry, rvalue);
+
+            // Only modify pixels on the grid specified by increment
+            rx += increment / 2;
+            rx -= rx % increment;
+            ry += increment / 2;
+            ry -= ry % increment;
 
             holesLeft(x, y) = true;
 
@@ -280,8 +290,8 @@ inline void patchMatchLeftRight(
     
     // Propagate from right to left
 #pragma omp parallel for
-    for (int y = 0; y < fieldRight.height(); y++) {
-        for (int x = 0; x < fieldRight.width(); x++) {
+    for (int y = 0; y < fieldRight.height(); y += increment) {
+        for (int x = 0; x < fieldRight.width(); x += increment) {
             float rvalue[fieldRight.spectrum()];
 
             cimg_forC(fieldRight, c) {
@@ -292,6 +302,12 @@ inline void patchMatchLeftRight(
             float lvalue[fieldLeft.spectrum()];
 
             rightToLeft(x, y, rvalue, lx, ly, lvalue);
+
+            // Only modify pixels on the grid specified by increment
+            lx += increment / 2;
+            lx -= lx % increment;
+            ly += increment / 2;
+            ly -= ly % increment;
 
             holesRight(x, y) = true;
 
@@ -332,8 +348,9 @@ inline function<float(int, int, float[])> translationalPatchDist(
         const CImg<float>& lab1,
         const CImg<float>& lab2,
         int wndSize,
-        float colorSigma = 30.0f) {
-    auto dist = [lab1, lab2, wndSize, colorSigma]
+        float colorSigma = 30.0f,
+        float maxDist = 10.0f) {
+    auto dist = [lab1, lab2, wndSize, colorSigma, maxDist]
         (int sx, int sy, float* value) -> float {
             int dx = sx + (int) value[0];
             int dy = sy;
@@ -383,6 +400,8 @@ inline function<float(int, int, float[])> translationalPatchDist(
                         float diff =
                             lab1(x + sx, y + sy, z, c) -
                             lab2(x + dx, y + dy, z, c);
+
+                        diff = min(diff, maxDist);
 
                         totalWeight += weight;
 
@@ -469,7 +488,7 @@ inline void patchMatchTranslationalCorrespondence(
         int wndSize = 15,
         int iterations = 5,
         float randomSearchFactor = 1.0f,
-        bool recomputeDist = false) {
+        int increment = 1) {
     int iter = 0;
 
     function<void(int, int, float*)> sampleLeft, sampleRight;
@@ -479,14 +498,13 @@ inline void patchMatchTranslationalCorrespondence(
 
         auto sample = [&lab1, &lab2, &iter, width, wndSize, randomSearchFactor]
             (int sx, int sy, float* value) {
-                // float searchWndRadiusFactor = randomSearchFactor / (iter + 1);
                 float searchWndRadiusFactor = randomSearchFactor / pow(2.0f, iter);
 
                 float searchWndWidth  = searchWndRadiusFactor * width;
 
-                float minSearchWndX = (sx - searchWndWidth / 2.0f);
+                float minSearchWndX = sx + value[0] - searchWndWidth / 2.0f;
 
-                float maxSearchWndX = (sx + searchWndWidth / 2.0f);
+                float maxSearchWndX = sx + value[0] - searchWndWidth / 2.0f;
 
                 minSearchWndX = max(0.0f, minSearchWndX);
 
@@ -505,38 +523,8 @@ inline void patchMatchTranslationalCorrespondence(
         }
     }
 
-    auto patchDistLeft = translationalPatchDist(lab1, lab2, wndSize, 30.0f);
-    auto patchDistRight = translationalPatchDist(lab2, lab1, wndSize, 30.0f);
-
-    if (recomputeDist) {
-#pragma omp parallel for
-        for (int y = 0; y < distLeft.height(); y++) {
-            for (int x = 0; x < distLeft.width(); x++) {
-                float tmp[fieldLeft.spectrum()];
-
-                cimg_forC(fieldLeft, c) {
-                    tmp[c] = fieldLeft(x, y, 0, c);
-                }
-
-                float d = patchDistLeft(x, y, tmp);
-                distLeft(x, y) = d;
-            }
-        }
-
-#pragma omp parallel for
-        for (int y = 0; y < distRight.height(); y++) {
-            for (int x = 0; x < distRight.width(); x++) {
-                float tmp[fieldRight.spectrum()];
-
-                cimg_forC(fieldRight, c) {
-                    tmp[c] = fieldRight(x, y, 0, c);
-                }
-
-                float d = patchDistRight(x, y, tmp);
-                distRight(x, y) = d;
-            }
-        }
-    }
+    auto patchDistLeft = translationalPatchDist(lab1, lab2, wndSize);
+    auto patchDistRight = translationalPatchDist(lab2, lab1, wndSize);
 
     auto flip = []
         (int rx, int ry, float* rvalue,
@@ -546,26 +534,22 @@ inline void patchMatchTranslationalCorrespondence(
             lvalue[0] = -rvalue[0];
     };
 
-    auto viewConsistent = []
+    auto viewConsistent = [increment]
         (int x, int y, float* value1, float* value2) -> bool {
-            return abs(value1[0] - value2[0]) <= 1.0f;
+            return abs(value1[0] - value2[0]) <= increment * 2;
     };
 
     for (; iter < iterations; iter++) {
         printf("Processing iteration: %d\n", iter);
         patchMatchLeftRight(
-                fieldLeft,
-                fieldRight,
-                distLeft,
-                distRight,
-                holesLeft,
-                holesRight,
-                sampleLeft,
-                sampleRight,
-                patchDistLeft,
-                patchDistRight,
+                fieldLeft, fieldRight,
+                distLeft, distRight,
+                holesLeft, holesRight,
+                sampleLeft, sampleRight,
+                patchDistLeft, patchDistRight,
                 flip, flip,
-                viewConsistent);
+                viewConsistent,
+                increment);
     }
 }
 
@@ -573,8 +557,9 @@ inline function<float(int, int, float[])> affinePatchDist(
         const CImg<float>& lab1,
         const CImg<float>& lab2,
         int wndSize,
-        float colorSigma = 30.0f) {
-    auto dist = [&lab1, &lab2, wndSize, colorSigma]
+        float colorSigma = 30.0f,
+        float maxDist = 10.0f) {
+    auto dist = [&lab1, &lab2, wndSize, colorSigma, maxDist]
         (int sx, int sy, float* value) -> float {
             float ssd = 0.0f;
             float totalWeight = 0.0f;
@@ -604,6 +589,8 @@ inline function<float(int, int, float[])> affinePatchDist(
                             cimg_forZC(lab1, z, c) {
                                 float diff = lab1(srcX, srcY, z, c) -
                                     lab2.linear_atXYZC(dstX, dstY, z, c);
+
+                                diff = min(diff, maxDist);
 
                                 ssd += diff * diff * weight;
                                 totalWeight += weight;
@@ -645,7 +632,7 @@ inline void patchMatchAffine(
         int iterations = 5,
         float randomSearchFactor = 1.0f,
         float maxAngleDeviation = 9.0f,
-        bool recomputeDist = false) {
+        int increment = 1) {
     int iter = 0;
 
     int width = lab2.width();
@@ -714,8 +701,8 @@ inline void patchMatchAffine(
             value[2] = c;
         };
 
-    auto patchDistLeft = affinePatchDist(lab1, lab2, wndSize, 30.0f);
-    auto patchDistRight = affinePatchDist(lab2, lab1, wndSize, 30.0f);
+    auto patchDistLeft = affinePatchDist(lab1, lab2, wndSize);
+    auto patchDistRight = affinePatchDist(lab2, lab1, wndSize);
 
     auto flip = []
         (int rx, int ry, float* rvalue,
@@ -730,41 +717,11 @@ inline void patchMatchAffine(
             lvalue[2] = c;
     };
 
-    if (recomputeDist) {
-#pragma omp parallel for
-        for (int y = 0; y < distLeft.height(); y++) {
-            for (int x = 0; x < distLeft.width(); x++) {
-                float tmp[fieldLeft.spectrum()];
-
-                cimg_forC(fieldLeft, c) {
-                    tmp[c] = fieldLeft(x, y, 0, c);
-                }
-
-                float d = patchDistLeft(x, y, tmp);
-                distLeft(x, y) = d;
-            }
-        }
-
-#pragma omp parallel for
-        for (int y = 0; y < distRight.height(); y++) {
-            for (int x = 0; x < distRight.width(); x++) {
-                float tmp[fieldRight.spectrum()];
-
-                cimg_forC(fieldRight, c) {
-                    tmp[c] = fieldRight(x, y, 0, c);
-                }
-
-                float d = patchDistRight(x, y, tmp);
-                distRight(x, y) = d;
-            }
-        }
-    }
-
-    auto viewConsistent = []
+    auto viewConsistent = [increment]
         (int x, int y, float* value1, float* value2) -> bool {
             float x1 = x + value1[0] + value1[1] * x + value1[2] * y;
             float x2 = x + value2[0] + value2[1] * x + value2[2] * y;
-            return abs(x1 - x2) <= 1.0f;
+            return abs(x1 - x2) <= increment * 2;
     };
 
     for (; iter < iterations; iter++) {
@@ -781,68 +738,20 @@ inline void patchMatchAffine(
                 patchDistLeft,
                 patchDistRight,
                 flip, flip,
-                viewConsistent);
+                viewConsistent,
+                increment);
     }
-}
-
-inline void pyramidPatchMatch(
-        const CImg<float>& lab1,
-        const CImg<float>& lab2,
-        CImg<float>& fieldLeft,
-        CImg<float>& fieldRight,
-        CImg<float>& distLeft,
-        CImg<float>& distRight,
-        CImg<bool>& holesLeft,
-        CImg<bool>& holesRight,
-        int wndSize = 30,
-        int iterations = 5,
-        int levels = 3) {
-    if (levels > 1) {
-        CImg<float> lab1Half = lab1.get_resize_halfXY();
-        CImg<float> lab2Half = lab2.get_resize_halfXY();
-
-        CImg<float> fieldHalfLeft = fieldLeft.get_resize_halfXY();
-        CImg<float> fieldHalfRight = fieldRight.get_resize_halfXY();
-
-        CImg<float> distHalfLeft = distLeft.get_resize_halfXY();
-        CImg<float> distHalfRight = distRight.get_resize_halfXY();
-
-        // Note that, since holes[Left|Right] is completely overwritten
-        // on each execution of patchMatchAffine, it's acceptable
-        // to simply pass in the old value.
-        pyramidPatchMatch(lab1Half, lab2Half,
-                fieldHalfLeft, fieldHalfRight,
-                distHalfLeft, distHalfRight,
-                holesLeft, holesRight,
-                wndSize, iterations, levels - 1);
-
-        fieldLeft = fieldHalfLeft.get_resize_doubleXY();
-        fieldRight = fieldHalfRight.get_resize_doubleXY();
-    }
-
-    printf("Processing pyramid level: %d\n", levels);
-    // patchMatchTranslationalCorrespondence(lab1, lab2,
-            // fieldLeft, fieldRight,
-            // distLeft, distRight,
-            // wndSize, iterations, 1.0f / levels, levels != 1);
-    patchMatchTranslationalCorrespondence(lab1, lab2,
-            fieldLeft, fieldRight,
-            distLeft, distRight,
-            holesLeft, holesRight,
-            wndSize, iterations, 1.0f / levels, true);
-    // patchMatchAffine(lab1, lab2,
-            // fieldLeft, fieldRight,
-            // distLeft, distRight,
-            // holesLeft, holesRight,
-            // wndSize, iterations, 1.0f / levels, false);
 }
 
 int main(int argc, char** argv) {
-    for (int sampleIndex = 0; sampleIndex < NUM_SAMPLES; sampleIndex++) {
+    int sampleIndex = 0;
+    if (argc >= 2) {
+        sampleIndex = atoi(argv[1]);
+    }
+    for (; sampleIndex < NUM_SAMPLES; sampleIndex++) {
         CImg<float> fst(SAMPLES[sampleIndex][0].c_str());
         CImg<float> lst(SAMPLES[sampleIndex][1].c_str());
 
-        // int MAX_SIZE = 512;
         int MAX_SIZE = 1024;
 
         while (fst.width() > MAX_SIZE || fst.height() > MAX_SIZE) {
@@ -867,51 +776,42 @@ int main(int argc, char** argv) {
 
         CImg<float> fieldLeftTran = fieldLeft.get_shared_channel(0);
         CImg<float> fieldRightTran = fieldRight.get_shared_channel(0);
-        pyramidPatchMatch(
-                lab1, lab2,
-                fieldLeftTran, fieldRightTran,
-                errorLeft, errorRight,
-                holesLeft, holesRight,
-                11, 5, 1);
 
-        // Fill Holes
-        // FIXME assumptions about being greater or less than 0 won't work
-        // with handheld capture if there's any amount of rotation about the
-        // vertical axis.
-        /*
-        cimg_forXY(fieldLeft, x, y) {
-            holesLeft(x, y) |= fieldLeft(x, y) >= 0.0f;
+        int wndSize = 21;
+        float searchFact = 1.0f;
+        for (int increment = 16; increment >= 1; increment /= 2) {
+            printf("Running Translational Correspondence with"
+                    "inc = %d, searchFact = %f\n",
+                    increment, searchFact);
+            patchMatchTranslationalCorrespondence(
+                    lab1, lab2,
+                    fieldLeftTran, fieldRightTran,
+                    errorLeft, errorRight,
+                    holesLeft, holesRight,
+                    wndSize, 2, searchFact, increment);
+            searchFact /= 2.0f;
         }
 
-        cimg_forXY(fieldRight, x, y) {
-            holesRight(x, y) |= fieldRight(x, y) <= 0.0f;
-        }
-
-        fillHoles(fieldLeft, holesLeft,
-                [](float* a, float* b) -> bool {
-                       return abs(a[0]) < abs(b[0]) && a[0] < 0;
-                });
-
-        fillHoles(fieldRight, holesRight,
-                [](float* a, float* b) -> bool {
-                       return abs(a[0]) < abs(b[0]) && a[0] > 0;
-                });
-                */
+        fieldLeft.get_shared_channel(0).get_normalize(0.0f, 255.0f).get_equalize(256).get_map(CImg<float>().jet_LUT256()).display();
 
         fieldLeft.get_shared_channel(1) = 0.0f;
         fieldLeft.get_shared_channel(2) = 0.0f;
         fieldRight.get_shared_channel(1) = 0.0f;
         fieldRight.get_shared_channel(2) = 0.0f;
 
-        fieldLeft.get_shared_channel(0).get_equalize(255).display();
-        fieldLeft.get_shared_channel(0).get_equalize(255).save("results/int_disp.ppm");
+        patchMatchAffine(
+                lab1, lab2,
+                fieldLeft, fieldRight,
+                errorLeft, errorRight,
+                holesLeft, holesRight,
+                7, 2, 0.10f, 0.0f, 1);
 
         patchMatchAffine(
                 lab1, lab2,
                 fieldLeft, fieldRight,
                 errorLeft, errorRight,
                 holesLeft, holesRight,
-                7, 2, 0.10f, 0.0f, false);
+                5, 2, 0.05f, 0.0f, 1);
 
         /*
         patchMatchAffine(
@@ -919,8 +819,24 @@ int main(int argc, char** argv) {
                 fieldLeft, fieldRight,
                 errorLeft, errorRight,
                 holesLeft, holesRight,
-                21, 1, 0.0f, 0.5f, false);
+                21, 1, 0.0f, 0.5f);
         */
+
+        // Fill holes with 0 for visualization purposes
+        cimg_forXY(fieldLeft, x, y) {
+            if (holesLeft(x, y)) {
+                cimg_forZC(fieldLeft, z, c) {
+                    fieldLeft(x, y, z, c) = 0.0f;
+                }
+            }
+        }
+        cimg_forXY(fieldRight, x, y) {
+            if (holesRight(x, y)) {
+                cimg_forZC(fieldRight, z, c) {
+                    fieldRight(x, y, z, c) = 0.0f;
+                }
+            }
+        }
 
         // Convert from affine slanted-support values to scalar disparities
         CImg<float> dispLeft(fieldLeft.width(), fieldLeft.height());
@@ -936,9 +852,10 @@ int main(int argc, char** argv) {
         // Display the result
         CImgDisplay hlDisp(holesLeft);
         CImgDisplay hrDisp(holesRight);
-        holesLeft.save("results/holes.png");
-        CImgList<float>(dispLeft, dispRight).display();
-        dispLeft.save("results/disp_subpixel.png");
+        CImgList<float>(
+                dispLeft,
+                dispRight
+            ).display();
 
         /*
         CImgDisplay fstDisp(fst);
