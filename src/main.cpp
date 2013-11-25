@@ -8,9 +8,7 @@ using namespace cimg_library;
 
 extern template struct cimg_library::CImg<float>;
 
-inline void LOG_IMPROVEMENT(string msg) {
-    // printf("%s\n", msg.c_str());
-}
+#define dbgOut std::cout
 
 void featureMatchCV(
         const CImg<float>& a,
@@ -97,6 +95,173 @@ void displayClickable(CImg<float>& img,
 }
 
 /**
+ * Implementation of generalized PatchMatch belief propagation.
+ *
+ * Note that field, totCost, fieldSorted, dist, and msg consistute a
+ * structure-of-arrays such that values in each array with the same
+ * (x, y, k, _) correspond to properties of the same "particle" for that (x, y)
+ * coordinate. Hence, the width, height, and depth of each of these must be
+ * identical.
+ *
+ * \param field The K best values at each pixel, where each value is a
+ *              vector of arbitrary length.
+ * \param totCost The total cost of each of the K best values at each pixel
+ * \param fieldSorted The index of each value in field, sorted by totCost,
+ *                    such that field(x, y, fieldSorted(0), _) is the optimal
+ *                    value (with lowest totCost).
+ * \param dist The unary cost of each of the K best values.
+ * \param msg The cost of each of the K best values, as reported by messages
+ *            from the top, bottom, left, and right neighbors, respectively.
+ * \param propagation Given an (x, y) coordinate and the index into a logical
+ *                    list of propagation sources (e.g. top, bottom, left,
+ *                    right, random...), generates a candidate value and
+ *                    returns true.  Returns false if the index is out
+ *                    of bounds.
+ * \param unaryCost Computes the cost of the given (x, y, value) triple
+ * \param binaryCost Computes the cost of a pair of (x, y, value) triples
+ * \param increment Determines the step size to use when considering (x, y)
+ *                  values.  This enables coarse-to-fine processing.
+ */
+inline void patchMatchBeliefPropagation(
+        CImg<float>& field,
+        CImg<float>& totCost,
+        CImg<float>& fieldSorted,
+        CImg<float>& dist,
+        CImg<float>& msg,
+        function<bool(int, int, int, float[])> getCandidateValue,
+        function<float(int, int, float[])> unaryCost,
+        function<float(int, int, float[], int, int, float[])> binaryCost,
+        int increment = 1) {
+    assert(field.is_sameXYZ(totCost));
+    assert(field.is_sameXYZ(fieldSorted));
+    assert(field.is_sameXYZ(dist));
+    assert(field.is_sameXYZ(msg));
+
+    int K = field.depth();
+
+    // The size of each value in the field
+    int valSize = field.spectrum();
+    assert(totCost.spectrum() == 1);
+    assert(fieldSorted.spectrum() == 1);
+    assert(msg.spectrum() == 4);
+    assert(dist.spectrum() == 1);
+
+    const int neighbors[][2] = {
+        {0, -1}, // top
+        {0, 1},  // bottom
+        {-1, 0}, // left
+        {1, 0}   // right
+    };
+
+    const int inverseNeighbors[] = {1, 0, 3, 2};
+
+#pragma omp parallel for
+    for (int y = 0; y < field.height(); y += increment) {
+        for (int x = 0; x < field.width(); x += increment) {
+            // Space to store the candidate field value
+            float cVal[valSize];
+
+            // Loop over all candidate new values, based on
+            // the propagation function
+            for (int pNum = 0; getCandidateValue(x, y, pNum, cVal); pNum++) {
+                // TODO There's a possible early-exit here when the total cost
+                //      of cVal is greater than the lowest-ranked particle
+                //      with cost totCost(x, y, fieldSorted(K - 1));
+                float uCost = unaryCost(x, y, cVal);
+
+                float msgs[4];
+                float msgTotal = 0;
+                // Compute new messages from neighbors
+                for (int i = 0; i < 4; i++) {
+                    int adjX = x + neighbors[i][0];
+                    int adjY = y + neighbors[i][1];
+                    
+                    if (adjX >= field.width() || adjX < 0 ||
+                            adjY >= field.height() || adjY < 0) {
+                        // Ignore this neighbor if it's out-of-bounds.
+                        msgs[i] = 0;
+                        continue;
+                    }
+
+                    // The message from a neighbor is minimized
+                    // over all particles for that neighbor
+                    msgs[i] = std::numeric_limits<float>::max();
+
+                    cimg_forZ(field, z) {
+                        float adjVal[valSize];
+
+                        cimg_forC(field, c) {
+                            adjVal[c] = field(adjX, adjY, z, c);
+                        }
+
+                        float psi = binaryCost(x, y, cVal, adjX, adjY, adjVal);
+
+                        // Candidate message, we use the min-such value
+                        // over all particles at (adjX, adjY).
+                        float cMsg =
+                            psi +
+                            dist(adjX, adjY, z) -
+                            msg(adjX, adjY, z, inverseNeighbors[i]);
+
+                        msgs[i] = min(msgs[i], cMsg);
+                    }
+
+                    msgTotal += msgs[i];
+                }
+
+                float totalCost = msgTotal + uCost;
+
+                // Find the index of the first particle with a greater cost
+                // in the sorted list.
+                int index = -1;
+                for (int i = K - 1; i >= 0; i--) {
+                    if (totCost(x, y, fieldSorted(x, y, i)) > totalCost) {
+                        index = i;
+                        break;
+                    }
+                }
+
+                // If this new particle sucks, continue because there's nothing
+                // left to do with it.
+                if (index == -1 ) {
+                    continue;
+                }
+
+                // The "raw index" is the index into field, totCost, ...
+                // which will store this particle.
+                // Since we're inserting this new particle, the last
+                // particle in the sorted list will be eliminated.  Thus
+                // we'll use it's now-unused "raw" slot to store the new
+                // particle.
+                // This indirection is useful since we avoid moving
+                // lots of data around, and can instead simply shift
+                // down the indices in the sorted list.
+                int rawIndex = fieldSorted(x, y, K - 1);
+
+                // Move down all inferior particles to make room
+                for (int i = index; i < K - 1; i++) {
+                    fieldSorted(x, y, i + 1) = fieldSorted(x, y, i);
+                }
+
+                cimg_forC(field, c) {
+                    field(x, y, rawIndex, c) = cVal[c];
+                }
+
+                totCost(x, y, rawIndex) = totalCost;
+
+                fieldSorted(x, y, index) = rawIndex;
+
+                dist(x, y, index) = uCost;
+
+                for (int i = 0; i < 4; i++) {
+                    msg(x, y, index, i) = msgs[i];
+                }
+            }
+        }
+    }
+}
+
+/**
  * Implementation of extremely-generalized PatchMatch optimization of
  * arbitrary-dimension parameters over a 2D grid.
  *
@@ -153,7 +318,7 @@ inline void patchMatch(
                         float d = patchDist(x, y, tmp);
 
                         if (d < dist(x, y)) {
-                            LOG_IMPROVEMENT("Hor_Prop");
+                            dbgOut << "Hor_Prop" << endl;
                             dist(x, y) = d;
                             cimg_forC(field, c) {
                                 field(x, y, 0, c) = tmp[c];
@@ -174,7 +339,7 @@ inline void patchMatch(
                         float d = patchDist(x, y, tmp);
 
                         if (d < dist(x, y)) {
-                            LOG_IMPROVEMENT("Vert_Prop");
+                            dbgOut << "Vert_Prop" << endl;
                             dist(x, y) = d;
                             cimg_forC(field, c) {
                                 field(x, y, 0, c) = tmp[c];
@@ -194,7 +359,7 @@ inline void patchMatch(
                 float d = patchDist(x, y, tmp);
 
                 if (d < dist(x, y)) {
-                    LOG_IMPROVEMENT("RANDOM");
+                    dbgOut << "RANDOM" << endl;
                     dist(x, y) = d;
                     cimg_forC(field, c) {
                         field(x, y, 0, c) = tmp[c];
@@ -273,7 +438,7 @@ inline void patchMatchLeftRight(
                     float d = patchDistRight(rx, ry, rvalue);
 
                     if (d < distRight(x, y)) {
-                        LOG_IMPROVEMENT("LtR_View_Prop");
+                        dbgOut << "LtR_View_Prop" << endl;
                         distRight(x, y) = d;
 
                         cimg_forC(fieldRight, c) {
@@ -328,7 +493,7 @@ inline void patchMatchLeftRight(
                     float d = patchDistLeft(lx, ly, lvalue);
 
                     if (d < distLeft(x, y)) {
-                        LOG_IMPROVEMENT("RtL_View_Prop");
+                        dbgOut << "RtL_View_Prop" << endl;
                         distLeft(x, y) = d;
 
                         cimg_forC(fieldLeft, c) {
@@ -780,7 +945,7 @@ int main(int argc, char** argv) {
         int wndSize = 21;
         float searchFact = 1.0f;
         for (int increment = 16; increment >= 1; increment /= 2) {
-            printf("Running Translational Correspondence with"
+            printf("Running Translational Correspondence with "
                     "inc = %d, searchFact = %f\n",
                     increment, searchFact);
             patchMatchTranslationalCorrespondence(
