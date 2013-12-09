@@ -1,33 +1,38 @@
-CPP_FILES = CImg.cpp main.cpp
+MODULES   := cimg maxflow patchmatch main
+TARGET    := main
 
-HEADER_FILES = CImg.h common.h
+CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math
+LD_FLAGS   = `pkg-config --cflags --libs x11 eigen3 opencv` -lgomp -ljpeg -lpng -lpthread
 
-TARGET = main
+CXX       := g++
+LD        := g++
 
-CXX = g++
+SRC_DIR   := $(addprefix src/,$(MODULES))
+BUILD_DIR := $(addprefix build/,$(MODULES))
+SRC       := $(foreach sdir,$(SRC_DIR),$(wildcard $(sdir)/*.cpp))
+OBJ       := $(patsubst src/%.cpp,build/%.o,$(SRC))
 
-CXXFLAGS = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math
-# Use address sanitizer to detect bad memory access
-# CXXFLAGS = -std=c++11 -g -Wall -pthread -fsanitize-address -O1 -fno-omit-frame-pointer
-INC_FLAGS =
-LD_FLAGS = `pkg-config --cflags --libs x11 eigen3 opencv` -lgomp -ljpeg -lpng
+vpath %.cpp $(SRC_DIR)
 
-OBJDIR = obj/
-SRCDIR = src/
+define make-goal
+$1/%.o: %.cpp
+	$(CXX) -Isrc -I$$(<D) $(CXXFLAGS) -c $$< -o $$@
+endef
 
-all: $(TARGET)
+.PHONY: all checkdirs clean
 
-OBJS = $(addprefix $(OBJDIR), $(notdir $(CPP_FILES:.cpp=.o)))
+all: checkdirs $(TARGET)
 
-HEADERS = $(addprefix $(SRCDIR), $(HEADER_FILES))
+$(TARGET): $(OBJ)
+	$(LD) $^ $(LD_FLAGS) -o $@ 
 
-$(OBJDIR)%.o: $(SRCDIR)%.cpp $(HEADERS)
-	$(CXX) $(CXXFLAGS) -c -o $@ $<
+checkdirs: $(BUILD_DIR)
 
-$(TARGET):	$(OBJS)
-	$(CXX) -o $(TARGET) $(CXXFLAGS) $(OBJS) $(LD_FLAGS) 
-
-all: $(TARGET)
+$(BUILD_DIR):
+	@mkdir -p $@
 
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -rf $(BUILD_DIR)
+
+$(foreach bdir,$(BUILD_DIR),$(eval $(call make-goal,$(bdir))))
+
