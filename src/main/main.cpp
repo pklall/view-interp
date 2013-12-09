@@ -270,7 +270,7 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
     float randomSearchFactor = 1.0f,
     int increment = 1) {
     
-    return [&](int x, int y, int i, float* value) -> bool {
+    return [=](int x, int y, int i, float* value) -> bool {
         if (i > 3) {
             return false;
         }
@@ -284,17 +284,22 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
             float searchWndWidth  = searchWndRadiusFactor * width;
 
-            float minSearchWndX = x + fieldLeft(x, y, 0) - searchWndWidth / 2.0f;
+            // TODO Maybe we should also try other values for z besides 0?
+            //      Using z = 0 only attempts to perturb the best particle
+            //      in the set.  This may not be ideal.
+            int z = 0;
+            float minSearchWndX = x + fieldLeft(x, y, z, 0) - searchWndWidth / 2.0f;
 
-            float maxSearchWndX = x + fieldLeft(x, y, 0) + searchWndWidth / 2.0f;
+            float maxSearchWndX = x + fieldLeft(x, y, z, 0) + searchWndWidth / 2.0f;
 
             minSearchWndX = max(0.0f, minSearchWndX);
 
-            maxSearchWndX = max((float) width, maxSearchWndX);
+            maxSearchWndX = min((float) width, maxSearchWndX);
 
-            // The point we have chosen to randomly sample from
+            // Randomly choose an absolute coordinate
             int randX = (int) (cimg::rand() * (maxSearchWndX - minSearchWndX) + minSearchWndX);
 
+            // Store the relative disparity
             value[0] = randX - x;
 
             return true;
@@ -320,19 +325,36 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
                 }
             }
 
-            if (newX < 0 || newX > fieldLeft.width() ||
-                    newY < 0 || newY > fieldLeft.height()) {
-                return false;
-            }
+            if (!(newX < 0 || newX > fieldLeft.width() ||
+                    newY < 0 || newY > fieldLeft.height())) {
+                // TODO Try choosing different values for z, or randomly perturb
+                //      these too.
+                int z = 0;
+                float newDisp = fieldLeft(newX, newY, z, 0);
+                value[0] = newDisp;
 
-            // TODO
-            return true;
+                return true;
+            }
         }
+
         if (i == 3) {
-            // Propagate from the other view
-            // TODO
+            int newX = x, newY = y;
+
+            // TODO try different z values?
+            int z = 0;
+            newX += fieldLeft(x, y, z, 0);
+
+            if (!(newX < 0 || newX > fieldRight.width() ||
+                    newY < 0 || newY > fieldRight.height())) {
+                // TODO try different z values?
+                int z2 = 0;
+
+                value[0] = -fieldRight(newX, newY, z2, 0);
+                return true;
+            }
         }
-        return true;
+
+        return false;
     };
 }
 
@@ -627,14 +649,15 @@ inline function<float(int, int, float[])> translationalPatchDist(
             int dx = sx + (int) value[0];
             int dy = sy;
 
-            if (
-                    sx < 0 || sx >= lab1.width() ||
-                    sy < 0 || sy >= lab1.height() ||
+            if ( 
+                    sx - wndSize / 2 < 0 || sx + wndSize / 2 >= lab1.width() ||
+                    sy - wndSize / 2 < 0 || sy + wndSize / 2 >= lab1.height()||
                     dx - wndSize / 2 < 0 || dx + wndSize / 2 >= lab2.width() ||
-                    dy -wndSize / 2 < 0 || dy + wndSize / 2 >= lab2.height()) {
+                    dy - wndSize / 2 < 0 || dy + wndSize / 2 >= lab2.height()) {
                 return numeric_limits<float>::infinity();
             }
 
+            /*
             int minSX = max(0, sx - wndSize / 2);
             int maxSX = min(lab1.width() - 1, sx + wndSize / 2);
 
@@ -654,6 +677,11 @@ inline function<float(int, int, float[])> translationalPatchDist(
 
             int minY = -min(sy - minSY, dy - minDY);
             int maxY = min(maxSY - sy, maxDY - dy);
+            */
+            int minX = -wndSize / 2;
+            int maxX =  wndSize / 2;
+            int minY = -wndSize / 2;
+            int maxY =  wndSize / 2;
 
             float totalWeight = 0.0f;
             float ssd = 0.0f;
@@ -661,11 +689,16 @@ inline function<float(int, int, float[])> translationalPatchDist(
                 for (int x = minX; x <= maxX; x++) {
                     // Weight pixels with a bilateral-esque filter
                     float lab1Diff = 0.0f;
+
                     cimg_forZC(lab1, z, c) {
                         float lDiff = lab1(x + sx, y + sy, z, c) -
                             lab1(sx, sy, z, c);
-                        lab1Diff = lDiff * lDiff;
+                        // L1 norm:
+                        lab1Diff += lDiff;
+                        // L2 norm:
+                        // lab1Diff = lDiff * lDiff;
                     }
+
                     float weight = exp(-(lab1Diff) / colorSigma);
 
                     cimg_forZC(lab1, z, c) {
@@ -677,11 +710,15 @@ inline function<float(int, int, float[])> translationalPatchDist(
 
                         totalWeight += weight;
 
+                        // TODO Original paper also used a linear combination
+                        //      of this and the difference in gradient.
                         ssd += diff * diff * weight;
                     }
                 }
             }
 
+            // TODO Original paper took the min of this and
+            //      some constant tuning parameter
             return ssd / totalWeight;
         };
     return dist;
