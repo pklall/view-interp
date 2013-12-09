@@ -4,6 +4,6 @@ obj/*
 samples/*
 results/*
 tags
-main
+./main
 *.swo
 *.swp
