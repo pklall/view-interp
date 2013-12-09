@@ -1,6 +1,6 @@
 libdai/*
 bin/*
-obj/*
+build/*
 samples/*
 results/*
 tags
