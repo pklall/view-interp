@@ -8,16 +8,16 @@
 
 #include <cassert>
 
-#include <omp.h>
-
-#include "opencv2/opencv.hpp"
-#include "opencv2/features2d/features2d.hpp"
-#include "opencv2/highgui/highgui.hpp"
+// #include <omp.h>
 
 #define cimg_use_png
 #define cimg_use_jpeg
 #define cimg_use_jpeg
 #include "cimg/CImg.h"
+
+#include "opencv2/opencv.hpp"
+#include "opencv2/features2d/features2d.hpp"
+#include "opencv2/highgui/highgui.hpp"
 
 using namespace std;
 
@@ -28,4 +28,8 @@ extern template struct cimg_library::CImg<int>;
 
 inline double norm(float x, float y) {
     return sqrt(x * x + y * y);
+}
+
+inline float sqr(float v) {
+    return v * v;
 }

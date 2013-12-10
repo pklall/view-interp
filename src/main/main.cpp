@@ -2,6 +2,8 @@
 
 #include "files.h"
 
+// #include <omp.h>
+
 using namespace std;
 
 using namespace cimg_library;
@@ -129,6 +131,7 @@ inline void patchMatchBeliefPropagation(
         function<bool(int, int, int, float[])> getCandidateValue,
         function<float(int, int, float[])> unaryCost,
         function<float(int, int, float[], int, int, float[])> binaryCost,
+        bool reverse,
         int increment = 1,
         bool purePM = false) {
     assert(field.is_sameXYZ(totCost));
@@ -154,17 +157,37 @@ inline void patchMatchBeliefPropagation(
 
     const int inverseNeighbors[] = {1, 0, 3, 2};
 
+    int xStart = 0;
+    int yStart = 0;
+    int inc = increment;
+    if (reverse) {
+        xStart = field.width() - 1;
+        yStart = field.height() - 1;
+        inc = -1 * increment;
+    }
+
     // TODO Cache block
-    // FIXME This has race conditions. Please fix!
-#pragma omp parallel for
-    for (int y = 0; y < field.height(); y += increment) {
-        for (int x = 0; x < field.width(); x += increment) {
+    // FIXME This has race conditions, but they don't matter too much.
+    //       Cache blocking could also fix the race conditions
+// #pragma omp parallel
+    {
+    // yStart += inc * omp_get_thread_num();
+    // inc *= omp_get_num_threads();
+    for (int y = yStart; y >= 0 && y < field.height(); y += inc) {
+        // FIXME
+        // int numSearchWinners[K * 3];
+        // memset(numSearchWinners, 0, sizeof(numSearchWinners));
+
+        for (int x = xStart; x >= 0 && x < field.width(); x += inc) {
             // Space to store the candidate field value
             float cVal[valSize];
 
             // Loop over all candidate new values, based on
             // the propagation function
             for (int pNum = 0; getCandidateValue(x, y, pNum, cVal); pNum++) {
+                if (cVal[0] == std::numeric_limits<float>::max()) {
+                    continue;
+                }
                 // TODO There's a possible early-exit here when the total cost
                 //      of cVal is greater than the lowest-ranked particle
                 //      with cost totCost(x, y, fieldSorted(K - 1));
@@ -231,6 +254,8 @@ inline void patchMatchBeliefPropagation(
                     continue;
                 }
 
+                // numSearchWinners[pNum]++;
+
                 // The "raw index" is the index into field, totCost, ...
                 // which will store this particle.
                 // Since we're inserting this new particle, the last
@@ -241,13 +266,6 @@ inline void patchMatchBeliefPropagation(
                 // lots of data around, and can instead simply shift
                 // down the indices in the sorted list.
                 int rawIndex = fieldSorted(x, y, K - 1);
-
-                // Pull back all inferior particles to make room
-                for (int i = K - 1; i >= index + 1; i--) {
-                    fieldSorted(x, y, i) = fieldSorted(x, y, i - 1);
-                }
-
-                fieldSorted(x, y, index) = rawIndex;
 
                 cimg_forC(field, c) {
                     field(x, y, rawIndex, c) = cVal[c];
@@ -262,17 +280,36 @@ inline void patchMatchBeliefPropagation(
                         msg(x, y, rawIndex, i) = msgs[i];
                     }
                 }
+                
+                // Pull back all inferior particles to make room
+                for (int i = K - 1; i >= index + 1; i--) {
+                    fieldSorted(x, y, i) = fieldSorted(x, y, i - 1);
+                }
+
+                fieldSorted(x, y, index) = rawIndex;
             }
         }
+        
+        // cout << "Search stats: ";
+        // for (int i = 0;
+                // i < (int) (sizeof(numSearchWinners) / sizeof(int));
+                // i++) {
+            // cout << numSearchWinners[i] << " ";
+        // }
+        // cout << endl;
+    }
     }
 }
 
 inline function<float(int, int, float[])> translationalPatchDist(
         const CImg<float>& lab1,
         const CImg<float>& lab2,
+        const CImg<float>& grad1,
+        const CImg<float>& grad2,
         int wndSize,
         float colorSigma = 30.0f,
-        float maxDist = 10.0f) {
+        float maxDist = 10.0f,
+        float maxGradDist = 2.0f) {
     auto dist = [=]
         (int sx, int sy, float* value) -> float {
             int dx = sx + (int) value[0];
@@ -286,27 +323,6 @@ inline function<float(int, int, float[])> translationalPatchDist(
                 return numeric_limits<float>::infinity();
             }
 
-            /*
-            int minSX = max(0, sx - wndSize / 2);
-            int maxSX = min(lab1.width() - 1, sx + wndSize / 2);
-
-            int minSY = max(0, sy - wndSize / 2);
-            int maxSY = min(lab1.height() - 1, sy + wndSize / 2);
-
-            int minDX = max(0, dx - wndSize / 2);
-            int maxDX = min(lab2.width() - 1, dx + wndSize / 2);
-
-            int minDY = max(0, dy - wndSize / 2);
-            int maxDY = min(lab2.height() - 1, dy + wndSize / 2);
-
-            // The extent of the valid window around (sx, sy) and (dx, dy)
-            // to compare.
-            int minX = -min(sx - minSX, dx - minDX);
-            int maxX = min(maxSX - sx, maxDX - dx);
-
-            int minY = -min(sy - minSY, dy - minDY);
-            int maxY = min(maxSY - sy, maxDY - dy);
-            */
             int minX = -wndSize / 2;
             int maxX =  wndSize / 2;
             int minY = -wndSize / 2;
@@ -320,28 +336,34 @@ inline function<float(int, int, float[])> translationalPatchDist(
                     float lab1Diff = 0.0f;
 
                     cimg_forZC(lab1, z, c) {
-                        float lDiff = lab1(x + sx, y + sy, z, c) -
-                            lab1(sx, sy, z, c);
+                        float lDiff = abs(lab1(x + sx, y + sy, z, c) -
+                            lab1(sx, sy, z, c));
                         // L1 norm:
-                        lab1Diff += lDiff;
-                        // L2 norm:
-                        // lab1Diff = lDiff * lDiff;
+                        lab1Diff += sqr(lDiff / colorSigma);
+                        // lab1Diff += lDiff * lDiff / colorSigma;
                     }
 
-                    float weight = exp(-(lab1Diff) / colorSigma);
+                    float weight = exp(-lab1Diff / 3.0f);
 
                     cimg_forZC(lab1, z, c) {
-                        float diff =
-                            lab1(x + sx, y + sy, z, c) -
-                            lab2(x + dx, y + dy, z, c);
+                        float diff = sqr(lab1(x + sx, y + sy, z, c) -
+                            lab2(x + dx, y + dy, z, c));
 
-                        diff = min(diff, maxDist);
+                        // diff = min(diff, maxDist);
+
+                        /*
+                        float gradDiff = sqr(grad1(x + sx, y + sy, z, c) -
+                            grad2(x + dx, y + dy, z, c));
+                        */
+
+                        // gradDiff = min(gradDiff, maxGradDist);
 
                         totalWeight += weight;
 
                         // TODO Original paper also used a linear combination
                         //      of this and the difference in gradient.
-                        ssd += diff * diff * weight;
+                        // ssd += (diff * 0.9f + gradDiff * 0.9f) * weight;
+                        ssd += diff * weight;
                     }
                 }
             }
@@ -355,7 +377,7 @@ inline function<float(int, int, float[])> translationalPatchDist(
 /**
  * Creates a function for generating candidate translational disparities.
  */
-function<bool(int, int, int, float[])> translationalCandidateGenerator(
+inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
     const CImg<float>& fieldLeft,
     const CImg<float>& fieldRight,
     int& iterationCounter,
@@ -416,8 +438,8 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
                 }
             }
 
-            if (!(newX < 0 || newX > fieldLeft.width() ||
-                    newY < 0 || newY > fieldLeft.height())) {
+            if (!(newX < 0 || newX >= fieldLeft.width() ||
+                    newY < 0 || newY >= fieldLeft.height())) {
                 float newDisp = fieldLeft(newX, newY, z, 0);
                 value[0] = newDisp;
             } else {
@@ -433,8 +455,8 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
             // Quantize the grid based on the current increment
             newX = (newX / increment) * increment;
 
-            if (!(newX < 0 || newX > fieldRight.width() ||
-                    newY < 0 || newY > fieldRight.height())) {
+            if (!(newX < 0 || newX >= fieldRight.width() ||
+                    newY < 0 || newY >= fieldRight.height())) {
                 // TODO try different z values here too?
                 int z2 = 0;
 
@@ -451,6 +473,8 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 void patchMatchBPTranslationalCorrespondence(
         const CImg<float>& labLeft,
         const CImg<float>& labRight,
+        const CImg<float>& gradLeft,
+        const CImg<float>& gradRight,
         CImg<float>& fieldLeft,
         CImg<float>& fieldRight,
         CImg<int>& fieldLeftSorted,
@@ -478,57 +502,69 @@ void patchMatchBPTranslationalCorrespondence(
     auto sampleRight = translationalCandidateGenerator(fieldRight, fieldLeft,
         iteration, randomSearchFactor, increment);
 
-    auto symmetricUnaryCostLeft = [=](int x, int y, float* value) -> float {
-        auto unaryCostLeft = translationalPatchDist(labLeft, labRight, wndSize);
-        auto unaryCostRight = translationalPatchDist(labRight, labLeft, wndSize);
+    auto unaryCostLeft = translationalPatchDist(labLeft, labRight,
+            gradLeft, gradRight, wndSize);
+    auto unaryCostRight = translationalPatchDist(labRight, labLeft,
+            gradRight, gradLeft, wndSize);
+
+    auto symmetricUnaryCostLeft = unaryCostLeft;
+    /*
+    [=](int x, int y, float* value) -> float {
         float oValue[1];
         oValue[0] = -value[0];
 
-        return unaryCostLeft(x, y, value) +
-            unaryCostRight(x + value[0], y, oValue);
+        // FIXME
+        return unaryCostLeft(x, y, value);// + unaryCostRight(x + value[0], y, oValue);
     };
+    */
 
-    auto symmetricUnaryCostRight = [=](int x, int y, float* value) -> float {
-        auto unaryCostLeft = translationalPatchDist(labLeft, labRight, wndSize);
-        auto unaryCostRight = translationalPatchDist(labRight, labLeft, wndSize);
+    auto symmetricUnaryCostRight = unaryCostRight;
+    /*
+    [=](int x, int y, float* value) -> float {
         float oValue[1];
         oValue[0] = -value[0];
-        return unaryCostRight(x, y, value) +
-            unaryCostLeft(x + value[0], y, oValue);
+        
+        // FIXME
+        return unaryCostRight(x, y, value);// + unaryCostLeft(x + value[0], y, oValue);
     };
+    */
 
     auto binaryCostLeft =
         [=](int aX, int aY, float* aVal, int bX, int bY, float* bVal) {
             float weight = 0;
             cimg_forZC(labLeft, z, c) {
-                weight += labLeft(aX, aY, z, c) - labRight(bX, bY, z, c);
+                weight +=
+                    abs(labLeft(aX, aY, z, c) - labLeft(bX, bY, z, c));
             }
-            return bpWeight * abs(aVal[0] - bVal[1]) * exp(-weight / 10.0f);
+            return bpWeight * abs(aVal[0] - bVal[1]) * exp(-weight / 30.0f);
         };
     auto binaryCostRight =
         [=](int aX, int aY, float* aVal, int bX, int bY, float* bVal) {
             float weight = 0;
-            cimg_forZC(labLeft, z, c) {
-                weight += labRight(aX, aY, z, c) - labLeft(bX, bY, z, c);
+            cimg_forZC(labRight, z, c) {
+                weight +=
+                    abs(labRight(aX, aY, z, c) - labRight(bX, bY, z, c));
             }
-            return bpWeight * abs(aVal[0] - bVal[1]) * exp(-weight / 10.0f);
+            return bpWeight * abs(aVal[0] - bVal[1]) * exp(-weight / 30.0f);
         };
 
     for(; iteration < iterations; iteration++) {
         cout << "PMBP Iteration: " << iteration << endl;
 
+        bool reverse = iteration % 2 == 0;
+
         cout << "Left... ";
         patchMatchBeliefPropagation(
                 fieldLeft, distLeft, fieldLeftSorted, unaryLeft, msgLeft,
-                sampleLeft, symmetricUnaryCostLeft, binaryCostRight,
-                increment, purePM);
+                sampleLeft, symmetricUnaryCostLeft, binaryCostLeft,
+                reverse, increment, purePM);
         cout << "done" << endl;
 
         cout << "Right... ";
         patchMatchBeliefPropagation(
                 fieldRight, distRight, fieldRightSorted, unaryRight, msgRight,
                 sampleRight, symmetricUnaryCostRight, binaryCostRight,
-                increment, purePM);
+                reverse, increment, purePM);
         cout << "done" << endl;
     }
 }
@@ -845,6 +881,8 @@ inline void fillHoles(
 inline void patchMatchTranslationalCorrespondence(
         const CImg<float>& lab1,
         const CImg<float>& lab2,
+        const CImg<float>& grad1,
+        const CImg<float>& grad2,
         CImg<float>& fieldLeft,
         CImg<float>& fieldRight,
         CImg<float>& distLeft,
@@ -889,8 +927,10 @@ inline void patchMatchTranslationalCorrespondence(
         }
     }
 
-    auto patchDistLeft = translationalPatchDist(lab1, lab2, wndSize);
-    auto patchDistRight = translationalPatchDist(lab2, lab1, wndSize);
+    auto patchDistLeft = translationalPatchDist(lab1, lab2,
+            grad1, grad2, wndSize);
+    auto patchDistRight = translationalPatchDist(lab2, lab1,
+            grad1, grad2, wndSize);
 
     auto flip = []
         (int rx, int ry, float* rvalue,
@@ -1109,6 +1149,71 @@ inline void patchMatchAffine(
     }
 }
 
+void postProcessDepthMap(
+        CImg<float>& labLeft,
+        CImg<float>& leftField,
+        CImg<float>& rightField) {
+    const float INVALID = std::numeric_limits<float>::max();
+
+    CImg<float> cost(leftField.width(), leftField.height());
+    cost = 0.0f;
+    cimg_forXY(leftField, x, y) {
+        int rx = x + leftField(x, y, 0, 0);
+        int ry = y;
+        if (rx >= 0 && rx < rightField.width() &&
+                ry >= 0 && ry < rightField.height()) {
+            if (rx + rightField(rx, ry) != x) {
+                cimg_forZC(leftField, z, c) {
+                    leftField(x, y) = INVALID;
+                }
+                cost(x, y) = INVALID;
+            }
+        } else {
+            cimg_forZC(leftField, z, c) {
+                leftField(x, y) = INVALID;
+            }
+            cost(x, y) = INVALID;
+        }
+    }
+
+    int dir = -1;
+    for (int iter = 0; iter < 4; iter++) {
+        dir *= -1;
+        int startX = 0;
+        int startY = 0;
+        if (dir > 0) {
+            startX = leftField.width();
+            startY = leftField.height();
+        }
+        for (int y = startY; y >= 0 && y < leftField.height(); y += dir) {
+            for (int x = startX; x >= 0 && x < leftField.width(); x += dir) {
+                int neighborhood[2][2]{
+                    {dir, 0},
+                    {0, dir}
+                };
+                for (int i = 0; i < 2; i++) {
+                    int nx = x + neighborhood[i][0];
+                    int ny = y + neighborhood[i][1];
+                    if (nx >= 0 && nx < leftField.width() &&
+                            ny >= 0 && ny < leftField.height()) {
+                        float edgeCost = 0;
+                        cimg_forZC(labLeft, z, c) {
+                            edgeCost +=
+                                abs(labLeft(x, y, z, c) - labLeft(nx, ny, z, c));
+                        }
+                        if (cost(nx, ny) + edgeCost < cost(x, y)) {
+                            cost(x, y) = cost(nx, ny) + edgeCost;
+                            cimg_forZC(leftField, z, c) {
+                                leftField(x, y, z, c) = leftField(nx, ny, z, c);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     int sampleIndex = 0;
     if (argc >= 2) {
@@ -1126,10 +1231,20 @@ int main(int argc, char** argv) {
         }
 
         // The number of "particles" to use
-        int K = 5;
+        int K = 1;
 
         CImg<float> labLeft = fst.get_RGBtoLab();
         CImg<float> labRight  = lst.get_RGBtoLab();
+
+        CImg<float> gradLeft;
+        CImg<float> gradRight;
+        {
+            CImgList<float> gradLeftLst = labLeft.get_shared_channel(0).get_gradient();
+            gradLeft = (gradLeftLst(0).sqr() + gradLeftLst(1).sqr()).sqrt();
+
+            CImgList<float> gradRightLst = labRight.get_shared_channel(0).get_gradient();
+            gradRight = (gradRightLst(0).sqr() + gradRightLst(1).sqr()).sqrt();
+        }
 
         CImg<float> fieldLeft(labLeft.width(), labLeft.height(), K, 1);
         CImg<float> fieldRight(labRight.width(), labRight.height(), K, 1);
@@ -1178,11 +1293,13 @@ int main(int argc, char** argv) {
         float randomSearchFactor = 1.0f;
         int increment = 1;
         int wndSize = 11;
-        int iterations = 5;
+        int iterations = 4;
 
         for (float bpWeight = 0.0f; bpWeight < 20.0f; bpWeight += 2.0f) {
+            cout << "Processing bpWeight = " << bpWeight << endl;
             patchMatchBPTranslationalCorrespondence(
                     labLeft,         labRight,
+                    gradLeft,        gradRight,
                     fieldLeft,       fieldRight,
                     fieldLeftSorted, fieldRightSorted,
                     distLeft,        distRight,
@@ -1201,15 +1318,45 @@ int main(int argc, char** argv) {
                     fieldRight(x, y, fieldRightSorted(0));
             }
 
-            stringstream file;
-            file << "results/pmbp/int_disp_pmbp";
-            file << "_bpweight_" << bpWeight;
-            file << ".png";
-            fieldLeftSlice
-                .get_normalize(0.0f, 255.0f)
-                .get_equalize(256)
-                .get_map(CImg<float>().jet_LUT256())
-                .save(file.str().c_str());
+            {
+                stringstream file;
+                file << "results/pmbp/int_disp_pmbp";
+                file << "_bpweight_" << bpWeight;
+                file << "_left_";
+                file << ".png";
+                fieldLeftSlice
+                    .get_normalize(0.0f, 255.0f)
+                    .get_equalize(256)
+                    .get_map(CImg<float>().jet_LUT256())
+                    .save(file.str().c_str());
+            }
+            {
+                stringstream file;
+                file << "results/pmbp/int_disp_pmbp";
+                file << "_bpweight_" << bpWeight;
+                file << "_right_";
+                file << ".png";
+                fieldRightSlice
+                    .get_normalize(0.0f, 255.0f)
+                    .get_equalize(256)
+                    .get_map(CImg<float>().jet_LUT256())
+                    .save(file.str().c_str());
+            }
+
+            postProcessDepthMap(labLeft, fieldLeftSlice, fieldRightSlice);
+
+            {
+                stringstream file;
+                file << "results/pmbp/int_disp_pmbp";
+                file << "_bpweight_" << bpWeight;
+                file << "_leftprocessed_";
+                file << ".png";
+                fieldLeftSlice
+                    .get_normalize(0.0f, 255.0f)
+                    .get_equalize(256)
+                    .get_map(CImg<float>().jet_LUT256())
+                    .save(file.str().c_str());
+            }
         }
 
         /*
