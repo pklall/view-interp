@@ -380,7 +380,7 @@ inline function<float(int, int, float[])> translationalPatchDist(
 inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
     const CImg<float>& fieldLeft,
     const CImg<float>& fieldRight,
-    int& iterationCounter,
+    int* iterationCounter,
     float randomSearchFactor = 1.0f,
     int increment = 1) {
     assert(fieldLeft.depth() == fieldRight.depth());
@@ -394,7 +394,7 @@ inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
         if (i < K) {
             // Random sample
-            float searchWndRadiusFactor = randomSearchFactor / pow(2.0f, iterationCounter);
+            float searchWndRadiusFactor = randomSearchFactor / pow(2.0f, *iterationCounter);
 
             int width = fieldRight.width();
 
@@ -423,7 +423,7 @@ inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
             if (i < 2 * K) {
                 z = i - K;
                 // propagate left/right
-                if (iterationCounter % 2 == 0) {
+                if (*iterationCounter % 2 == 0) {
                     newX += increment;
                 } else {
                     newX -= increment;
@@ -431,7 +431,7 @@ inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
             } else {
                 z = i - 2 * K;
                 // propagate up/down
-                if (iterationCounter % 2 == 0) {
+                if (*iterationCounter % 2 == 0) {
                     newY += increment;
                 } else {
                     newY -= increment;
@@ -498,9 +498,9 @@ void patchMatchBPTranslationalCorrespondence(
 
     // Create functions to perform propagation and random sample
     auto sampleLeft = translationalCandidateGenerator(fieldLeft, fieldRight,
-        iteration, randomSearchFactor, increment);
+        &iteration, randomSearchFactor, increment);
     auto sampleRight = translationalCandidateGenerator(fieldRight, fieldLeft,
-        iteration, randomSearchFactor, increment);
+        &iteration, randomSearchFactor, increment);
 
     auto unaryCostLeft = translationalPatchDist(labLeft, labRight,
             gradLeft, gradRight, wndSize);
@@ -559,6 +559,7 @@ void patchMatchBPTranslationalCorrespondence(
                 sampleLeft, symmetricUnaryCostLeft, binaryCostLeft,
                 reverse, increment, purePM);
         cout << "done" << endl;
+        fieldLeft.display();
 
         cout << "Right... ";
         patchMatchBeliefPropagation(
@@ -566,6 +567,7 @@ void patchMatchBPTranslationalCorrespondence(
                 sampleRight, symmetricUnaryCostRight, binaryCostRight,
                 reverse, increment, purePM);
         cout << "done" << endl;
+        fieldRight.display();
     }
 }
 
@@ -1175,6 +1177,8 @@ void postProcessDepthMap(
             cost(x, y) = INVALID;
         }
     }
+
+    cost.display();
 
     int dir = -1;
     for (int iter = 0; iter < 4; iter++) {
