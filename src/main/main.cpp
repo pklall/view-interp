@@ -258,6 +258,11 @@ inline void patchMatchBeliefPropagation(
                         }
                     }
 
+                    if (pNum == 3) {
+                        // cout << "#3 lost with value = " << cVal[0] << " cost = " << totalCost << endl;
+                        // cout << "versus " << field(x, y, 0) << " cost = " << totCost(x, y, 0) << endl;
+                    }
+
                     // If this new particle sucks, continue because there's nothing
                     // left to do with it.
                     if (index == -1 ) {
@@ -265,6 +270,9 @@ inline void patchMatchBeliefPropagation(
                     }
 
                     // numSearchWinners[pNum]++;
+                    if (pNum == 3) {
+                        // cout << "Winner!" << endl;
+                    }
 
                     // The "raw index" is the index into field, totCost, ...
                     // which will store this particle.
@@ -383,6 +391,20 @@ inline function<float(int, int, float[])> translationalPatchDist(
     return dist;
 }
 
+inline void reverseTranslationalField(
+        const CImg<float>& field,
+        CImg<float>& fieldRev) {
+    fieldRev = std::numeric_limits<float>::max();
+    cimg_forXYZ(field, x, y, z) {
+        int rx = x + field(x, y, z, 0);
+        int ry = y;
+
+        if (rx >= 0 && rx < fieldRev.width() &&
+                ry >= 0 && ry < fieldRev.height()) {
+            fieldRev(rx, ry, z, 0) = -field(x, y, z, 0);
+        }
+    }
+}
 
 /**
  * Creates a function for generating candidate translational disparities.
@@ -390,6 +412,7 @@ inline function<float(int, int, float[])> translationalPatchDist(
 inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
     const CImg<float>& fieldLeft,
     const CImg<float>& fieldRight,
+    const CImg<float>* fieldRightRev,
     int* iterationCounter,
     float randomSearchFactor = 1.0f,
     int increment = 1) {
@@ -397,8 +420,8 @@ inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
     int K = fieldLeft.depth();
 
-    return [=](int x, int y, int i, float* value) -> bool {
-        if (i > 3 * K) {
+    return [=](int x, int y, int i, float* value) mutable {
+        if (i >= 4 * K) {
             return false;
         }
 
@@ -455,11 +478,14 @@ inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
             } else {
                 value[0] = std::numeric_limits<float>::max();
             }
-        } else if (i < 3 * K) {
-            int newX = x, newY = y;
+        } else if (i < 4 * K) {
+            // int newX = x, newY = y;
 
-            int z = i - 2 * K;
+            int z = i - 3 * K;
 
+            value[0] = (*fieldRightRev)(x, y, z, 0);
+            
+            /*
             newX += fieldLeft(x, y, z, 0);
 
             // Quantize the grid based on the current increment
@@ -474,6 +500,7 @@ inline function<bool(int, int, int, float[])> translationalCandidateGenerator(
             } else {
                 value[0] = std::numeric_limits<float>::max();
             }
+            */
         }
 
         return true;
@@ -506,11 +533,23 @@ void patchMatchBPTranslationalCorrespondence(
     // Sampling functions will refer to this
     int iteration = 0;
 
+    CImg<float> fieldLeftRev(fieldRight.width(), fieldRight.height(),
+            fieldRight.depth());
+    fieldLeftRev = std::numeric_limits<float>::max();
+
+    CImg<float> fieldRightRev(fieldLeft.width(), fieldLeft.height(),
+            fieldLeft.depth());
+    fieldRightRev = std::numeric_limits<float>::max();
+
     // Create functions to perform propagation and random sample
-    auto sampleLeft = translationalCandidateGenerator(fieldLeft, fieldRight,
-        &iteration, randomSearchFactor, increment);
-    auto sampleRight = translationalCandidateGenerator(fieldRight, fieldLeft,
-        &iteration, randomSearchFactor, increment);
+    auto sampleLeft = translationalCandidateGenerator(
+            fieldLeft, fieldRight,
+            &fieldRightRev,
+            &iteration, randomSearchFactor, increment);
+    auto sampleRight = translationalCandidateGenerator(
+            fieldRight, fieldLeft,
+            &fieldLeftRev,
+            &iteration, randomSearchFactor, increment);
 
     auto unaryCostLeft = translationalPatchDist(labLeft, labRight,
             gradLeft, gradRight, wndSize);
@@ -570,12 +609,16 @@ void patchMatchBPTranslationalCorrespondence(
                 reverse, increment, purePM);
         cout << "done" << endl;
 
+        reverseTranslationalField(fieldLeft, fieldLeftRev);
+
         cout << "Right... ";
         patchMatchBeliefPropagation(
                 fieldRight, distRight, fieldRightSorted, unaryRight, msgRight,
                 sampleRight, unaryCostRight, binaryCostRight,
                 reverse, increment, purePM);
         cout << "done" << endl;
+
+        reverseTranslationalField(fieldRight, fieldRightRev);
     }
 }
 
@@ -1186,8 +1229,6 @@ void postProcessDepthMap(
         }
     }
 
-    cost.display();
-
     int dir = -1;
     for (int iter = 0; iter < 4; iter++) {
         dir *= -1;
@@ -1225,8 +1266,6 @@ void postProcessDepthMap(
             }
         }
     }
-
-    cost.display();
 }
 
 int main(int argc, char** argv) {
