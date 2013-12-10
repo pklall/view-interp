@@ -430,6 +430,9 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
             newX += fieldLeft(x, y, z, 0);
 
+            // Quantize the grid based on the current increment
+            newX = (newX / increment) * increment;
+
             if (!(newX < 0 || newX > fieldRight.width() ||
                     newY < 0 || newY > fieldRight.height())) {
                 // TODO try different z values here too?
@@ -462,23 +465,53 @@ void patchMatchBPTranslationalCorrespondence(
         int iterations = 5,
         float randomSearchFactor = 1.0f,
         int increment = 1,
-        bool purePM = false) {
+        float bpWeight = 10.0f) {
+    bool purePM = (bpWeight == 0);
+
     // Counter to store the current iteration
     // Sampling functions will refer to this
     int iteration = 0;
 
     // Create functions to perform propagation and random sample
     auto sampleLeft = translationalCandidateGenerator(fieldLeft, fieldRight,
-        iteration, randomSearchFactor, increment = 1);
+        iteration, randomSearchFactor, increment);
     auto sampleRight = translationalCandidateGenerator(fieldRight, fieldLeft,
-        iteration, randomSearchFactor, increment = 1);
+        iteration, randomSearchFactor, increment);
 
-    auto unaryCostLeft = translationalPatchDist(labLeft, labRight, wndSize);
-    auto unaryCostRight = translationalPatchDist(labRight, labLeft, wndSize);
+    auto symmetricUnaryCostLeft = [=](int x, int y, float* value) -> float {
+        auto unaryCostLeft = translationalPatchDist(labLeft, labRight, wndSize);
+        auto unaryCostRight = translationalPatchDist(labRight, labLeft, wndSize);
+        float oValue[1];
+        oValue[0] = -value[0];
 
-    auto binaryCost =
+        return unaryCostLeft(x, y, value) +
+            unaryCostRight(x + value[0], y, oValue);
+    };
+
+    auto symmetricUnaryCostRight = [=](int x, int y, float* value) -> float {
+        auto unaryCostLeft = translationalPatchDist(labLeft, labRight, wndSize);
+        auto unaryCostRight = translationalPatchDist(labRight, labLeft, wndSize);
+        float oValue[1];
+        oValue[0] = -value[0];
+        return unaryCostRight(x, y, value) +
+            unaryCostLeft(x + value[0], y, oValue);
+    };
+
+    auto binaryCostLeft =
         [=](int aX, int aY, float* aVal, int bX, int bY, float* bVal) {
-            return 0.0f;
+            float weight = 0;
+            cimg_forZC(labLeft, z, c) {
+                weight += labLeft(aX, aY, z, c) - labRight(bX, bY, z, c);
+            }
+            return bpWeight * abs(aVal[0] - bVal[1]) * exp(-weight / 10.0f);
+        };
+    auto binaryCostRight =
+        [=](int aX, int aY, float* aVal, int bX, int bY, float* bVal) {
+            float weight = 0;
+            cimg_forZC(labLeft, z, c) {
+                weight += labRight(aX, aY, z, c) - labLeft(bX, bY, z, c);
+            }
+            return bpWeight * abs(aVal[0] - bVal[1]) * exp(-weight / 10.0f);
         };
 
     for(; iteration < iterations; iteration++) {
@@ -486,15 +519,15 @@ void patchMatchBPTranslationalCorrespondence(
 
         cout << "Left... ";
         patchMatchBeliefPropagation(
-                fieldLeft, distLeft, fieldLeftSorted, unaryLeft,
-                msgLeft, sampleLeft, unaryCostLeft, binaryCost,
+                fieldLeft, distLeft, fieldLeftSorted, unaryLeft, msgLeft,
+                sampleLeft, symmetricUnaryCostLeft, binaryCostRight,
                 increment, purePM);
         cout << "done" << endl;
 
         cout << "Right... ";
         patchMatchBeliefPropagation(
-                fieldRight, distRight, fieldRightSorted, unaryRight,
-                msgRight, sampleRight, unaryCostRight, binaryCost,
+                fieldRight, distRight, fieldRightSorted, unaryRight, msgRight,
+                sampleRight, symmetricUnaryCostRight, binaryCostRight,
                 increment, purePM);
         cout << "done" << endl;
     }
@@ -1093,22 +1126,10 @@ int main(int argc, char** argv) {
         }
 
         // The number of "particles" to use
-        int K = 2;
+        int K = 5;
 
         CImg<float> labLeft = fst.get_RGBtoLab();
         CImg<float> labRight  = lst.get_RGBtoLab();
-
-        // TEST for translationalPatchDist
-        if (false) {
-            CImg<float> dist(labLeft.width(), labLeft.height(), 1);
-            auto metric = translationalPatchDist(labLeft, labRight, 15);
-            float value = 0;
-            cimg_forXY(dist, x, y) {
-                dist(x, y) = metric(x, y, &value);
-            }
-            dist.display();
-            return 0;
-        }
 
         CImg<float> fieldLeft(labLeft.width(), labLeft.height(), K, 1);
         CImg<float> fieldRight(labRight.width(), labRight.height(), K, 1);
@@ -1150,10 +1171,52 @@ int main(int argc, char** argv) {
         CImg<float> msgRight(labRight.width(), labRight.height(), K, 4);
         msgRight = 0.0f;
 
-        int wndSize = 7;
-        int iterations = 3;
+        // Used to store slices of the final result
+        CImg<float> fieldLeftSlice(fieldLeft.width(), fieldLeft.height());
+        CImg<float> fieldRightSlice(fieldRight.width(), fieldRight.height());
+
         float randomSearchFactor = 1.0f;
         int increment = 1;
+        int wndSize = 11;
+        int iterations = 5;
+
+        for (float bpWeight = 0.0f; bpWeight < 20.0f; bpWeight += 2.0f) {
+            patchMatchBPTranslationalCorrespondence(
+                    labLeft,         labRight,
+                    fieldLeft,       fieldRight,
+                    fieldLeftSorted, fieldRightSorted,
+                    distLeft,        distRight,
+                    unaryLeft,       unaryRight,
+                    msgLeft,         msgRight,
+                    wndSize, iterations, randomSearchFactor, increment,
+                    bpWeight);
+
+            // Save the best result
+            cimg_forXY(fieldLeftSlice, x, y) {
+                fieldLeftSlice(x, y) =
+                    fieldLeft(x, y, fieldLeftSorted(0));
+            }
+            cimg_forXY(fieldRightSlice, x, y) {
+                fieldRightSlice(x, y) =
+                    fieldRight(x, y, fieldRightSorted(0));
+            }
+
+            stringstream file;
+            file << "results/pmbp/int_disp_pmbp";
+            file << "_bpweight_" << bpWeight;
+            file << ".png";
+            fieldLeftSlice
+                .get_normalize(0.0f, 255.0f)
+                .get_equalize(256)
+                .get_map(CImg<float>().jet_LUT256())
+                .save(file.str().c_str());
+        }
+
+        /*
+           wndSize = 11;
+           iterations = 5;
+           randomSearchFactor = 1.0f;
+           increment = 1;
         patchMatchBPTranslationalCorrespondence(
                 labLeft,         labRight,
                 fieldLeft,       fieldRight,
@@ -1161,16 +1224,11 @@ int main(int argc, char** argv) {
                 distLeft,        distRight,
                 unaryLeft,       unaryRight,
                 msgLeft,         msgRight,
-                wndSize,
-                iterations,
-                randomSearchFactor,
-                increment,
-                true);
+                wndSize, iterations, randomSearchFactor, increment, false);
+        */
 
         // Display the result, after filering for particles with a particular
         // rank.
-        CImg<float> fieldLeftSlice(fieldLeft.width(), fieldLeft.height());
-        CImg<float> fieldRightSlice(fieldRight.width(), fieldRight.height());
 
         for (int i = 0; i < K; i++) {
             cout << "Particles with rank " << i << endl;
@@ -1182,10 +1240,6 @@ int main(int argc, char** argv) {
                 fieldRightSlice(x, y) =
                     fieldRight(x, y, fieldRightSorted(i));
             }
-            fieldLeftSorted.get_shared_slice(0).display();
-            fieldLeftSorted.get_shared_slice(1).display();
-            fieldRightSorted.get_shared_slice(0).display();
-            fieldRightSorted.get_shared_slice(1).display();
 
             CImgList<float>(
                     fieldLeftSlice
