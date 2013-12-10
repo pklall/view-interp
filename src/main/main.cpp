@@ -2,7 +2,7 @@
 
 #include "files.h"
 
-// #include <omp.h>
+#include <omp.h>
 
 using namespace std;
 
@@ -157,147 +157,157 @@ inline void patchMatchBeliefPropagation(
 
     const int inverseNeighbors[] = {1, 0, 3, 2};
 
-    int xStart = 0;
-    int yStart = 0;
-    int inc = increment;
-    if (reverse) {
-        xStart = field.width() - 1;
-        yStart = field.height() - 1;
-        inc = -1 * increment;
-    }
-
     // TODO Cache block
     // FIXME This has race conditions, but they don't matter too much.
     //       Cache blocking could also fix the race conditions
-// #pragma omp parallel
+#pragma omp parallel
     {
-    // yStart += inc * omp_get_thread_num();
-    // inc *= omp_get_num_threads();
-    for (int y = yStart; y >= 0 && y < field.height(); y += inc) {
-        // FIXME
-        // int numSearchWinners[K * 3];
-        // memset(numSearchWinners, 0, sizeof(numSearchWinners));
+        int xStart = 0;
+        int yStart = 0;
+        int inc = increment;
+        if (reverse) {
+            xStart = field.width() - 1;
+            yStart = field.height() - 1;
+            inc = -1 * increment;
+        }
 
-        for (int x = xStart; x >= 0 && x < field.width(); x += inc) {
-            // Space to store the candidate field value
-            float cVal[valSize];
+        // FIXME this probably fails if inc isn't of magnitude 1
+        int numThreads = omp_get_num_threads();
+        int stride = (field.height() + numThreads - 1) / numThreads;
+        int yLimit = yStart + inc * (omp_get_thread_num() + 1) * stride;
+        yStart += inc * omp_get_thread_num() * stride;
+        // int yLimit = -1;
 
-            // Loop over all candidate new values, based on
-            // the propagation function
-            for (int pNum = 0; getCandidateValue(x, y, pNum, cVal); pNum++) {
-                if (cVal[0] == std::numeric_limits<float>::max()) {
-                    continue;
-                }
-                // TODO There's a possible early-exit here when the total cost
-                //      of cVal is greater than the lowest-ranked particle
-                //      with cost totCost(x, y, fieldSorted(K - 1));
-                float uCost = unaryCost(x, y, cVal);
+#pragma omp critical
+        {
+        cout << "Thread #" << omp_get_thread_num() << " yStart = " << yStart
+            << " yLimit = " << yLimit << " stride = " << stride << endl;
+        }
+        for (int y = yStart; y >= 0 && y < field.height() && y != yLimit; y += inc) {
+            // FIXME
+            // int numSearchWinners[K * 3];
+            // memset(numSearchWinners, 0, sizeof(numSearchWinners));
 
-                float msgs[4];
-                float msgTotal = 0;
+            for (int x = xStart; x >= 0 && x < field.width(); x += inc) {
+                // Space to store the candidate field value
+                float cVal[valSize];
 
-                if (!purePM) {
-                    // Compute new messages from neighbors
-                    for (int i = 0; i < 4; i++) {
-                        int adjX = x + neighbors[i][0] * increment;
-                        int adjY = y + neighbors[i][1] * increment;
+                // Loop over all candidate new values, based on
+                // the propagation function
+                for (int pNum = 0; getCandidateValue(x, y, pNum, cVal); pNum++) {
+                    if (cVal[0] == std::numeric_limits<float>::max()) {
+                        continue;
+                    }
+                    // TODO There's a possible early-exit here when the total cost
+                    //      of cVal is greater than the lowest-ranked particle
+                    //      with cost totCost(x, y, fieldSorted(K - 1));
+                    float uCost = unaryCost(x, y, cVal);
 
-                        if (adjX >= field.width() || adjX < 0 ||
-                                adjY >= field.height() || adjY < 0) {
-                            // Ignore this neighbor if it's out-of-bounds.
-                            msgs[i] = 0;
-                            continue;
-                        }
+                    float msgs[4];
+                    float msgTotal = 0;
 
-                        msgs[i] = std::numeric_limits<float>::max();
+                    if (!purePM) {
+                        // Compute new messages from neighbors
+                        for (int i = 0; i < 4; i++) {
+                            int adjX = x + neighbors[i][0] * increment;
+                            int adjY = y + neighbors[i][1] * increment;
 
-                        // The message from a neighbor is minimized
-                        // over all particles for that neighbor
-                        cimg_forZ(field, z) {
-                            float adjVal[valSize];
-
-                            cimg_forC(field, c) {
-                                adjVal[c] = field(adjX, adjY, z, c);
+                            if (adjX >= field.width() || adjX < 0 ||
+                                    adjY >= field.height() || adjY < 0) {
+                                // Ignore this neighbor if it's out-of-bounds.
+                                msgs[i] = 0;
+                                continue;
                             }
 
-                            float psi = binaryCost(x, y, cVal, adjX, adjY, adjVal);
+                            msgs[i] = std::numeric_limits<float>::max();
 
-                            // Candidate message, we use the min-such value
-                            // over all particles at (adjX, adjY).
-                            float cMsg =
-                                psi +
-                                dist(adjX, adjY, z) -
-                                msg(adjX, adjY, z, inverseNeighbors[i]);
+                            // The message from a neighbor is minimized
+                            // over all particles for that neighbor
+                            cimg_forZ(field, z) {
+                                float adjVal[valSize];
 
-                            msgs[i] = min(msgs[i], cMsg);
+                                cimg_forC(field, c) {
+                                    adjVal[c] = field(adjX, adjY, z, c);
+                                }
+
+                                float psi = binaryCost(x, y, cVal, adjX, adjY, adjVal);
+
+                                // Candidate message, we use the min-such value
+                                // over all particles at (adjX, adjY).
+                                float cMsg =
+                                    psi +
+                                    dist(adjX, adjY, z) -
+                                    msg(adjX, adjY, z, inverseNeighbors[i]);
+
+                                msgs[i] = min(msgs[i], cMsg);
+                            }
+
+                            msgTotal += msgs[i];
                         }
-
-                        msgTotal += msgs[i];
                     }
-                }
 
-                float totalCost = msgTotal + uCost;
+                    float totalCost = msgTotal + uCost;
 
-                // Find the index of the first particle with a greater cost
-                // in the sorted list.
-                int index = -1;
-                for (int i = 0; i < K; i++) {
-                    if (totCost(x, y, fieldSorted(x, y, i)) > totalCost) {
-                        index = i;
-                        break;
+                    // Find the index of the first particle with a greater cost
+                    // in the sorted list.
+                    int index = -1;
+                    for (int i = 0; i < K; i++) {
+                        if (totCost(x, y, fieldSorted(x, y, i)) > totalCost) {
+                            index = i;
+                            break;
+                        }
                     }
-                }
 
-                // If this new particle sucks, continue because there's nothing
-                // left to do with it.
-                if (index == -1 ) {
-                    continue;
-                }
-
-                // numSearchWinners[pNum]++;
-
-                // The "raw index" is the index into field, totCost, ...
-                // which will store this particle.
-                // Since we're inserting this new particle, the last
-                // particle in the sorted list will be eliminated.  Thus
-                // we'll use it's now-unused "raw" slot to store the new
-                // particle.
-                // This indirection is useful since we avoid moving
-                // lots of data around, and can instead simply shift
-                // down the indices in the sorted list.
-                int rawIndex = fieldSorted(x, y, K - 1);
-
-                cimg_forC(field, c) {
-                    field(x, y, rawIndex, c) = cVal[c];
-                }
-
-                totCost(x, y, rawIndex) = totalCost;
-
-                dist(x, y, rawIndex) = uCost;
-
-                if (!purePM) {
-                    for (int i = 0; i < 4; i++) {
-                        msg(x, y, rawIndex, i) = msgs[i];
+                    // If this new particle sucks, continue because there's nothing
+                    // left to do with it.
+                    if (index == -1 ) {
+                        continue;
                     }
-                }
-                
-                // Pull back all inferior particles to make room
-                for (int i = K - 1; i >= index + 1; i--) {
-                    fieldSorted(x, y, i) = fieldSorted(x, y, i - 1);
-                }
 
-                fieldSorted(x, y, index) = rawIndex;
+                    // numSearchWinners[pNum]++;
+
+                    // The "raw index" is the index into field, totCost, ...
+                    // which will store this particle.
+                    // Since we're inserting this new particle, the last
+                    // particle in the sorted list will be eliminated.  Thus
+                    // we'll use it's now-unused "raw" slot to store the new
+                    // particle.
+                    // This indirection is useful since we avoid moving
+                    // lots of data around, and can instead simply shift
+                    // down the indices in the sorted list.
+                    int rawIndex = fieldSorted(x, y, K - 1);
+
+                    cimg_forC(field, c) {
+                        field(x, y, rawIndex, c) = cVal[c];
+                    }
+
+                    totCost(x, y, rawIndex) = totalCost;
+
+                    dist(x, y, rawIndex) = uCost;
+
+                    if (!purePM) {
+                        for (int i = 0; i < 4; i++) {
+                            msg(x, y, rawIndex, i) = msgs[i];
+                        }
+                    }
+
+                    // Pull back all inferior particles to make room
+                    for (int i = K - 1; i >= index + 1; i--) {
+                        fieldSorted(x, y, i) = fieldSorted(x, y, i - 1);
+                    }
+
+                    fieldSorted(x, y, index) = rawIndex;
+                }
             }
-        }
-        
-        // cout << "Search stats: ";
-        // for (int i = 0;
-                // i < (int) (sizeof(numSearchWinners) / sizeof(int));
-                // i++) {
+
+            // cout << "Search stats: ";
+            // for (int i = 0;
+            // i < (int) (sizeof(numSearchWinners) / sizeof(int));
+            // i++) {
             // cout << numSearchWinners[i] << " ";
-        // }
-        // cout << endl;
-    }
+            // }
+            // cout << endl;
+        }
     }
 }
 
@@ -339,11 +349,11 @@ inline function<float(int, int, float[])> translationalPatchDist(
                         float lDiff = abs(lab1(x + sx, y + sy, z, c) -
                             lab1(sx, sy, z, c));
                         // L1 norm:
-                        lab1Diff += sqr(lDiff / colorSigma);
+                        lab1Diff += sqr(lDiff);
                         // lab1Diff += lDiff * lDiff / colorSigma;
                     }
 
-                    float weight = exp(-lab1Diff / 3.0f);
+                    float weight = exp(-lab1Diff / colorSigma);
 
                     cimg_forZC(lab1, z, c) {
                         float diff = sqr(lab1(x + sx, y + sy, z, c) -
@@ -507,7 +517,7 @@ void patchMatchBPTranslationalCorrespondence(
     auto unaryCostRight = translationalPatchDist(labRight, labLeft,
             gradRight, gradLeft, wndSize);
 
-    auto symmetricUnaryCostLeft = unaryCostLeft;
+    // auto symmetricUnaryCostLeft = unaryCostLeft;
     /*
     [=](int x, int y, float* value) -> float {
         float oValue[1];
@@ -518,7 +528,7 @@ void patchMatchBPTranslationalCorrespondence(
     };
     */
 
-    auto symmetricUnaryCostRight = unaryCostRight;
+    // auto symmetricUnaryCostRight = unaryCostRight;
     /*
     [=](int x, int y, float* value) -> float {
         float oValue[1];
@@ -556,18 +566,16 @@ void patchMatchBPTranslationalCorrespondence(
         cout << "Left... ";
         patchMatchBeliefPropagation(
                 fieldLeft, distLeft, fieldLeftSorted, unaryLeft, msgLeft,
-                sampleLeft, symmetricUnaryCostLeft, binaryCostLeft,
+                sampleLeft, unaryCostLeft, binaryCostLeft,
                 reverse, increment, purePM);
         cout << "done" << endl;
-        fieldLeft.display();
 
         cout << "Right... ";
         patchMatchBeliefPropagation(
                 fieldRight, distRight, fieldRightSorted, unaryRight, msgRight,
-                sampleRight, symmetricUnaryCostRight, binaryCostRight,
+                sampleRight, unaryCostRight, binaryCostRight,
                 reverse, increment, purePM);
         cout << "done" << endl;
-        fieldRight.display();
     }
 }
 
@@ -1164,7 +1172,7 @@ void postProcessDepthMap(
         int ry = y;
         if (rx >= 0 && rx < rightField.width() &&
                 ry >= 0 && ry < rightField.height()) {
-            if (rx + rightField(rx, ry) != x) {
+            if (abs(rx - x + rightField(rx, ry)) > 2) {
                 cimg_forZC(leftField, z, c) {
                     leftField(x, y) = INVALID;
                 }
@@ -1185,15 +1193,16 @@ void postProcessDepthMap(
         dir *= -1;
         int startX = 0;
         int startY = 0;
-        if (dir > 0) {
-            startX = leftField.width();
-            startY = leftField.height();
+        if (dir < 0) {
+            startX = leftField.width() - 1;
+            startY = leftField.height() - 1;
         }
+
         for (int y = startY; y >= 0 && y < leftField.height(); y += dir) {
             for (int x = startX; x >= 0 && x < leftField.width(); x += dir) {
                 int neighborhood[2][2]{
-                    {dir, 0},
-                    {0, dir}
+                    {-dir, 0},
+                    {0, -dir}
                 };
                 for (int i = 0; i < 2; i++) {
                     int nx = x + neighborhood[i][0];
@@ -1216,6 +1225,8 @@ void postProcessDepthMap(
             }
         }
     }
+
+    cost.display();
 }
 
 int main(int argc, char** argv) {
@@ -1296,8 +1307,8 @@ int main(int argc, char** argv) {
 
         float randomSearchFactor = 1.0f;
         int increment = 1;
-        int wndSize = 11;
-        int iterations = 4;
+        int wndSize = 31;
+        int iterations = 8;
 
         for (float bpWeight = 0.0f; bpWeight < 20.0f; bpWeight += 2.0f) {
             cout << "Processing bpWeight = " << bpWeight << endl;
