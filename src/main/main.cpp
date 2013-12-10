@@ -123,13 +123,14 @@ void displayClickable(CImg<float>& img,
 inline void patchMatchBeliefPropagation(
         CImg<float>& field,
         CImg<float>& totCost,
-        CImg<float>& fieldSorted,
+        CImg<int>& fieldSorted,
         CImg<float>& dist,
         CImg<float>& msg,
         function<bool(int, int, int, float[])> getCandidateValue,
         function<float(int, int, float[])> unaryCost,
         function<float(int, int, float[], int, int, float[])> binaryCost,
-        int increment = 1) {
+        int increment = 1,
+        bool purePM = false) {
     assert(field.is_sameXYZ(totCost));
     assert(field.is_sameXYZ(fieldSorted));
     assert(field.is_sameXYZ(dist));
@@ -154,6 +155,7 @@ inline void patchMatchBeliefPropagation(
     const int inverseNeighbors[] = {1, 0, 3, 2};
 
     // TODO Cache block
+    // FIXME This has race conditions. Please fix!
 #pragma omp parallel for
     for (int y = 0; y < field.height(); y += increment) {
         for (int x = 0; x < field.width(); x += increment) {
@@ -170,42 +172,45 @@ inline void patchMatchBeliefPropagation(
 
                 float msgs[4];
                 float msgTotal = 0;
-                // Compute new messages from neighbors
-                for (int i = 0; i < 4; i++) {
-                    int adjX = x + neighbors[i][0] * increment;
-                    int adjY = y + neighbors[i][1] * increment;
-                    
-                    if (adjX >= field.width() || adjX < 0 ||
-                            adjY >= field.height() || adjY < 0) {
-                        // Ignore this neighbor if it's out-of-bounds.
-                        msgs[i] = 0;
-                        continue;
-                    }
 
-                    msgs[i] = std::numeric_limits<float>::max();
+                if (!purePM) {
+                    // Compute new messages from neighbors
+                    for (int i = 0; i < 4; i++) {
+                        int adjX = x + neighbors[i][0] * increment;
+                        int adjY = y + neighbors[i][1] * increment;
 
-                    // The message from a neighbor is minimized
-                    // over all particles for that neighbor
-                    cimg_forZ(field, z) {
-                        float adjVal[valSize];
-
-                        cimg_forC(field, c) {
-                            adjVal[c] = field(adjX, adjY, z, c);
+                        if (adjX >= field.width() || adjX < 0 ||
+                                adjY >= field.height() || adjY < 0) {
+                            // Ignore this neighbor if it's out-of-bounds.
+                            msgs[i] = 0;
+                            continue;
                         }
 
-                        float psi = binaryCost(x, y, cVal, adjX, adjY, adjVal);
+                        msgs[i] = std::numeric_limits<float>::max();
 
-                        // Candidate message, we use the min-such value
-                        // over all particles at (adjX, adjY).
-                        float cMsg =
-                            psi +
-                            dist(adjX, adjY, z) -
-                            msg(adjX, adjY, z, inverseNeighbors[i]);
+                        // The message from a neighbor is minimized
+                        // over all particles for that neighbor
+                        cimg_forZ(field, z) {
+                            float adjVal[valSize];
 
-                        msgs[i] = min(msgs[i], cMsg);
+                            cimg_forC(field, c) {
+                                adjVal[c] = field(adjX, adjY, z, c);
+                            }
+
+                            float psi = binaryCost(x, y, cVal, adjX, adjY, adjVal);
+
+                            // Candidate message, we use the min-such value
+                            // over all particles at (adjX, adjY).
+                            float cMsg =
+                                psi +
+                                dist(adjX, adjY, z) -
+                                msg(adjX, adjY, z, inverseNeighbors[i]);
+
+                            msgs[i] = min(msgs[i], cMsg);
+                        }
+
+                        msgTotal += msgs[i];
                     }
-
-                    msgTotal += msgs[i];
                 }
 
                 float totalCost = msgTotal + uCost;
@@ -213,7 +218,7 @@ inline void patchMatchBeliefPropagation(
                 // Find the index of the first particle with a greater cost
                 // in the sorted list.
                 int index = -1;
-                for (int i = K - 1; i >= 0; i--) {
+                for (int i = 0; i < K; i++) {
                     if (totCost(x, y, fieldSorted(x, y, i)) > totalCost) {
                         index = i;
                         break;
@@ -238,9 +243,11 @@ inline void patchMatchBeliefPropagation(
                 int rawIndex = fieldSorted(x, y, K - 1);
 
                 // Pull back all inferior particles to make room
-                for (int i = K - 1; i > index; i++) {
-                    fieldSorted(x, y, i) = fieldSorted(x, y, i + 1);
+                for (int i = K - 1; i > index + 1; i--) {
+                    fieldSorted(x, y, i) = fieldSorted(x, y, i - 1);
                 }
+
+                fieldSorted(x, y, index) = rawIndex;
 
                 cimg_forC(field, c) {
                     field(x, y, rawIndex, c) = cVal[c];
@@ -250,15 +257,100 @@ inline void patchMatchBeliefPropagation(
 
                 dist(x, y, rawIndex) = uCost;
 
-                for (int i = 0; i < 4; i++) {
-                    msg(x, y, rawIndex, i) = msgs[i];
+                if (!purePM) {
+                    for (int i = 0; i < 4; i++) {
+                        msg(x, y, rawIndex, i) = msgs[i];
+                    }
                 }
-
-                fieldSorted(x, y, index) = rawIndex;
             }
         }
     }
 }
+
+inline function<float(int, int, float[])> translationalPatchDist(
+        const CImg<float>& lab1,
+        const CImg<float>& lab2,
+        int wndSize,
+        float colorSigma = 30.0f,
+        float maxDist = 10.0f) {
+    auto dist = [=]
+        (int sx, int sy, float* value) -> float {
+            int dx = sx + (int) value[0];
+            int dy = sy;
+
+            if ( 
+                    sx - wndSize / 2 < 0 || sx + wndSize / 2 >= lab1.width() ||
+                    sy - wndSize / 2 < 0 || sy + wndSize / 2 >= lab1.height()||
+                    dx - wndSize / 2 < 0 || dx + wndSize / 2 >= lab2.width() ||
+                    dy - wndSize / 2 < 0 || dy + wndSize / 2 >= lab2.height()) {
+                return numeric_limits<float>::infinity();
+            }
+
+            /*
+            int minSX = max(0, sx - wndSize / 2);
+            int maxSX = min(lab1.width() - 1, sx + wndSize / 2);
+
+            int minSY = max(0, sy - wndSize / 2);
+            int maxSY = min(lab1.height() - 1, sy + wndSize / 2);
+
+            int minDX = max(0, dx - wndSize / 2);
+            int maxDX = min(lab2.width() - 1, dx + wndSize / 2);
+
+            int minDY = max(0, dy - wndSize / 2);
+            int maxDY = min(lab2.height() - 1, dy + wndSize / 2);
+
+            // The extent of the valid window around (sx, sy) and (dx, dy)
+            // to compare.
+            int minX = -min(sx - minSX, dx - minDX);
+            int maxX = min(maxSX - sx, maxDX - dx);
+
+            int minY = -min(sy - minSY, dy - minDY);
+            int maxY = min(maxSY - sy, maxDY - dy);
+            */
+            int minX = -wndSize / 2;
+            int maxX =  wndSize / 2;
+            int minY = -wndSize / 2;
+            int maxY =  wndSize / 2;
+
+            float totalWeight = 0.0f;
+            float ssd = 0.0f;
+            for (int y = minY; y <= maxY; y++) {
+                for (int x = minX; x <= maxX; x++) {
+                    // Weight pixels with a bilateral-esque filter
+                    float lab1Diff = 0.0f;
+
+                    cimg_forZC(lab1, z, c) {
+                        float lDiff = lab1(x + sx, y + sy, z, c) -
+                            lab1(sx, sy, z, c);
+                        // L1 norm:
+                        lab1Diff += lDiff;
+                        // L2 norm:
+                        // lab1Diff = lDiff * lDiff;
+                    }
+
+                    float weight = exp(-(lab1Diff) / colorSigma);
+
+                    cimg_forZC(lab1, z, c) {
+                        float diff =
+                            lab1(x + sx, y + sy, z, c) -
+                            lab2(x + dx, y + dy, z, c);
+
+                        diff = min(diff, maxDist);
+
+                        totalWeight += weight;
+
+                        // TODO Original paper also used a linear combination
+                        //      of this and the difference in gradient.
+                        ssd += diff * diff * weight;
+                    }
+                }
+            }
+
+            return ssd / totalWeight;
+        };
+    return dist;
+}
+
 
 /**
  * Creates a function for generating candidate translational disparities.
@@ -277,8 +369,7 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
         if (i == 0) {
             // Random sample
-            float searchWndRadiusFactor = randomSearchFactor /
-                pow(2.0f, iterationCounter);
+            float searchWndRadiusFactor = randomSearchFactor / pow(2.0f, iterationCounter);
 
             int width = fieldRight.width();
 
@@ -301,11 +392,7 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
             // Store the relative disparity
             value[0] = randX - x;
-
-            return true;
-        }
-
-        if (i == 1 || i == 2) {
+        } else if (i == 1 || i == 2) {
             // Propagate from neighbors on the same view
             int newX = x, newY = y;
 
@@ -332,12 +419,10 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
                 int z = 0;
                 float newDisp = fieldLeft(newX, newY, z, 0);
                 value[0] = newDisp;
-
-                return true;
+            } else {
+                value[0] = std::numeric_limits<float>::max();
             }
-        }
-
-        if (i == 3) {
+        } else if (i == 3) {
             int newX = x, newY = y;
 
             // TODO try different z values?
@@ -350,44 +435,79 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
                 int z2 = 0;
 
                 value[0] = -fieldRight(newX, newY, z2, 0);
-                return true;
+            } else {
+                value[0] = std::numeric_limits<float>::max();
             }
         }
 
-        return false;
+        return true;
     };
 }
 
 void patchMatchBPTranslationalCorrespondence(
-        const CImg<float>& lab1,
-        const CImg<float>& lab2,
+        const CImg<float>& labLeft,
+        const CImg<float>& labRight,
         CImg<float>& fieldLeft,
         CImg<float>& fieldRight,
+        CImg<int>& fieldLeftSorted,
+        CImg<int>& fieldRightSorted,
         CImg<float>& distLeft,
         CImg<float>& distRight,
+        CImg<float>& unaryLeft,
+        CImg<float>& unaryRight,
+        CImg<float>& msgLeft,
+        CImg<float>& msgRight,
         int wndSize = 15,
         int iterations = 5,
         float randomSearchFactor = 1.0f,
-        int increment = 1) {
+        int increment = 1,
+        bool purePM = false) {
     // Counter to store the current iteration
     // Sampling functions will refer to this
     int iteration = 0;
 
     // Create functions to perform propagation and random sample
-    function<void(int, int, float*)> sampleLeft, sampleRight;
+    auto sampleLeft = translationalCandidateGenerator(fieldLeft, fieldRight,
+        iteration, randomSearchFactor, increment = 1);
+    auto sampleRight = translationalCandidateGenerator(fieldRight, fieldLeft,
+        iteration, randomSearchFactor, increment = 1);
 
-    /*
-    patchMatchBeliefPropagation(
-        CImg<float>& field,
-        CImg<float>& totCost,
-        CImg<float>& fieldSorted,
-        CImg<float>& dist,
-        CImg<float>& msg,
-        function<bool(int, int, int, float[])> getCandidateValue,
-        function<float(int, int, float[])> unaryCost,
-        function<float(int, int, float[], int, int, float[])> binaryCost,
-        int increment = 1);
-    */
+    auto unaryCostLeft = translationalPatchDist(labLeft, labRight, wndSize);
+    auto unaryCostRight = translationalPatchDist(labRight, labLeft, wndSize);
+
+    auto binaryCost =
+        [=](int aX, int aY, float* aVal, int bX, int bY, float* bVal) {
+            return 0.0f;
+        };
+
+    // TODO repeat for right too and perform multiple iterations
+    for(; iteration < iterations; iteration++) {
+        cout << "PMBP Iteration: " << iteration << endl;
+        cout << "Left... ";
+        patchMatchBeliefPropagation(
+                fieldLeft,
+                distLeft,
+                fieldLeftSorted,
+                unaryLeft,
+                msgLeft,
+                sampleLeft,
+                unaryCostLeft,
+                binaryCost,
+                increment, purePM);
+        cout << "done" << endl;
+        cout << "Right... ";
+        patchMatchBeliefPropagation(
+                fieldRight,
+                distRight,
+                fieldRightSorted,
+                unaryRight,
+                msgRight,
+                sampleRight,
+                unaryCostRight,
+                binaryCost,
+                increment, purePM);
+        cout << "done" << endl;
+    }
 }
 
 /**
@@ -636,92 +756,6 @@ inline void patchMatchLeftRight(
             }
         }
     }
-}
-
-inline function<float(int, int, float[])> translationalPatchDist(
-        const CImg<float>& lab1,
-        const CImg<float>& lab2,
-        int wndSize,
-        float colorSigma = 30.0f,
-        float maxDist = 10.0f) {
-    auto dist = [lab1, lab2, wndSize, colorSigma, maxDist]
-        (int sx, int sy, float* value) -> float {
-            int dx = sx + (int) value[0];
-            int dy = sy;
-
-            if ( 
-                    sx - wndSize / 2 < 0 || sx + wndSize / 2 >= lab1.width() ||
-                    sy - wndSize / 2 < 0 || sy + wndSize / 2 >= lab1.height()||
-                    dx - wndSize / 2 < 0 || dx + wndSize / 2 >= lab2.width() ||
-                    dy - wndSize / 2 < 0 || dy + wndSize / 2 >= lab2.height()) {
-                return numeric_limits<float>::infinity();
-            }
-
-            /*
-            int minSX = max(0, sx - wndSize / 2);
-            int maxSX = min(lab1.width() - 1, sx + wndSize / 2);
-
-            int minSY = max(0, sy - wndSize / 2);
-            int maxSY = min(lab1.height() - 1, sy + wndSize / 2);
-
-            int minDX = max(0, dx - wndSize / 2);
-            int maxDX = min(lab2.width() - 1, dx + wndSize / 2);
-
-            int minDY = max(0, dy - wndSize / 2);
-            int maxDY = min(lab2.height() - 1, dy + wndSize / 2);
-
-            // The extent of the valid window around (sx, sy) and (dx, dy)
-            // to compare.
-            int minX = -min(sx - minSX, dx - minDX);
-            int maxX = min(maxSX - sx, maxDX - dx);
-
-            int minY = -min(sy - minSY, dy - minDY);
-            int maxY = min(maxSY - sy, maxDY - dy);
-            */
-            int minX = -wndSize / 2;
-            int maxX =  wndSize / 2;
-            int minY = -wndSize / 2;
-            int maxY =  wndSize / 2;
-
-            float totalWeight = 0.0f;
-            float ssd = 0.0f;
-            for (int y = minY; y <= maxY; y++) {
-                for (int x = minX; x <= maxX; x++) {
-                    // Weight pixels with a bilateral-esque filter
-                    float lab1Diff = 0.0f;
-
-                    cimg_forZC(lab1, z, c) {
-                        float lDiff = lab1(x + sx, y + sy, z, c) -
-                            lab1(sx, sy, z, c);
-                        // L1 norm:
-                        lab1Diff += lDiff;
-                        // L2 norm:
-                        // lab1Diff = lDiff * lDiff;
-                    }
-
-                    float weight = exp(-(lab1Diff) / colorSigma);
-
-                    cimg_forZC(lab1, z, c) {
-                        float diff =
-                            lab1(x + sx, y + sy, z, c) -
-                            lab2(x + dx, y + dy, z, c);
-
-                        diff = min(diff, maxDist);
-
-                        totalWeight += weight;
-
-                        // TODO Original paper also used a linear combination
-                        //      of this and the difference in gradient.
-                        ssd += diff * diff * weight;
-                    }
-                }
-            }
-
-            // TODO Original paper took the min of this and
-            //      some constant tuning parameter
-            return ssd / totalWeight;
-        };
-    return dist;
 }
 
 inline void fillHoles(
@@ -1068,6 +1102,110 @@ int main(int argc, char** argv) {
             lst.resize_halfXY();
         }
 
+        // The number of "particles" to use
+        int K = 1;
+
+        CImg<float> labLeft = fst.get_RGBtoLab();
+        CImg<float> labRight  = lst.get_RGBtoLab();
+
+        // TEST for translationalPatchDist
+        if (false) {
+            CImg<float> dist(labLeft.width(), labLeft.height(), 1);
+            auto metric = translationalPatchDist(labLeft, labRight, 15);
+            float value = 0;
+            cimg_forXY(dist, x, y) {
+                dist(x, y) = metric(x, y, &value);
+            }
+            dist.display();
+            return 0;
+        }
+
+        CImg<float> fieldLeft(labLeft.width(), labLeft.height(), K, 1);
+        CImg<float> fieldRight(labRight.width(), labRight.height(), K, 1);
+        // Initialize with random, (mostly) valid disparity particles
+        cimg_forXYZ(fieldLeft, x, y, z) {
+            int randX = (int) (cimg::rand() * labRight.width());
+
+            fieldLeft(x, y, z) = randX - x;
+        }
+        cimg_forXYZ(fieldRight, x, y, z) {
+            int randX = (int) (cimg::rand() * labLeft.width());
+
+            fieldLeft(x, y, z) = randX - x;
+        }
+
+        CImg<int> fieldLeftSorted(labLeft.width(), labLeft.height(), K);
+        CImg<int> fieldRightSorted(labRight.width(), labRight.height(), K);
+        cimg_forXYZ(fieldLeftSorted, x, y, z) {
+            fieldLeftSorted(x, y, z) = z;
+        }
+        cimg_forXYZ(fieldRightSorted, x, y, z) {
+            fieldRightSorted(x, y, z) = z;
+        }
+
+        CImg<float> distLeft(labLeft.width(), labLeft.height(), K);
+        CImg<float> distRight(labRight.width(), labRight.height(), K);
+
+        distLeft = std::numeric_limits<float>::max();
+        distRight = std::numeric_limits<float>::max();
+
+        CImg<float> unaryLeft(labLeft.width(), labLeft.height(), K);
+        CImg<float> unaryRight(labRight.width(), labRight.height(), K);
+
+        unaryLeft = std::numeric_limits<float>::max();
+        unaryRight = std::numeric_limits<float>::max();
+
+        CImg<float> msgLeft(labLeft.width(), labLeft.height(), K, 4);
+        msgLeft = 0.0f;
+        CImg<float> msgRight(labRight.width(), labRight.height(), K, 4);
+        msgRight = 0.0f;
+
+        int wndSize = 15;
+        int iterations = 10;
+        float randomSearchFactor = 1.0f;
+        int increment = 1;
+        patchMatchBPTranslationalCorrespondence(
+                labLeft,         labRight,
+                fieldLeft,       fieldRight,
+                fieldLeftSorted, fieldRightSorted,
+                distLeft,        distRight,
+                unaryLeft,       unaryRight,
+                msgLeft,         msgRight,
+                wndSize,
+                iterations,
+                randomSearchFactor,
+                increment,
+                true);
+
+        // Display the result, after filering for particles with a particular
+        // rank.
+        CImg<float> fieldLeftSlice(fieldLeft.width(), fieldLeft.height());
+        CImg<float> fieldRightSlice(fieldRight.width(), fieldRight.height());
+
+        for (int i = 0; i < K; i++) {
+            cout << "Particles with rank " << i << endl;
+            cimg_forXY(fieldLeftSlice, x, y) {
+                fieldLeftSlice(x, y) =
+                    fieldLeft(x, y, fieldLeftSorted(i));
+            }
+            cimg_forXY(fieldRightSlice, x, y) {
+                fieldRightSlice(x, y) =
+                    fieldRight(x, y, fieldRightSorted(i));
+            }
+
+            CImgList<float>(
+                    fieldLeftSlice
+                        .get_normalize(0.0f, 255.0f)
+                        .get_equalize(256)
+                        .get_map(CImg<float>().jet_LUT256()),
+                    fieldRightSlice
+                        .get_normalize(0.0f, 255.0f)
+                        .get_equalize(256)
+                        .get_map(CImg<float>().jet_LUT256())
+                    ).display();
+        }
+
+        /*
         CImg<float> fieldLeft(fst.width(), fst.height(), 1, 3);
         CImg<float> fieldRight(lst.width(), lst.height(), 1, 3);
         CImg<float> errorLeft(fst.width(), fst.height());
@@ -1121,6 +1259,7 @@ int main(int argc, char** argv) {
                 errorLeft, errorRight,
                 holesLeft, holesRight,
                 5, 2, 0.05f, 0.0f, 1);
+        */
 
         /*
         patchMatchAffine(
@@ -1131,6 +1270,7 @@ int main(int argc, char** argv) {
                 21, 1, 0.0f, 0.5f);
         */
 
+        /*
         // Fill holes with 0 for visualization purposes
         cimg_forXY(fieldLeft, x, y) {
             if (holesLeft(x, y)) {
@@ -1165,6 +1305,8 @@ int main(int argc, char** argv) {
                 dispLeft,
                 dispRight
             ).display();
+
+        */
 
         /*
         CImgDisplay fstDisp(fst);
