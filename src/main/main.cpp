@@ -243,7 +243,7 @@ inline void patchMatchBeliefPropagation(
                 int rawIndex = fieldSorted(x, y, K - 1);
 
                 // Pull back all inferior particles to make room
-                for (int i = K - 1; i > index + 1; i--) {
+                for (int i = K - 1; i >= index + 1; i--) {
                     fieldSorted(x, y, i) = fieldSorted(x, y, i - 1);
                 }
 
@@ -361,13 +361,16 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
     int& iterationCounter,
     float randomSearchFactor = 1.0f,
     int increment = 1) {
-    
+    assert(fieldLeft.depth() == fieldRight.depth());
+
+    int K = fieldLeft.depth();
+
     return [=](int x, int y, int i, float* value) -> bool {
-        if (i > 3) {
+        if (i > 3 * K) {
             return false;
         }
 
-        if (i == 0) {
+        if (i < K) {
             // Random sample
             float searchWndRadiusFactor = randomSearchFactor / pow(2.0f, iterationCounter);
 
@@ -375,10 +378,8 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
             float searchWndWidth  = searchWndRadiusFactor * width;
 
-            // TODO Maybe we should also try other values for z besides 0?
-            //      Using z = 0 only attempts to perturb the best particle
-            //      in the set.  This may not be ideal.
-            int z = 0;
+            int z = i;
+
             float minSearchWndX = x + fieldLeft(x, y, z, 0) - searchWndWidth / 2.0f;
 
             float maxSearchWndX = x + fieldLeft(x, y, z, 0) + searchWndWidth / 2.0f;
@@ -392,18 +393,21 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
             // Store the relative disparity
             value[0] = randX - x;
-        } else if (i == 1 || i == 2) {
+        } else if (i < 2 * K || i < 3 * K) {
             // Propagate from neighbors on the same view
             int newX = x, newY = y;
 
-            if (i == 1) {
+            int z = 0;
+            if (i < 2 * K) {
+                z = i - K;
                 // propagate left/right
                 if (iterationCounter % 2 == 0) {
                     newX += increment;
                 } else {
                     newX -= increment;
                 }
-            } else if (i == 2) {
+            } else {
+                z = i - 2 * K;
                 // propagate up/down
                 if (iterationCounter % 2 == 0) {
                     newY += increment;
@@ -414,24 +418,21 @@ function<bool(int, int, int, float[])> translationalCandidateGenerator(
 
             if (!(newX < 0 || newX > fieldLeft.width() ||
                     newY < 0 || newY > fieldLeft.height())) {
-                // TODO Try choosing different values for z, or randomly perturb
-                //      these too.
-                int z = 0;
                 float newDisp = fieldLeft(newX, newY, z, 0);
                 value[0] = newDisp;
             } else {
                 value[0] = std::numeric_limits<float>::max();
             }
-        } else if (i == 3) {
+        } else if (i < 3 * K) {
             int newX = x, newY = y;
 
-            // TODO try different z values?
-            int z = 0;
+            int z = i - 2 * K;
+
             newX += fieldLeft(x, y, z, 0);
 
             if (!(newX < 0 || newX > fieldRight.width() ||
                     newY < 0 || newY > fieldRight.height())) {
-                // TODO try different z values?
+                // TODO try different z values here too?
                 int z2 = 0;
 
                 value[0] = -fieldRight(newX, newY, z2, 0);
@@ -480,31 +481,20 @@ void patchMatchBPTranslationalCorrespondence(
             return 0.0f;
         };
 
-    // TODO repeat for right too and perform multiple iterations
     for(; iteration < iterations; iteration++) {
         cout << "PMBP Iteration: " << iteration << endl;
+
         cout << "Left... ";
         patchMatchBeliefPropagation(
-                fieldLeft,
-                distLeft,
-                fieldLeftSorted,
-                unaryLeft,
-                msgLeft,
-                sampleLeft,
-                unaryCostLeft,
-                binaryCost,
+                fieldLeft, distLeft, fieldLeftSorted, unaryLeft,
+                msgLeft, sampleLeft, unaryCostLeft, binaryCost,
                 increment, purePM);
         cout << "done" << endl;
+
         cout << "Right... ";
         patchMatchBeliefPropagation(
-                fieldRight,
-                distRight,
-                fieldRightSorted,
-                unaryRight,
-                msgRight,
-                sampleRight,
-                unaryCostRight,
-                binaryCost,
+                fieldRight, distRight, fieldRightSorted, unaryRight,
+                msgRight, sampleRight, unaryCostRight, binaryCost,
                 increment, purePM);
         cout << "done" << endl;
     }
@@ -1103,7 +1093,7 @@ int main(int argc, char** argv) {
         }
 
         // The number of "particles" to use
-        int K = 1;
+        int K = 2;
 
         CImg<float> labLeft = fst.get_RGBtoLab();
         CImg<float> labRight  = lst.get_RGBtoLab();
@@ -1160,8 +1150,8 @@ int main(int argc, char** argv) {
         CImg<float> msgRight(labRight.width(), labRight.height(), K, 4);
         msgRight = 0.0f;
 
-        int wndSize = 15;
-        int iterations = 10;
+        int wndSize = 7;
+        int iterations = 3;
         float randomSearchFactor = 1.0f;
         int increment = 1;
         patchMatchBPTranslationalCorrespondence(
@@ -1192,6 +1182,10 @@ int main(int argc, char** argv) {
                 fieldRightSlice(x, y) =
                     fieldRight(x, y, fieldRightSorted(i));
             }
+            fieldLeftSorted.get_shared_slice(0).display();
+            fieldLeftSorted.get_shared_slice(1).display();
+            fieldRightSorted.get_shared_slice(0).display();
+            fieldRightSorted.get_shared_slice(1).display();
 
             CImgList<float>(
                     fieldLeftSlice
