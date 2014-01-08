@@ -2,16 +2,16 @@
 
 #include <string>
 
-#define NUM_SAMPLES 15
+#define NUM_SAMPLES 13
 
 string SAMPLES[NUM_SAMPLES][2] = {
     // {"samples/football0.jpg", "samples/football1.jpg"},
     {"samples/cones0.png", "samples/cones1.png"},
     {"samples/art0.png", "samples/art1.png"},
     {"samples/computer0.png", "samples/computer1.png"},
-    {"samples/cake0.png", "samples/cake1.png"},
+    // {"samples/cake0.png", "samples/cake1.png"},
     {"samples/newspaper0.ppm", "samples/newspaper1.ppm"},
-    {"samples/bed0.jpg", "samples/bed1.jpg"},
+    // {"samples/bed0.jpg", "samples/bed1.jpg"},
     {"samples/books0.png", "samples/books1.png"},
     {"samples/bull0.ppm", "samples/bull1.ppm"},
     {"samples/drumsticks0.png", "samples/drumsticks1.png"},

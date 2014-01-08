@@ -1,8 +1,9 @@
-MODULES   := cimg maxflow patchmatch main
+MODULES   := cimg pmstereo main
 TARGET    := main
 
 CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math
-LD_FLAGS   = `pkg-config --cflags --libs x11 eigen3 opencv` -lgomp -ljpeg -lpng -lpthread
+# CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -finline-functions -ffast-math
+LD_FLAGS   = `pkg-config --cflags --libs x11 opencv eigen3` -lgomp -ljpeg -lpng -lpthread
 
 CXX       := g++
 LD        := g++
