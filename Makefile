@@ -1,9 +1,9 @@
-MODULES   := cimg pmstereo main
+MODULES   := cimg pmstereo cvstereo main
 TARGET    := main
 
-CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math
+CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math -Wfatal-errors -Iextern/libDAI/include/
 # CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -finline-functions -ffast-math
-LD_FLAGS   = `pkg-config --cflags --libs x11 opencv eigen3` -lgomp -ljpeg -lpng -lpthread
+LD_FLAGS   = `pkg-config --cflags --libs x11 opencv eigen3` -lgomp -ljpeg -lpng -lpthread extern/libDAI/lib/libdai.a
 
 CXX       := g++
 LD        := g++

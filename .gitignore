@@ -3,6 +3,7 @@ bin/*
 build/*
 samples/*
 results/*
+extern/*
 tags
 ./main
 *.swo

@@ -137,128 +137,6 @@ void flowLK(
     }
 }
 
-void stereoBMCV(
-        const CImg<float>& a,
-        const CImg<float>& b,
-        CImg<float>& flow) {
-    assert(a.depth() == 1 && a.spectrum() == 1 &&
-            b.depth() == 1 && b.spectrum() == 1);
-
-    assert(a.width() == b.width() && a.width() == flow.width() &&
-            a.height() == b.height() && a.height() == flow.height());
-
-    assert(flow.depth() == 2);
-
-    // Normalize before passing to OpenCV
-    CImg<float> aNorm = a.get_normalize(0.0f, 1.0f);
-    CImg<float> bNorm = b.get_normalize(0.0f, 1.0f);
-
-    // cv::GpuMat cvA(aNorm.height(), aNorm.width(), CV_32FC1, (void*) aNorm.data());
-
-    // cv::GpuMat cvB(bNorm.height(), bNorm.width(), CV_32FC1, (void*) bNorm.data());
-
-    // cv::GpuMat cvFlow(flow.height(), flow.width(), CV_32FC2, (void*) flow.data);
-
-    // cv::StereoConstantSpaceBP bp;
-
-    // bp(cvA, cvB, cvFlow);
-
-}
-
-void flowCV(
-        const CImg<float>& a,
-        const CImg<float>& b,
-        CImg<float>& flow) {
-    assert(a.depth() == 1 && a.spectrum() == 1 &&
-            b.depth() == 1 && b.spectrum() == 1);
-
-    assert(a.width() == b.width() && a.width() == flow.width() &&
-            a.height() == b.height() && a.height() == flow.height());
-
-    assert(flow.depth() == 2);
-
-    // Normalize before passing to OpenCV
-    CImg<float> aNorm = a.get_normalize(0.0f, 1.0f);
-    CImg<float> bNorm = b.get_normalize(0.0f, 1.0f);
-
-    cv::Mat cvA(aNorm.height(), aNorm.width(), CV_32FC1, (void*) aNorm.data());
-
-    cv::Mat cvB(bNorm.height(), bNorm.width(), CV_32FC1, (void*) bNorm.data());
-
-    cv::Mat cvFlow(flow.height(), flow.width(), CV_32FC2);
-
-    double pyr_scale = 0.5;
-    int levels = 10;
-    int winsize = 3;
-    int iterations = 5;
-    int poly_n = 5;
-    double poly_sigma = 1.5;
-    int flags = 0;
-    cv::calcOpticalFlowFarneback(cvA, cvB, cvFlow, 
-            pyr_scale, levels, winsize, iterations, poly_n, poly_sigma, flags);
-
-    cv::Mat cvFlowX(flow.height(), flow.width(), CV_32FC1,
-            (void*) flow.data());
-    cv::Mat cvFlowY(flow.height(), flow.width(), CV_32FC1,
-            (void*) (flow.data() + flow.width() * flow.height()));
-
-    std::vector<cv::Mat> output;
-    output.push_back(cvFlowX);
-    output.push_back(cvFlowY);
-
-    cv::split(cvFlow, output);
-}
-
-/**
- * Uses OpenCV to match interest points in Grayscale images 'a' and 'b'.
- *
- * The result is returned in matches as a set of column vectors containing
- * (a.x, a.y, b.x, b.y).
- *
- * See http://docs.opencv.org/doc/tutorials/features2d/feature_description/feature_description.html#feature-description
- */
-void featureMatchCV(
-        const CImg<float>& a,
-        const CImg<float>& b,
-        CImg<float>& matches) {
-    assert(a.depth() == 1 && a.spectrum() == 1 &&
-            b.depth() == 1 && b.spectrum() == 1);
-
-    CImg<float> aNorm = a.get_normalize(0.0f, 255.0f);
-    CImg<float> bNorm = b.get_normalize(0.0f, 255.0f);
-
-    cv::Mat cvA(aNorm.height(), aNorm.width(), CV_32FC1, (void*) aNorm.data());
-
-    cv::Mat cvB(bNorm.height(), bNorm.width(), CV_32FC1, (void*) bNorm.data());
-
-    cv::Mat cvA8;
-    cvA.convertTo(cvA8, CV_8U);
-
-    cv::Mat cvB8;
-    cvB.convertTo(cvB8, CV_8U);
-
-    cv::ORB orb;
-
-    std::vector<cv::KeyPoint> keypointsA, keypointsB;
-    cv::Mat descriptorsA, descriptorsB;
-
-    orb(cvA8, cv::Mat(), keypointsA, descriptorsA);
-    orb(cvB8, cv::Mat(), keypointsB, descriptorsB);
-
-    cv::BFMatcher matcher(cv::NORM_HAMMING);
-    std::vector<cv::DMatch> matchList;
-    matcher.match(descriptorsA, descriptorsB, matchList);
-
-    matches = CImg<float>(matchList.size(), 4);
-
-    cimg_forX(matches, i) {
-        matches(i, 0) = keypointsA[matchList[i].queryIdx].pt.x;
-        matches(i, 1) = keypointsA[matchList[i].queryIdx].pt.y;
-        matches(i, 2) = keypointsB[matchList[i].trainIdx].pt.x;
-        matches(i, 3) = keypointsB[matchList[i].trainIdx].pt.y;
-    }
-}
-
 void dof(
     const CImg<float>& img,
     const CImg<float>& depth,
@@ -397,3 +275,46 @@ void postProcessDepthMap(
     }
 }
 
+void flowCV(
+        const CImg<float>& a,
+        const CImg<float>& b,
+        CImg<float>& flow) {
+    assert(a.depth() == 1 && a.spectrum() == 1 &&
+            b.depth() == 1 && b.spectrum() == 1);
+
+    assert(a.width() == b.width() && a.width() == flow.width() &&
+            a.height() == b.height() && a.height() == flow.height());
+
+    assert(flow.depth() == 2);
+
+    // Normalize before passing to OpenCV
+    CImg<float> aNorm = a.get_normalize(0.0f, 1.0f);
+    CImg<float> bNorm = b.get_normalize(0.0f, 1.0f);
+
+    cv::Mat cvA(aNorm.height(), aNorm.width(), CV_32FC1, (void*) aNorm.data());
+
+    cv::Mat cvB(bNorm.height(), bNorm.width(), CV_32FC1, (void*) bNorm.data());
+
+    cv::Mat cvFlow(flow.height(), flow.width(), CV_32FC2);
+
+    double pyr_scale = 0.5;
+    int levels = 10;
+    int winsize = 3;
+    int iterations = 5;
+    int poly_n = 5;
+    double poly_sigma = 1.5;
+    int flags = 0;
+    cv::calcOpticalFlowFarneback(cvA, cvB, cvFlow, 
+            pyr_scale, levels, winsize, iterations, poly_n, poly_sigma, flags);
+
+    cv::Mat cvFlowX(flow.height(), flow.width(), CV_32FC1,
+            (void*) flow.data());
+    cv::Mat cvFlowY(flow.height(), flow.width(), CV_32FC1,
+            (void*) (flow.data() + flow.width() * flow.height()));
+
+    std::vector<cv::Mat> output;
+    output.push_back(cvFlowX);
+    output.push_back(cvFlowY);
+
+    cv::split(cvFlow, output);
+}
