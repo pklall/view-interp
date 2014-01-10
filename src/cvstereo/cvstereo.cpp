@@ -169,8 +169,8 @@ void CVStereo::getRectified(
 }
 
 void CVStereo::matchStereo() {
-    int minDisparity = -256;
-    int numDisparities = 512;
+    minDisparity = -256;
+    numDisparities = 512;
     int SADWindowSize = 3; // 3 to 11 is recommended
     int P1=8 * 3 * sqr(SADWindowSize);
     int P2=32 * 3 * sqr(SADWindowSize);
@@ -202,4 +202,6 @@ void CVStereo::getStereo(CImg<float>& out) {
     memcpy(raw.data(), stereoDisparity.data, width * height * sizeof(int16_t));
 
     out = raw;
+
+    out /= 16.0f;
 }

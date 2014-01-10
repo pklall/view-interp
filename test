@@ -1,0 +1,54 @@
+#!/usr/bin/python
+
+import subprocess
+import os
+
+rectified_data = [
+        #("samples/football0.jpg", "samples/football1.jpg"),
+        #("samples/bed0.jpg", "samples/bed1.jpg"),
+        ("samples/books0.png", "samples/books1.png"),
+        ("samples/chess0.png", "samples/chess1.png"),
+        ("samples/art0.png", "samples/art1.png"),
+        ("samples/computer0.png", "samples/computer1.png"),
+        ("samples/laundry0.png", "samples/laundry1.png"),
+        ("samples/cones0.png", "samples/cones1.png"),
+        ("samples/newspaper0.ppm", "samples/newspaper1.ppm"),
+        ("samples/bull0.ppm", "samples/bull1.ppm"),
+        ("samples/drumsticks0.png", "samples/drumsticks1.png"),
+        ("samples/dwarves0.png", "samples/dwarves1.png"),
+        ("samples/hall0.jpg", "samples/hall1.jpg"),
+        ("samples/moebius0.png", "samples/moebius1.png"),
+        ("samples/poster0.ppm", "samples/poster1.ppm"),
+        ("samples/raindeer0.png", "samples/raindeer1.png")
+        ]
+
+def make():
+    makefile_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "Makefile")
+    cmd = ["make", "--file", makefile_path]
+
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc_out, proc_err = proc.communicate()
+    if len(proc_err) > 0:
+        print("Make - Error:\n" + proc_err)
+    if len(proc_out) > 0:
+        print("Make - Out:\n" + proc_out)
+
+def run(op, left, right):
+    exepath = os.path.join(os.path.dirname(os.path.realpath(__file__)), "main")
+    cmd = [exepath, op, left, right]
+
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc_out, proc_err = proc.communicate()
+    if len(proc_err) > 0:
+        print("Run - Error:\n" + proc_err)
+    if len(proc_out) > 0:
+        print("Run - Out:\n" + proc_out)
+
+if __name__ == "__main__":
+    make()
+
+    pair = ("samples/computer0.png", "samples/art0.png")
+    run("stereomatte", pair[0], pair[1])
+
+    # pair = rectified_data[0]
+    # run("cvstereo", pair[0], pair[1])

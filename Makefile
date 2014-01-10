@@ -2,8 +2,8 @@ MODULES   := cimg pmstereo cvstereo main
 TARGET    := main
 
 CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math -Wfatal-errors -Iextern/libDAI/include/
-# CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -finline-functions -ffast-math
-LD_FLAGS   = `pkg-config --cflags --libs x11 opencv eigen3` -lgomp -ljpeg -lpng -lpthread extern/libDAI/lib/libdai.a
+# CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Wfatal-errors -Iextern/libDAI/include/ -fno-omit-frame-pointer #-fsanitize=address 
+LD_FLAGS   = `pkg-config --cflags --libs x11 opencv eigen3` -lgomp -ljpeg -lpng -lpthread extern/libDAI/lib/libdai.a -llbfgs -ladolc
 
 CXX       := g++
 LD        := g++
@@ -25,7 +25,7 @@ endef
 all: checkdirs $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(LD) $^ $(LD_FLAGS) -o $@ 
+	$(LD) $^ $(CXXFLAGS) $(LD_FLAGS) -o $@ 
 
 checkdirs: $(BUILD_DIR)
 

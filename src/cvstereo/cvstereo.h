@@ -12,6 +12,10 @@ class CVStereo {
 
         cv::Mat rectifiedMasks[2];
 
+        int minDisparity;
+
+        int numDisparities;
+
         cv::Mat stereoDisparity;
 
         void convertCImgToMat(

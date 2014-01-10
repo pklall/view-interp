@@ -6,58 +6,261 @@
 
 #include "cvstereo/cvstereo.h"
 
+#include <algorithm>
+
+// #define LBFGS_FLOAT 32
+#include <lbfgs.h>
+
 using namespace std;
 
 using namespace cimg_library;
 
 #define dbgOut std::cout
 
-#define NUM_SAMPLES 14
-string SAMPLES[NUM_SAMPLES][2] = {
-    // Not rectified:
-    // {"samples/football0.jpg", "samples/football1.jpg"},
-    // {"samples/bed0.jpg", "samples/bed1.jpg"},
-    // Middleburry rectified:
-    {"samples/chess0.png", "samples/chess1.png"},
-    {"samples/art0.png", "samples/art1.png"},
-    {"samples/computer0.png", "samples/computer1.png"},
-    {"samples/laundry0.png", "samples/laundry1.png"},
-    {"samples/cones0.png", "samples/cones1.png"},
-    {"samples/newspaper0.ppm", "samples/newspaper1.ppm"},
-    {"samples/books0.png", "samples/books1.png"},
-    {"samples/bull0.ppm", "samples/bull1.ppm"},
-    {"samples/drumsticks0.png", "samples/drumsticks1.png"},
-    {"samples/dwarves0.png", "samples/dwarves1.png"},
-    {"samples/hall0.jpg", "samples/hall1.jpg"},
-    {"samples/moebius0.png", "samples/moebius1.png"},
-    {"samples/poster0.ppm", "samples/poster1.ppm"},
-    {"samples/raindeer0.png", "samples/raindeer1.png"}
-};
+void runStereoMatte(CImg<float>& fst, CImg<float>& lst);
+
+void runCVStereo(CImg<float>& fst, CImg<float>& lst);
+
+void runPMStereo(CImg<float>& fst, CImg<float>& lst);
 
 int main(int argc, char** argv) {
-    for (int sampleIndex = 0; sampleIndex < NUM_SAMPLES; sampleIndex++) {
-        CImg<float> fst(SAMPLES[sampleIndex][0].c_str());
-        CImg<float> lst(SAMPLES[sampleIndex][1].c_str());
-
-        CVStereo stereo(fst, lst, true);
-
-        CImg<float> rLeft, rRight;
-        stereo.getRectified(rLeft, rRight);
-        // CImgList<float>(rLeft, rRight).display();
-
-        stereo.matchStereo();
-
-        CImg<float> result;
-
-        stereo.getStereo(result);
-
-        result.display();
+    if (argc != 4) {
+        printf("Usage: %s <operation> left.png right.png\n", argv[0]);
+        exit(1);
     }
 
-    return 1;
+    string op(argv[1]);
+    CImg<float> fst(argv[2]);
+    CImg<float> lst(argv[3]);
+
+    std::transform(op.begin(), op.end(),op.begin(), ::tolower);
+
+    if (op == "cvstereo") {
+        printf("Running CVStereo\n");
+        runCVStereo(fst, lst);
+    } else if (op == "pmstereo") {
+        runPMStereo(fst, lst);
+    } else if (op == "stereomatte") {
+        printf("Running stereomatte\n");
+        runStereoMatte(fst, lst);
+    }
+
+    return 0;
 }
 
-void testPMStereo(
+void optimizeLBFGS(
+        int N,
+        std::function<void(lbfgsfloatval_t*)> initGuess,
+        std::function<lbfgsfloatval_t(const lbfgsfloatval_t*, lbfgsfloatval_t*)> eval,
+        std::function<void(const lbfgsfloatval_t*, lbfgsfloatval_t)> result) {
+    lbfgsfloatval_t fx;
+    lbfgsfloatval_t *x = lbfgs_malloc(N);
+    lbfgs_parameter_t param;
+
+    if (x == NULL) {
+        printf("ERROR: Failed to allocate a memory block for variables.\n");
+        return;
+    }
+
+    initGuess(x);
+
+    // Initialize the parameters for the L-BFGS optimization.
+    lbfgs_parameter_init(&param);
+    // param.linesearch = LBFGS_LINESEARCH_BACKTRACKING;
+
+    auto evaluate = [](
+            void *instance,
+            const lbfgsfloatval_t *x,
+            lbfgsfloatval_t *g,
+            const int n,
+            const lbfgsfloatval_t step
+            ) -> lbfgsfloatval_t {
+        auto eval = (std::function<lbfgsfloatval_t(const lbfgsfloatval_t*, lbfgsfloatval_t*)>*) instance;
+        return (*eval)(x, g);
+    };
+
+    auto progress = [](
+            void *instance,
+            const lbfgsfloatval_t *x,
+            const lbfgsfloatval_t *g,
+            const lbfgsfloatval_t fx,
+            const lbfgsfloatval_t xnorm,
+            const lbfgsfloatval_t gnorm,
+            const lbfgsfloatval_t step,
+            int n,
+            int k,
+            int ls) -> int{
+        // Do nothing
+        return 0;
+    };
+
+    auto evalCopy = eval;
+    
+    int ret = lbfgs(N, x, &fx, evaluate, progress, &evalCopy, &param);
+    printf("L-BFGS optimization terminated with status code = %d\n", ret);
+
+    result(x, fx);
+
+    lbfgs_free(x);
+}
+
+void runStereoMatte(
+        CImg<float>& fst,
+        CImg<float>& lst) {
+    fst.resize_halfXY();
+    fst.resize_halfXY();
+    lst.resize_halfXY();
+    lst.resize_halfXY();
+
+    CImg<double> a = fst;
+    CImg<double> b = fst;
+
+    // Remove alpha channel, if it exists.
+    a.channels(0, 2);
+    b.channels(0, 2);
+
+    assert(a.is_sameXYZC(b));
+
+    int offset = 20;
+    double alpha = 0.5;
+
+    a.draw_image(0, lst, alpha);
+    b.draw_image(offset, lst.get_crop(0, 0, 0, 0, lst.width() - offset, lst.height(), lst.depth(), lst.spectrum()), alpha);
+
+    assert(a.is_sameXYZC(b));
+    
+    // CImgList<float> foo(fst, lst);
+    // foo.display();
+
+    // Goal:
+    //  * Known: a, b, offset, alpha
+    //  * Unknown: f, g
+    //  * Constraints:
+    //      // FIXME Add scaling constant to SSD terms?
+    //      sqr(f(x, y) + g(x, y) * alpha - a(x, y)) == 0
+    //      sqr(f(x, y) + g(x + offset, y) * alpha - b(x, y)) == 0
+    //      f(x, y) - f(x + 1, y    ) == 0
+    //      f(x, y) - f(x - 1, y    ) == 0
+    //      f(x, y) - f(x,     y + 1) == 0
+    //      f(x, y) - f(x,     y - 1) == 0
+    //      g(x, y) - g(x + 1, y    ) == 0
+    //      g(x, y) - g(x - 1, y    ) == 0
+    //      g(x, y) - g(x,     y + 1) == 0
+    //      g(x, y) - g(x,     y - 1) == 0
+
+    int N = a.size() + b.size();
+
+    auto initGuess = [&](lbfgsfloatval_t* X) {
+        CImg<double> f(X, a.width(), a.height(), a.depth(), a.spectrum(), true);
+        CImg<double> g(X + f.size(), a.width(), a.height(), a.depth(), a.spectrum(), true);
+
+        f = b;
+        g = a;
+    };
+
+
+    // TODO Speed this up with OpenMP
+    auto eval = [&](
+            const lbfgsfloatval_t* X,
+            lbfgsfloatval_t* G) -> lbfgsfloatval_t {
+        // Wrap X and G with shared-memory images
+        const CImg<double> f(X, a.width(), a.height(), a.depth(), a.spectrum(), true);
+        const CImg<double> g(X + f.size(), a.width(), a.height(), a.depth(), a.spectrum(), true);
+        CImg<double> dF(G, a.width(), a.height(), a.depth(), a.spectrum(), true);
+        CImg<double> dG(G + dF.size(), a.width(), a.height(), a.depth(), a.spectrum(), true);
+
+        const int neighborhood[4][2] {
+            {0, 1}, {0, -1}, {-1, 0}, {1, 0}
+        };
+
+        double totalCost = 0.0f;
+        dF = 0.0f;
+        dG = 0.0f;
+
+#pragma omp parallel for
+        for (int c = 0; c < a.spectrum(); c++) {
+            cimg_forXYZ(a, x, y, z) {
+                if (!g.containsXYZC(x + offset, y, 0, c)) {
+                    continue;
+                }
+
+                double diff;
+                
+                // Added constraint that results be close to 0.5
+                diff = f(x, y, 0, c) - 0.5;
+                totalCost += sqr(diff);
+                dF(x, y, 0, c) += 2.0 * diff;
+
+                diff = g(x, y, 0, c) - 0.5;
+                totalCost += sqr(diff);
+                dG(x, y, 0, c) += 2.0 * diff;
+
+                double weight = 1000.0;
+                diff = f(x, y, 0, c) * (1.0 - alpha) + g(x, y, 0, c) * alpha - a(x, y, 0, c);
+                totalCost += weight * sqr(diff);
+                dF(x, y, 0, c) += weight * 2.0 * diff * (1.0 - alpha);
+                dG(x, y, 0, c) += weight * 2.0 * diff * alpha;
+
+                diff = f(x, y, 0, c) * (1.0 - alpha) + g(x + offset, y, 0, c) * alpha - b(x, y, 0, c);
+                totalCost += weight * sqr(diff);
+                dF(x, y, 0, c) += weight * 2.0 * diff * (1.0 - alpha);
+                dG(x + offset, y, 0, c) += weight * 2.0 * diff * alpha;
+
+                for (int i = 0; i < 4; i++) {
+                    int nx = x + neighborhood[i][0];
+                    int ny = y + neighborhood[i][1];
+
+                    if (nx >= 0 && nx < a.width() && ny >= 0 && ny < a.height()) {
+                        diff = f(x, y, 0, c) - f(nx, ny, 0, c);
+                        totalCost += sqr(diff);
+                        dF(x, y, 0, c) += 2.0 * (diff) * 1.0;
+                        dF(nx, ny, 0, c) += 2.0 * (diff) * -1.0;
+
+                        diff = g(x, y, 0, c) - g(nx, ny, 0, c);
+                        totalCost += sqr(diff);
+                        dG(x, y, 0, c) += 2.0 * diff * 1.0;
+                        dG(nx, ny, 0, c) += 2.0 * diff * -1.0;
+                    }
+                }
+            }
+        }
+
+        printf("Cost = %f\n", totalCost);
+
+        return totalCost;
+    };
+
+
+    auto result = [&](const lbfgsfloatval_t* X, lbfgsfloatval_t error) {
+        CImg<double> f(X, a.width(), a.height(), a.depth(), a.spectrum(), false);
+        CImg<double> g(X + f.size(), a.width(), a.height(), a.depth(), a.spectrum(), false);
+
+        f.display();
+        g.display();
+    };
+
+    optimizeLBFGS(N, initGuess, eval, result);
+}
+
+void runCVStereo(
+        CImg<float>& fst,
+        CImg<float>& lst) {
+    CVStereo stereo(fst, lst, true);
+
+    CImg<float> rLeft, rRight;
+    stereo.getRectified(rLeft, rRight);
+    // CImgList<float>(rLeft, rRight).display();
+
+    stereo.matchStereo();
+
+    CImg<float> result;
+
+    stereo.getStereo(result);
+
+    result.display();
+}
+
+void runPMStereo(
         CImg<float>& fst,
         CImg<float>& lst) {
     int MAX_SIZE = 1024;

@@ -23,13 +23,14 @@ using namespace std;
 
 using namespace cimg_library;
 
-extern template struct cimg_library::CImg<float>;
-extern template struct cimg_library::CImg<int>;
+// extern template struct cimg_library::CImg<float>;
+// extern template struct cimg_library::CImg<int>;
 
 inline double norm(float x, float y) {
     return sqrt(x * x + y * y);
 }
 
-inline float sqr(float v) {
+template<class T>
+inline T sqr(T v) {
     return v * v;
 }
