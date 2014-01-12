@@ -1,9 +1,44 @@
 MODULES   := cimg pmstereo cvstereo main
 TARGET    := main
 
-CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Ofast -finline-functions -ffast-math -Wfatal-errors -Iextern/libDAI/include/
+OPT_LEVEL := -O1
+
+INCLUDES  := -Iextern/libDAI/include \
+             -I/usr/include/eigen3 \
+             -Iextern/ceres-solver/include
+
+CXXFLAGS  := $(OPT_LEVEL) \
+             -std=c++11 \
+             -g \
+             -Wall \
+             -pthread \
+             -fopenmp \
+             -finline-functions \
+             -ffast-math \
+             -Wfatal-errors \
+
 # CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Wfatal-errors -Iextern/libDAI/include/ -fno-omit-frame-pointer #-fsanitize=address 
-LD_FLAGS   = `pkg-config --cflags --libs x11 opencv eigen3` -lgomp -ljpeg -lpng -lpthread extern/libDAI/lib/libdai.a -llbfgs -ladolc
+
+LD_DIRS   := -Lextern/libDAI/lib \
+             -Lextern/ceres-solver/build/lib
+
+LD_STATIC := -lceres
+
+LD_FLAGS  := $(LD_DIRS) \
+             -lpthread \
+             -lgflags \
+             -lglog \
+             -lm \
+             -lgomp \
+             -fopenmp \
+             -lcamd \
+             -lamd \
+             -lcolamd \
+             -lcholmod \
+             -lccolamd \
+             -lblas \
+             -llapack \
+             `pkg-config --cflags --libs x11 opencv eigen3`
 
 CXX       := g++
 LD        := g++
@@ -17,7 +52,7 @@ vpath %.cpp $(SRC_DIR)
 
 define make-goal
 $1/%.o: %.cpp
-	$(CXX) -Isrc -I$$(<D) $(CXXFLAGS) -c $$< -o $$@
+	$(CXX) -Isrc -I$$(<D) $(CXXFLAGS) $(INCLUDES) -c $$< -o $$@
 endef
 
 .PHONY: all checkdirs clean
@@ -25,7 +60,7 @@ endef
 all: checkdirs $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(LD) $^ $(CXXFLAGS) $(LD_FLAGS) -o $@ 
+	$(LD) $^ $(CXXFLAGS) $(LD_STATIC) $(LD_FLAGS) -o $@ 
 
 checkdirs: $(BUILD_DIR)
 
