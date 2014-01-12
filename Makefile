@@ -38,6 +38,8 @@ LD_FLAGS  := $(LD_DIRS) \
              -lccolamd \
              -lblas \
              -llapack \
+			 -lpng \
+			 -ljpeg \
              `pkg-config --cflags --libs x11 opencv eigen3`
 
 CXX       := g++
@@ -57,12 +59,15 @@ endef
 
 .PHONY: all checkdirs clean
 
-all: checkdirs $(TARGET)
+all: checkdirs $(TARGET) clangcomplete
 
 $(TARGET): $(OBJ)
 	$(LD) $^ $(CXXFLAGS) $(LD_STATIC) $(LD_FLAGS) -o $@ 
 
 checkdirs: $(BUILD_DIR)
+
+clangcomplete:
+	echo "-Isrc $(addprefix -Isrc/,$(MODULES)) $(INCLUDES)" > .clang_complete
 
 $(BUILD_DIR):
 	@mkdir -p $@
