@@ -67,7 +67,7 @@ $(TARGET): $(OBJ)
 checkdirs: $(BUILD_DIR)
 
 clangcomplete:
-	echo "-Isrc $(addprefix -Isrc/,$(MODULES)) $(INCLUDES)" > .clang_complete
+	@echo "-Isrc $(addprefix -Isrc/,$(MODULES)) $(INCLUDES)" > .clang_complete
 
 $(BUILD_DIR):
 	@mkdir -p $@
