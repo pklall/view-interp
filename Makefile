@@ -1,11 +1,12 @@
-MODULES   := cimg pmstereo cvstereo main
+MODULES   := cimg pmstereo cvutil main
 TARGET    := main
 
 OPT_LEVEL := -O1
 
 INCLUDES  := -Iextern/libDAI/include \
              -I/usr/include/eigen3 \
-             -Iextern/ceres-solver/include
+             -Iextern/ceres-solver/include \
+			 -Iextern/SLIC-Superpixels
 
 CXXFLAGS  := $(OPT_LEVEL) \
              -std=c++11 \
@@ -20,9 +21,11 @@ CXXFLAGS  := $(OPT_LEVEL) \
 # CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Wfatal-errors -Iextern/libDAI/include/ -fno-omit-frame-pointer #-fsanitize=address 
 
 LD_DIRS   := -Lextern/libDAI/lib \
-             -Lextern/ceres-solver/build/lib
+             -Lextern/ceres-solver/build/lib \
+             -Lextern/SLIC-Superpixels
 
-LD_STATIC := -lceres
+LD_STATIC := -lceres \
+             -lslic
 
 LD_FLAGS  := $(LD_DIRS) \
              -lpthread \

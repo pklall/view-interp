@@ -1,51 +1,9 @@
 #include "common.h"
 
-#include "cvstereo.h"
+#include "cvutil.h"
 
 #include <cstring>
 
-void CVStereo::convertCImgToMat(
-        const CImg<float>& in,
-        cv::Mat& out) {
-    assert(in.spectrum() == 3);
-
-    std::vector<cv::Mat> channels;
-
-    // We must push in reverse order since CImg uses RGB, but OpenCV uses BGR
-    for (int c = 2; c >= 0; c--) {
-        auto cimgChannel = in.get_channel(c);
-
-        cv::Mat m = cv::Mat(in.height(), in.width(), CV_32FC1, cimgChannel.data());
-
-        // Note that we *must* clone since the constructor above doesn't copy
-        // the data from cimgChannel, which will soon be deallocated.
-        channels.push_back(m.clone());
-    }
-
-
-    cv::merge(channels, out);
-}
-
-void CVStereo::convertMatToCImg(
-        const cv::Mat& in,
-        CImg<float>& out) {
-    cv::Mat inF;
-
-    in.convertTo(inF, CV_32FC3);
-
-    std::vector<cv::Mat> channels(3);
-
-    cv::split(inF, channels);
-
-    int width = in.size().width;
-    int height = in.size().height;
-    out = CImg<float>(width, height, 1, 3);
-
-    for (int c = 0; c < 3; c++) {
-        memcpy(out.get_shared_channel(2 - c).data(), channels[c].data,
-                width * height * sizeof(float));
-    }
-}
 
 void CVStereo::rectify() {
     // Find interest points using ORB...

@@ -2,13 +2,15 @@
 
 #include "glog/logging.h"
 
+#include "slic.h"
+
 #include "common.h"
 
 #include "util.h"
 
 #include "pmstereo/pmstereo.h"
 
-#include "cvstereo/cvstereo.h"
+#include "cvutil/cvutil.h"
 
 #include <algorithm>
 
@@ -23,6 +25,8 @@ using ceres::Solver;
 using ceres::Solve;
 
 #define dbgOut std::cout
+
+void runBPStereo(CImg<float>& fst, CImg<float>& lst);
 
 void runStereoMatte(CImg<float>& fst, CImg<float>& lst);
 
@@ -50,9 +54,25 @@ int main(int argc, char** argv) {
     } else if (op == "stereomatte") {
         printf("Running stereomatte\n");
         runStereoMatte(fst, lst);
+    } else if (op == "bpstereo") {
+        printf("Running bpstereo\n");
+        runBPStereo(fst, lst);
     }
 
     return 0;
+}
+
+void runBPStereo(
+        CImg<float>& fst,
+        CImg<float>& lst) {
+    CImg<int> superpixelMap;
+
+    slicSuperpixels(
+            fst,
+            (fst.width() * fst.height()) / 256,
+            15,
+            superpixelMap);
+    
 }
 
 struct StereoMattingCost {

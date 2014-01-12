@@ -2,6 +2,20 @@
 
 #include "common.h"
 
+void convertCImgToMat(
+        const CImg<float>& in,
+        cv::Mat& out);
+
+void convertMatToCImg(
+        const cv::Mat& in,
+        CImg<float>& out);
+
+void slicSuperpixels(
+        const CImg<float>& labIn,
+        int numSuperpixels,
+        int nc,
+        CImg<int>& result);
+
 class CVStereo {
     private:
         cv::Mat original[2];
@@ -17,14 +31,6 @@ class CVStereo {
         int numDisparities;
 
         cv::Mat stereoDisparity;
-
-        void convertCImgToMat(
-                const CImg<float>& in,
-                cv::Mat& out);
-
-        void convertMatToCImg(
-                const cv::Mat& in,
-                CImg<float>& out);
 
         void warp(std::vector<cv::Point2f> points[2]);
 
