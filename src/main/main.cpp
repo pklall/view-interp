@@ -1,3 +1,7 @@
+#include "ceres/ceres.h"
+
+#include "glog/logging.h"
+
 #include "common.h"
 
 #include "util.h"
@@ -8,12 +12,15 @@
 
 #include <algorithm>
 
-// #define LBFGS_FLOAT 32
-#include <lbfgs.h>
-
 using namespace std;
 
 using namespace cimg_library;
+
+using ceres::AutoDiffCostFunction;
+using ceres::CostFunction;
+using ceres::Problem;
+using ceres::Solver;
+using ceres::Solve;
 
 #define dbgOut std::cout
 
@@ -48,61 +55,22 @@ int main(int argc, char** argv) {
     return 0;
 }
 
-void optimizeLBFGS(
-        int N,
-        std::function<void(lbfgsfloatval_t*)> initGuess,
-        std::function<lbfgsfloatval_t(const lbfgsfloatval_t*, lbfgsfloatval_t*)> eval,
-        std::function<void(const lbfgsfloatval_t*, lbfgsfloatval_t)> result) {
-    lbfgsfloatval_t fx;
-    lbfgsfloatval_t *x = lbfgs_malloc(N);
-    lbfgs_parameter_t param;
+struct StereoMattingCost {
+    private:
+        const CImg<float>& a, b;
 
-    if (x == NULL) {
-        printf("ERROR: Failed to allocate a memory block for variables.\n");
-        return;
-    }
+    public:
+        StereoMattingCost(const CImg<float>& _a, const CImg<float>& _b)
+            : a(_a), b(_b)
+        {
+        }
 
-    initGuess(x);
+        template <typename T> bool operator()(const T* const xRaw, T* residual) const {
+            // residual[0] = T(10.0) - x[0];
 
-    // Initialize the parameters for the L-BFGS optimization.
-    lbfgs_parameter_init(&param);
-    // param.linesearch = LBFGS_LINESEARCH_BACKTRACKING;
-
-    auto evaluate = [](
-            void *instance,
-            const lbfgsfloatval_t *x,
-            lbfgsfloatval_t *g,
-            const int n,
-            const lbfgsfloatval_t step
-            ) -> lbfgsfloatval_t {
-        auto eval = (std::function<lbfgsfloatval_t(const lbfgsfloatval_t*, lbfgsfloatval_t*)>*) instance;
-        return (*eval)(x, g);
-    };
-
-    auto progress = [](
-            void *instance,
-            const lbfgsfloatval_t *x,
-            const lbfgsfloatval_t *g,
-            const lbfgsfloatval_t fx,
-            const lbfgsfloatval_t xnorm,
-            const lbfgsfloatval_t gnorm,
-            const lbfgsfloatval_t step,
-            int n,
-            int k,
-            int ls) -> int{
-        // Do nothing
-        return 0;
-    };
-
-    auto evalCopy = eval;
-    
-    int ret = lbfgs(N, x, &fx, evaluate, progress, &evalCopy, &param);
-    printf("L-BFGS optimization terminated with status code = %d\n", ret);
-
-    result(x, fx);
-
-    lbfgs_free(x);
-}
+            return true;
+        }
+};
 
 void runStereoMatte(
         CImg<float>& fst,
@@ -128,118 +96,33 @@ void runStereoMatte(
     b.draw_image(offset, lst.get_crop(0, 0, 0, 0, lst.width() - offset, lst.height(), lst.depth(), lst.spectrum()), alpha);
 
     assert(a.is_sameXYZC(b));
-    
-    // CImgList<float> foo(fst, lst);
-    // foo.display();
 
-    // Goal:
-    //  * Known: a, b, offset, alpha
-    //  * Unknown: f, g
-    //  * Constraints:
-    //      // FIXME Add scaling constant to SSD terms?
-    //      sqr(f(x, y) + g(x, y) * alpha - a(x, y)) == 0
-    //      sqr(f(x, y) + g(x + offset, y) * alpha - b(x, y)) == 0
-    //      f(x, y) - f(x + 1, y    ) == 0
-    //      f(x, y) - f(x - 1, y    ) == 0
-    //      f(x, y) - f(x,     y + 1) == 0
-    //      f(x, y) - f(x,     y - 1) == 0
-    //      g(x, y) - g(x + 1, y    ) == 0
-    //      g(x, y) - g(x - 1, y    ) == 0
-    //      g(x, y) - g(x,     y + 1) == 0
-    //      g(x, y) - g(x,     y - 1) == 0
+    CImgList<double>(a, b).display();
 
-    int N = a.size() + b.size();
+    // The variable to solve for with its initial value. It will be
+    // mutated in place by the solver.
+    CImg<double> x(a.width(), a.height(), a.depth(), a.spectrum());
+    x.rand(0.0f, 255.0f);
+    const CImg<double> initialX = x;
 
-    auto initGuess = [&](lbfgsfloatval_t* X) {
-        CImg<double> f(X, a.width(), a.height(), a.depth(), a.spectrum(), true);
-        CImg<double> g(X + f.size(), a.width(), a.height(), a.depth(), a.spectrum(), true);
+    // Build the problem.
+    Problem problem;
 
-        f = b;
-        g = a;
-    };
+    // Set up the only cost function (also known as residual). This uses
+    // auto-differentiation to obtain the derivative (jacobian).
+    /*
+    CostFunction* cost_function =
+        new DynamicAutoDiffCostFunction<CostFunctor, 1, DYNAMIC>(new CostFunctor());
+    problem.AddResidualBlock(cost_function, NULL, x.data());
+    */
 
+    // Run the solver!
+    Solver::Options options;
+    options.minimizer_progress_to_stdout = true;
+    Solver::Summary summary;
+    Solve(options, &problem, &summary);
 
-    // TODO Speed this up with OpenMP
-    auto eval = [&](
-            const lbfgsfloatval_t* X,
-            lbfgsfloatval_t* G) -> lbfgsfloatval_t {
-        // Wrap X and G with shared-memory images
-        const CImg<double> f(X, a.width(), a.height(), a.depth(), a.spectrum(), true);
-        const CImg<double> g(X + f.size(), a.width(), a.height(), a.depth(), a.spectrum(), true);
-        CImg<double> dF(G, a.width(), a.height(), a.depth(), a.spectrum(), true);
-        CImg<double> dG(G + dF.size(), a.width(), a.height(), a.depth(), a.spectrum(), true);
-
-        const int neighborhood[4][2] {
-            {0, 1}, {0, -1}, {-1, 0}, {1, 0}
-        };
-
-        double totalCost = 0.0f;
-        dF = 0.0f;
-        dG = 0.0f;
-
-#pragma omp parallel for
-        for (int c = 0; c < a.spectrum(); c++) {
-            cimg_forXYZ(a, x, y, z) {
-                if (!g.containsXYZC(x + offset, y, 0, c)) {
-                    continue;
-                }
-
-                double diff;
-                
-                // Added constraint that results be close to 0.5
-                diff = f(x, y, 0, c) - 0.5;
-                totalCost += sqr(diff);
-                dF(x, y, 0, c) += 2.0 * diff;
-
-                diff = g(x, y, 0, c) - 0.5;
-                totalCost += sqr(diff);
-                dG(x, y, 0, c) += 2.0 * diff;
-
-                double weight = 1000.0;
-                diff = f(x, y, 0, c) * (1.0 - alpha) + g(x, y, 0, c) * alpha - a(x, y, 0, c);
-                totalCost += weight * sqr(diff);
-                dF(x, y, 0, c) += weight * 2.0 * diff * (1.0 - alpha);
-                dG(x, y, 0, c) += weight * 2.0 * diff * alpha;
-
-                diff = f(x, y, 0, c) * (1.0 - alpha) + g(x + offset, y, 0, c) * alpha - b(x, y, 0, c);
-                totalCost += weight * sqr(diff);
-                dF(x, y, 0, c) += weight * 2.0 * diff * (1.0 - alpha);
-                dG(x + offset, y, 0, c) += weight * 2.0 * diff * alpha;
-
-                for (int i = 0; i < 4; i++) {
-                    int nx = x + neighborhood[i][0];
-                    int ny = y + neighborhood[i][1];
-
-                    if (nx >= 0 && nx < a.width() && ny >= 0 && ny < a.height()) {
-                        diff = f(x, y, 0, c) - f(nx, ny, 0, c);
-                        totalCost += sqr(diff);
-                        dF(x, y, 0, c) += 2.0 * (diff) * 1.0;
-                        dF(nx, ny, 0, c) += 2.0 * (diff) * -1.0;
-
-                        diff = g(x, y, 0, c) - g(nx, ny, 0, c);
-                        totalCost += sqr(diff);
-                        dG(x, y, 0, c) += 2.0 * diff * 1.0;
-                        dG(nx, ny, 0, c) += 2.0 * diff * -1.0;
-                    }
-                }
-            }
-        }
-
-        printf("Cost = %f\n", totalCost);
-
-        return totalCost;
-    };
-
-
-    auto result = [&](const lbfgsfloatval_t* X, lbfgsfloatval_t error) {
-        CImg<double> f(X, a.width(), a.height(), a.depth(), a.spectrum(), false);
-        CImg<double> g(X + f.size(), a.width(), a.height(), a.depth(), a.spectrum(), false);
-
-        f.display();
-        g.display();
-    };
-
-    optimizeLBFGS(N, initGuess, eval, result);
+    std::cout << summary.BriefReport() << "\n";
 }
 
 void runCVStereo(
@@ -369,5 +252,4 @@ void runPMStereo(
 
     CImgList<float>(fst, visLeft).display();
 }
-
 
