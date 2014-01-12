@@ -128,7 +128,8 @@ void runStereoMatte(
 void naiveStereoReconstruct(
         const CImg<float>& original,
         const CImg<float>& disparity,
-        CImg<float>& result) {
+        CImg<float>& result,
+        float scale = 1.0f) {
     CImg<int> sorted;
 
     disparity.get_sort(sorted, false);
@@ -141,7 +142,7 @@ void naiveStereoReconstruct(
         int sx = (sorted(x, y) % disparity.width());
         int sy = (sorted(x, y) / disparity.width());
 
-        float dx = sx - disparity(sx, sy);
+        float dx = sx - scale * disparity(sx, sy);
         float dy = sy;
 
         if (original.containsXYZC(sx, sy) && result.containsXYZC(dx, dy)) {
@@ -155,64 +156,53 @@ void naiveStereoReconstruct(
 void runCVStereo(
         CImg<float>& fst,
         CImg<float>& lst) {
-    for (int s = 0; s < 40; s++) {
-        printf("Processing scale %d\n", s);
+    CImg<float> dispLeft, dispRight;
 
-        float scale = 1.0f + s * 0.5f;
+    int maxDisp = 256;
 
-        CImg<float> fstDown, lstDown;
-        CImg<float> result;
-
-        fstDown = fst;
-        lstDown = lst;
-
-        fstDown.resize(
-                (int) (fstDown.width() / scale),
-                (int) (fstDown.height() / scale),
-                -100,
-                -100,
-                5 // cubic resampling
-                );
-        lstDown.resize(
-                (int) (lstDown.width() / scale),
-                (int) (lstDown.height() / scale),
-                -100,
-                -100,
-                5 // cubic resampling
-                );
-
-        CVStereo stereo(fstDown, lstDown, true);
-
-        int maxDisp = (int) ((256.0f / scale) / 16 + 1) * 16;
-
+    {
+        CVStereo stereo(fst, lst, true);
         stereo.matchStereo(-maxDisp, maxDisp, 3, 1.0f);
+        stereo.getStereo(dispLeft);
+    }
 
-        stereo.getStereo(result);
+    {
+        CVStereo stereo(lst, fst, true);
+        stereo.matchStereo(-maxDisp, maxDisp, 3, 1.0f);
+        stereo.getStereo(dispRight);
+    }
 
-        // Resize the result with nearest-neighbor sampling
-        result.resize(fst.width(), fst.height(), -100, -100, 1);
-
-        cimg_forXY(result, x, y) {
-            if (result(x, y) < -maxDisp) {
-                // Use infinity to signify lack of data
-                result(x, y) = std::numeric_limits<float>::max();
-            }
+    // Use infinity to signify lack of data
+    cimg_forXY(dispLeft, x, y) {
+        if (dispLeft(x, y) < -maxDisp) {
+            dispLeft(x, y) = std::numeric_limits<float>::max();
         }
+    }
+
+    cimg_forXY(dispRight, x, y) {
+        if (dispRight(x, y) < -maxDisp) {
+            dispRight(x, y) = std::numeric_limits<float>::max();
+        }
+    }
+
+    for (int i = 0; i <= 10; i++) {
         CImg<float> reconstruction;
-        naiveStereoReconstruct(fst, result, reconstruction);
-        CImgList<float>(lst, reconstruction, (lst - reconstruction).sqr()).display();
 
-        // Color the result to display a pretty picture
-        result += maxDisp;
-        result /= maxDisp * 2.0f;
-        result *= 255.0f;
-        result.map(result.jet_LUT256());
+        naiveStereoReconstruct(fst, dispLeft, reconstruction, i / 10.0f);
 
-        string fname = "results/scale_" + to_string(scale) + ".png";
-        result.save(fname.c_str());
+        string fname = "results/reconstruction_" + to_string(i) + ".png";
+        reconstruction.save(fname.c_str());
+    }
+
+    for (int i = 11; i <= 20; i++) {
+        CImg<float> reconstruction;
+
+        naiveStereoReconstruct(lst, dispRight, reconstruction, (i - 10) / 10.0f);
+
+        string fname = "results/reconstruction_" + to_string(i) + ".png";
+        reconstruction.save(fname.c_str());
     }
 }
-
 void runPMStereo(
         CImg<float>& fst,
         CImg<float>& lst) {
