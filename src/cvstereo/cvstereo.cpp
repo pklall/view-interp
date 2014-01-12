@@ -168,18 +168,22 @@ void CVStereo::getRectified(
     convertMatToCImg(rectified[1], right);
 }
 
-void CVStereo::matchStereo() {
-    minDisparity = -256;
-    numDisparities = 512;
-    int SADWindowSize = 3; // 3 to 11 is recommended
-    int P1=8 * 3 * sqr(SADWindowSize);
-    int P2=32 * 3 * sqr(SADWindowSize);
+void CVStereo::matchStereo(
+        int minDisparity,
+        int maxDisparity,
+        int windowSize,
+        float smoothnessScale) {
+    this->minDisparity = -256;
+    this->numDisparities = maxDisparity - minDisparity;
+    int SADWindowSize = windowSize; // 3 to 11 is recommended
+    int P1=8 * 3 * sqr(SADWindowSize) * smoothnessScale;
+    int P2=32 * 3 * sqr(SADWindowSize) * smoothnessScale;
     int disp12MaxDiff=2;
     int preFilterCap=0;
     int uniquenessRatio=0;
     int speckleWindowSize=0;
     int speckleRange=0;
-    bool fullDP=false;
+    bool fullDP=true;
 
     cv::StereoSGBM sgbm(minDisparity, numDisparities, SADWindowSize,
             P1, P2, disp12MaxDiff, preFilterCap, uniquenessRatio, speckleWindowSize,

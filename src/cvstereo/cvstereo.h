@@ -42,7 +42,11 @@ class CVStereo {
                 CImg<float>& left,
                 CImg<float>& right);
 
-        void matchStereo();
+        void matchStereo(
+                int minDisparity = -256,
+                int maxDisparity = 256,
+                int windowSize = 3,
+                float smoothnessScale = 1.0f);
 
         void getStereo(CImg<float>& out);
 };

@@ -47,8 +47,8 @@ def run(op, left, right):
 if __name__ == "__main__":
     make()
 
-    pair = ("samples/computer0.png", "samples/art0.png")
-    run("stereomatte", pair[0], pair[1])
+    # pair = ("samples/computer0.png", "samples/art0.png")
+    # run("stereomatte", pair[0], pair[1])
 
-    # pair = rectified_data[0]
-    # run("cvstereo", pair[0], pair[1])
+    pair = rectified_data[0]
+    run("cvstereo", pair[0], pair[1])
