@@ -23,10 +23,14 @@ using namespace std;
 
 using namespace cimg_library;
 
+#ifdef PRECOMPILE_CIMG
+
 extern template struct cimg_library::CImg<float>;
 extern template struct cimg_library::CImg<double>;
 extern template struct cimg_library::CImg<int>;
 extern template struct cimg_library::CImg<bool>;
+
+#endif
 
 inline double norm(float x, float y) {
     return sqrt(x * x + y * y);
