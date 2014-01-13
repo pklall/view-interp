@@ -5,44 +5,83 @@
 #include "cvutil/cvutil.h"
 
 void computeDisparity(
-        const CImg<float>& leftImg,
-        const CImg<float>& rightImg,
+        const CImg<uint8_t>& leftImg,
+        const CImg<uint8_t>& rightImg,
         int minDisp,
         int maxDisp,
         CImg<float>& costImg,
         CImg<float>& disparityImg) {
     // TODO Use utin8_t instead of float wherever possible (everything before 'cost')
-    Halide::ImageParam left(Halide::Float(32), 3, "left");
-    Halide::ImageParam right(Halide::Float(32), 3, "right");
+    // Halide::ImageParam left(Halide::Float(32), 3, "left");
+    // Halide::ImageParam right(Halide::Float(32), 3, "right");
+    
+    Halide::Buffer leftBuf(
+            Halide::Float(32),
+            leftImg.width(), leftImg.height(),
+            1, leftImg.spectrum(),
+            (uint8_t*) leftImg.data(), std::string("leftBuf"));
 
-    Halide::Var x("x"), y("y"), c("c"), d("d");
+    Halide::Buffer rightBuf(
+            Halide::Float(32),
+            rightImg.width(), rightImg.height(),
+            1, rightImg.spectrum(),
+            (uint8_t*) rightImg.data(), std::string("rightBuf"));
+
+    // Inputs
+
+    Halide::Image<float> left(leftBuf.raw_buffer(), std::string("left"));
+    Halide::Image<float> right(rightBuf.raw_buffer(), std::string("right"));
 
     Halide::Param<float> omegaParam;
     Halide::Param<int> minDispParam;
     Halide::Param<int> maxDispParam;
 
+    omegaParam.set(0.5f);
+    minDispParam.set(minDisp);
+    maxDispParam.set(maxDisp);
+
+    // Variables
+    
+    Halide::Var x("x"), y("y"), c("c"), d("d");
+    
     Halide::RDom rDisp(minDispParam, maxDispParam);
     Halide::RDom rC(0, 2);
 
     Halide::RDom r3x3(-1, 1, -1, 1);
     Halide::RDom r3x2(-1, 0, -1, 1);
     Halide::RDom r2x3(-1, 1, -1, 0);
+
+    // Helper expressions to clamp to image bounds
+    
+    Halide::Expr cx = clamp(x,
+            max(-minDispParam, 1),
+            min(left.width() - maxDispParam, left.width() - 2));
+
+    Halide::Expr cy = clamp(y, 1, left.height() - 2);
+
+    Halide::Func leftC("leftC");
+    Halide::Func rightC("rightC");
+    leftC(x, y, c) = left(cx, cy, 0, c);
+    rightC(x, y, c) = right(cx, cy, 0, c);
     
     // C_SAD(x, y, c, d) ...
     Halide::Func absDiff("absDiff"), cSAD("cSAD");
 
-    absDiff(x, y, c, d) = Halide::abs(left(x, y, c) - right(x + d, y, c));
+    absDiff(x, y, c, d) = Halide::abs(leftC(x, y, c) - rightC(x + d, y, c));
 
     cSAD(x, y, c, d) += absDiff(x + r3x3.x, y + r3x3.y, c, d);
 
     // C_GRAD(x, y, c, d)...
-    Halide::Func gradX1("gradX1"), gradX2("gradX2"), gradY1("gradY1"), gradY2("gradY2"), absGradX("absGradX"), absGradY("absGradY"), cGrad("cGrad");
+    Halide::Func gradX1("gradX1"), gradX2("gradX2");
+    Halide::Func gradY1("gradY1"), gradY2("gradY2");
+    Halide::Func absGradX("absGradX"), absGradY("absGradY");
+    Halide::Func cGrad("cGrad");
     
-    gradX1(x, y, c) = left(x + 1, y, c) - left(x, y, c);
-    gradX2(x, y, c) = right(x + 1, y, c) - right(x, y, c);
+    gradX1(x, y, c) = leftC(x + 1, y, c) - leftC(x, y, c);
+    gradX2(x, y, c) = rightC(x + 1, y, c) - rightC(x, y, c);
 
-    gradY1(x, y, c) = left(x, y + 1, c) - left(x, y, c);
-    gradY2(x, y, c) = right(x, y + 1, c) - right(x, y, c);
+    gradY1(x, y, c) = leftC(x, y + 1, c) - leftC(x, y, c);
+    gradY2(x, y, c) = rightC(x, y + 1, c) - rightC(x, y, c);
 
     absGradX(x, y, c, d) = Halide::abs(gradX1(x, y, c) - gradX2(x + d, y, c));
 
@@ -66,58 +105,86 @@ void computeDisparity(
     Halide::Expr bestDisparitySoFar =
         cost(x, y, clamp(minCostDisparity(x, y), minDispParam, maxDispParam));
 
-    minCostDisparity(x, y) = select(cost(x, y, rDisp) < bestDisparitySoFar, rDisp, minCostDisparity(x, y));
+    minCostDisparity(x, y) = select(
+            cost(x, y, rDisp) < bestDisparitySoFar,
+            rDisp,
+            minCostDisparity(x, y));
 
     // Result(x, y)...
     // TODO Make this a tuple which includes the disparity
     Halide::Func result("result");
+
     result(x, y) = minCostDisparity(x, y);
 
 
     // Schedule...
     absDiff
+        .reorder(x, c, d, y)
         .compute_at(cSAD, x)
-        .store_at(cSAD, y);
+        .store_root()
+        .bound(c, 0, 2);
 
     cSAD
+        .reorder(x, c, d, y)
         .compute_at(cost, x)
-        .store_at(cost, y);
+        .store_root()
+        .bound(c, 0, 2);
 
     gradX1
+        .reorder(x, c, y)
         .compute_at(absGradX, x)
-        .store_at(absGradX, y);
+        .store_root()
+        .bound(c, 0, 2);
+
     gradX2
+        .reorder(x, c, y)
         .compute_at(absGradX, x)
-        .store_at(absGradX, y);
+        .store_root()
+        .bound(c, 0, 2);
 
     gradY1
+        .reorder(x, c, y)
         .compute_at(absGradY, x)
-        .store_at(absGradY, y);
+        .store_root()
+        .bound(c, 0, 2);
+
     gradY2
+        .reorder(x, c, y)
         .compute_at(absGradY, x)
-        .store_at(absGradY, y);
+        .store_root()
+        .bound(c, 0, 2);
 
     absGradX
-        .compute_at(cGrad, y)
-        .store_at(cGrad, y);
+        .reorder(x, c, y)
+        .compute_at(cGrad, x)
+        .store_root()
+        .bound(c, 0, 2);
 
     absGradY
-        .compute_at(cGrad, y)
-        .store_at(cGrad, y);
+        .reorder(x, c, y)
+        .compute_at(cGrad, x)
+        .store_root()
+        .bound(c, 0, 2);
 
     cGrad
+        .reorder(x, c, d, y)
         .compute_at(cost, x)
-        .store_at(cost, y);
+        .store_root();
 
     cost
+        .reorder(x, y)
         .compute_at(minCostDisparity, y)
-        .store_at(minCostDisparity, y)
-        .bound(d, minDispParam, maxDispParam);
+        .store_root();
 
     minCostDisparity
-        .compute_root()
+        .reorder(x, y)
+        .compute_at(result, y)
+        .store_root()
         .bound(x, 0, left.width())
         .bound(y, 0, left.height());
+
+    result.compute_root()
+        .reorder(x, y);
 
     std::vector<Halide::Argument> args;
     args.push_back(left);
@@ -125,8 +192,17 @@ void computeDisparity(
     args.push_back(minDispParam);
     args.push_back(maxDispParam);
     args.push_back(omegaParam);
-    // minCostDisparity.compile_to_c("stereo_compiled.cpp", args, "stereo");
-    minCostDisparity.compile_jit();
+
+    printf("Compiling...\n");
+    // result.compile_to_c("result.cpp", args);
+    result.compile_jit();
+    printf("Done\n");
+
+    printf("Running...\n");
+    Halide::Realization r = result.realize(leftImg.width(), leftImg.height());
+    printf("Done...\n");
+
+    // TODO Run it!
 }
 
 void computeAdaptBPStereo(
