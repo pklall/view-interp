@@ -1,18 +1,16 @@
+#include <algorithm>
+
 #include "ceres/ceres.h"
-
 #include "glog/logging.h"
-
-#include "slic.h"
 
 #include "common.h"
 
 #include "util.h"
 
-#include "pmstereo/pmstereo.h"
+#include "adaptbp.h"
 
 #include "cvutil/cvutil.h"
 
-#include <algorithm>
 
 using namespace std;
 
@@ -65,14 +63,9 @@ int main(int argc, char** argv) {
 void runBPStereo(
         CImg<float>& fst,
         CImg<float>& lst) {
-    CImg<int> superpixelMap;
+    CImg<float> leftDisp, rightDisp;
 
-    slicSuperpixels(
-            fst,
-            (fst.width() * fst.height()) / 256,
-            15,
-            superpixelMap);
-    
+    computeAdaptBPStereo(fst, lst, -256, 256, leftDisp, rightDisp);
 }
 
 struct StereoMattingCost {
@@ -223,9 +216,11 @@ void runCVStereo(
         reconstruction.save(fname.c_str());
     }
 }
+
 void runPMStereo(
         CImg<float>& fst,
         CImg<float>& lst) {
+    /*
     int MAX_SIZE = 1024;
 
     while (fst.width() > MAX_SIZE || fst.height() > MAX_SIZE) {
@@ -331,5 +326,6 @@ void runPMStereo(
     }
 
     CImgList<float>(fst, visLeft).display();
+    */
 }
 

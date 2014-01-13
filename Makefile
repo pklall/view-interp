@@ -1,39 +1,42 @@
-MODULES   := cimg pmstereo cvutil main
+MODULES   := cimg cvutil main
 TARGET    := main
 
-OPT_LEVEL := -O1
+OPT_LEVEL := 
 
 INCLUDES  := -Iextern/libDAI/include \
              -I/usr/include/eigen3 \
              -Iextern/ceres-solver/include \
-			 -Iextern/SLIC-Superpixels
+			 -Iextern/SLIC-Superpixels \
+			 -Iextern/Halide/include
 
 CXXFLAGS  := $(OPT_LEVEL) \
              -std=c++11 \
              -g \
              -Wall \
              -pthread \
-             -fopenmp \
              -finline-functions \
              -ffast-math \
              -Wfatal-errors \
+# -fopenmp \
 
-# CXXFLAGS   = -std=c++11 -g -Wall -pthread -fopenmp -Wfatal-errors -Iextern/libDAI/include/ -fno-omit-frame-pointer #-fsanitize=address 
+# CXXFLAGS  += -DPRECOMPILE_CIMG
 
 LD_DIRS   := -Lextern/libDAI/lib \
              -Lextern/ceres-solver/build/lib \
-             -Lextern/SLIC-Superpixels
+             -Lextern/SLIC-Superpixels \
+             -Lextern/Halide/bin \
 
 LD_STATIC := -lceres \
-             -lslic
+             -lslic \
+			 -lHalide
 
 LD_FLAGS  := $(LD_DIRS) \
+             -ldl \
              -lpthread \
              -lgflags \
              -lglog \
              -lm \
              -lgomp \
-             -fopenmp \
              -lcamd \
              -lamd \
              -lcolamd \
@@ -43,10 +46,16 @@ LD_FLAGS  := $(LD_DIRS) \
              -llapack \
 			 -lpng \
 			 -ljpeg \
-             `pkg-config --cflags --libs x11 opencv eigen3`
+			 -lX11 \
+			 -lopencv_calib3d \
+			 -lopencv_core \
+			 -lopencv_features2d \
+			 -lopencv_imgproc \
+			 -lopencv_legacy \
+			 -lopencv_video
 
-CXX       := g++
-LD        := g++
+CXX       := clang++
+LD        := clang++
 
 SRC_DIR   := $(addprefix src/,$(MODULES))
 BUILD_DIR := $(addprefix build/,$(MODULES))
@@ -62,10 +71,10 @@ endef
 
 .PHONY: all checkdirs clean
 
-all: checkdirs $(TARGET) clangcomplete
+all: clangcomplete checkdirs $(TARGET)
 
 $(TARGET): $(OBJ)
-	$(LD) $^ $(CXXFLAGS) $(LD_STATIC) $(LD_FLAGS) -o $@ 
+	$(LD) $^ $(LD_STATIC) $(LD_FLAGS) -o $@ 
 
 checkdirs: $(BUILD_DIR)
 

@@ -2,8 +2,6 @@
 
 #include "common.h"
 
-#include <omp.h>
-
 /**
  * Implementation of generalized PatchMatch.
  *
@@ -60,15 +58,19 @@ inline void patchMatch(
         }
 
         // FIXME this probably fails if inc isn't of magnitude 1
-        int numThreads = omp_get_num_threads();
+        // FIXME FIXME FIXME FIXME
+        // FIXME FIXME FIXME FIXME
+        // FIXME FIXME FIXME FIXME
+        // FIXME FIXME FIXME FIXME
+        int numThreads = 0;// omp_get_num_threads();
         int stride = (field.height() + numThreads - 1) / numThreads;
-        int yLimit = yStart + inc * (omp_get_thread_num() + 1) * stride;
-        yStart += inc * omp_get_thread_num() * stride;
+        int yLimit = 0;// yStart + inc * (omp_get_thread_num() + 1) * stride;
+        yStart += inc * 0;//omp_get_thread_num() * stride;
 
 #pragma omp critical
         {
-        cout << "Thread #" << omp_get_thread_num() << " yStart = " << yStart
-            << " yLimit = " << yLimit << " stride = " << stride << endl;
+        // cout << "Thread #" << omp_get_thread_num() << " yStart = " << yStart
+            // << " yLimit = " << yLimit << " stride = " << stride << endl;
         }
         for (int y = yStart; y >= 0 && y < field.height() && y != yLimit; y += inc) {
             for (int x = xStart; x >= 0 && x < field.width(); x += inc) {
