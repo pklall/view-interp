@@ -2,6 +2,10 @@
 
 #include "common.h"
 
+struct Plane {
+    float c, cx, cy;
+};
+
 /**
  * Computes stereo correspondence based on 
  *

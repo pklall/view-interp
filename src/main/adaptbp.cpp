@@ -4,12 +4,16 @@
 
 #include "cvutil/cvutil.h"
 
+#include <tuple>
+
+using namespace std;
+
 void computeDisparity(
         const CImg<int16_t>& leftImg,
         const CImg<int16_t>& rightImg,
         int minDisp,
         int maxDisp,
-        CImg<float>& costImg,
+        float omega,
         CImg<int16_t>& disparityImg) {
     assert(leftImg.is_sameXYZC(rightImg));
     
@@ -17,25 +21,24 @@ void computeDisparity(
             Halide::Int(16),
             leftImg.width(), leftImg.height(),
             1, leftImg.spectrum(),
-            (uint8_t*) leftImg.data(), std::string("leftBuf"));
+            (uint8_t*) leftImg.data(), string("leftBuf"));
 
     Halide::Buffer rightBuf(
             Halide::Int(16),
             rightImg.width(), rightImg.height(),
             1, rightImg.spectrum(),
-            (uint8_t*) rightImg.data(), std::string("rightBuf"));
+            (uint8_t*) rightImg.data(), string("rightBuf"));
 
     // Inputs
-
-    Halide::Image<int16_t> left(leftBuf.raw_buffer(), std::string("left"));
-    Halide::Image<int16_t> right(rightBuf.raw_buffer(), std::string("right"));
+    Halide::Image<int16_t> left(leftBuf.raw_buffer(), string("left"));
+    Halide::Image<int16_t> right(rightBuf.raw_buffer(), string("right"));
 
     Halide::Param<float> omegaParam;
     Halide::Param<int> minDispParam;
     Halide::Param<int> maxDispParam;
 
     // TODO omega should be dynamically chosen
-    omegaParam.set(0.5f);
+    omegaParam.set(omega);
     minDispParam.set(minDisp);
     maxDispParam.set(maxDisp);
 
@@ -93,6 +96,7 @@ void computeDisparity(
 
     // C(x, y, d)...
     Halide::Func cost("cost");
+    // TODO Robustify cSAD and cGrad with a max distance learned from optimization
     cost(x, y, d) += 
         (1.0f - omegaParam) * Halide::cast(Halide::Float(32), cSAD(x, y, rC, d)) +
         omegaParam * Halide::cast(Halide::Float(32), cGrad(x, y, rC, d));
@@ -141,10 +145,20 @@ void computeDisparity(
     Halide::Func result("result");
 
     // TODO Only compute over valid range of x values (ignore left & right border)
-    result(x, y) = // Halide::cast(Halide::Int(16), minCostDisparityRev(revXC, y));
+    Halide::Expr validX = Halide::clamp(
+            x,
+            Halide::max(0, -minDispParam),
+            Halide::min(left.width() - 1, left.width() - maxDispParam));
+    
+    result(x, y) =
         Halide::select(consistent,
-            Halide::cast(Halide::Int(16), minCostDisparity(x, y)),
-            0);
+                Halide::cast(Halide::Int(16),
+                    Halide::select(x == validX,
+                        minCostDisparity(validX, y),
+                        Halide::Int(16).max()
+                        )
+                    ),
+                Halide::Int(16).max());
 
     // Schedule...
     absDiff
@@ -222,7 +236,7 @@ void computeDisparity(
     result.compute_inline()
         .reorder(x, y);
 
-    std::vector<Halide::Argument> args;
+    vector<Halide::Argument> args;
     args.push_back(left);
     args.push_back(right);
     args.push_back(minDispParam);
@@ -251,6 +265,70 @@ void computeDisparity(
     }
 }
 
+void fitPlanes(
+        const CImg<int>& segmentation,
+        const CImg<int16_t>& disp,
+        vector<Plane>& planes) {
+    assert(segmentation.is_sameXYZC(disp));
+
+    CImg<float> dx(disp.width(), disp.height());
+    dx = -100.0f;
+
+    vector<tuple<float, float>> dSamples;
+
+    for (int y = 0; y < disp.height(); y++) {
+        int curSegment = -1;
+
+        dSamples.clear();
+
+        for (int x = 0; x < disp.width(); x++) {
+            // If we've reached a new segment
+            if (segmentation(x, y) != curSegment) {
+                int n = dSamples.size() - 1;
+
+                // We can only estimate planes with more than 1 sample in
+                // the segment
+                if (n > 1) {
+                    int numReliablePairs = (n * (n + 1) / 2);
+
+                    CImg<float> dxSamples(numReliablePairs);
+
+                    int index = 0;
+                    for (int i = 0; i < dSamples.size(); i++) {
+                        for (int j = i + 1; j < dSamples.size(); j++) {
+                            dxSamples(index) = 
+                                (get<1>(dSamples[j]) - get<1>(dSamples[i])) /
+                                (get<0>(dSamples[j]) - get<0>(dSamples[i]));
+                            index++;
+                        }
+                    }
+
+                    dxSamples.sort();
+
+                    // FIXME The paper doesn't specify blur kernel size!
+                    dxSamples.blur(2.0f);
+
+                    int estimatedDx = dxSamples(dxSamples.size() / 2);
+
+                    // Write our estimated x-slant to all pixels in the segment
+                    for (int xp = x - 1; segmentation(xp, y) == curSegment; xp--) {
+                        dx(xp, y) = estimatedDx;
+                    }
+                }
+
+                curSegment = segmentation(x, y);
+
+                dSamples.clear();
+            } else if (disp(x, y) != std::numeric_limits<int16_t>::max()) {
+                dSamples.push_back(make_tuple((float) x, (float) disp(x, y)));
+            }
+        }
+    }
+
+    disp.display();
+    dx.display();
+}
+
 void computeAdaptBPStereo(
         const CImg<int16_t>& left,
         const CImg<int16_t>& right,
@@ -265,20 +343,16 @@ void computeAdaptBPStereo(
      * Note that this differs from the original paper, which used
      * Mean-shift color segmentation (Comaniciu and Meer)
      */
-    CImg<int> spLeft, spRight;
+    CImg<int> superpixels;
 
     int numSuperpixels = (left.width() * left.height()) / 256;
 
     printf("Computing superpixels for Left\n");
-    // slicSuperpixels(left, numSuperpixels, 15, spLeft);
-
-    printf("Computing superpixels for Right\n");
-    // slicSuperpixels(right, numSuperpixels, 15, spRight);
-
-    CImg<float> costLeft(left.width(), left.height());
+    slicSuperpixels(left, numSuperpixels, 15, superpixels);
 
     computeDisparity(left.get_RGBtoLab(), right.get_RGBtoLab(),
-            minDisp, maxDisp, costLeft, disp);
+            minDisp, maxDisp, 0.5f, disp);
 
-    disp.display();
+    vector<Plane> planes;
+    fitPlanes(superpixels, disp, planes);
 }
