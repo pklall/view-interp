@@ -12,9 +12,8 @@
  *
  */
 void computeAdaptBPStereo(
-        const CImg<float>& left,
-        const CImg<float>& right,
+        const CImg<int16_t>& left,
+        const CImg<int16_t>& right,
         int minDisp,
         int maxDisp,
-        CImg<float>& leftDisp,
-        CImg<float>& rightDisp);
+        CImg<int16_t>& disp);

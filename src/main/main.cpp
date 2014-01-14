@@ -24,7 +24,7 @@ using ceres::Solve;
 
 #define dbgOut std::cout
 
-void runBPStereo(CImg<float>& fst, CImg<float>& lst);
+void runBPStereo(CImg<int16_t>& fst, CImg<int16_t>& lst);
 
 void runStereoMatte(CImg<float>& fst, CImg<float>& lst);
 
@@ -39,20 +39,28 @@ int main(int argc, char** argv) {
     }
 
     string op(argv[1]);
-    CImg<float> fst(argv[2]);
-    CImg<float> lst(argv[3]);
 
     std::transform(op.begin(), op.end(),op.begin(), ::tolower);
 
     if (op == "cvstereo") {
+        CImg<float> fst(argv[2]);
+        CImg<float> lst(argv[3]);
+
         printf("Running CVStereo\n");
         runCVStereo(fst, lst);
+
     } else if (op == "pmstereo") {
-        runPMStereo(fst, lst);
+        // runPMStereo(fst, lst);
     } else if (op == "stereomatte") {
+        CImg<float> fst(argv[2]);
+        CImg<float> lst(argv[3]);
+
         printf("Running stereomatte\n");
         runStereoMatte(fst, lst);
     } else if (op == "bpstereo") {
+        CImg<int16_t> fst(argv[2]);
+        CImg<int16_t> lst(argv[3]);
+
         printf("Running bpstereo\n");
         runBPStereo(fst, lst);
     }
@@ -61,11 +69,11 @@ int main(int argc, char** argv) {
 }
 
 void runBPStereo(
-        CImg<float>& fst,
-        CImg<float>& lst) {
-    CImg<float> leftDisp, rightDisp;
+        CImg<int16_t>& fst,
+        CImg<int16_t>& lst) {
+    CImg<int16_t> disp;
 
-    computeAdaptBPStereo(fst, lst, -256, 256, leftDisp, rightDisp);
+    computeAdaptBPStereo(fst, lst, 0, 64, disp);
 }
 
 struct StereoMattingCost {

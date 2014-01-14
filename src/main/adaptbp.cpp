@@ -5,37 +5,36 @@
 #include "cvutil/cvutil.h"
 
 void computeDisparity(
-        const CImg<uint8_t>& leftImg,
-        const CImg<uint8_t>& rightImg,
+        const CImg<int16_t>& leftImg,
+        const CImg<int16_t>& rightImg,
         int minDisp,
         int maxDisp,
         CImg<float>& costImg,
-        CImg<float>& disparityImg) {
-    // TODO Use utin8_t instead of float wherever possible (everything before 'cost')
-    // Halide::ImageParam left(Halide::Float(32), 3, "left");
-    // Halide::ImageParam right(Halide::Float(32), 3, "right");
+        CImg<int16_t>& disparityImg) {
+    assert(leftImg.is_sameXYZC(rightImg));
     
     Halide::Buffer leftBuf(
-            Halide::Float(32),
+            Halide::Int(16),
             leftImg.width(), leftImg.height(),
             1, leftImg.spectrum(),
             (uint8_t*) leftImg.data(), std::string("leftBuf"));
 
     Halide::Buffer rightBuf(
-            Halide::Float(32),
+            Halide::Int(16),
             rightImg.width(), rightImg.height(),
             1, rightImg.spectrum(),
             (uint8_t*) rightImg.data(), std::string("rightBuf"));
 
     // Inputs
 
-    Halide::Image<float> left(leftBuf.raw_buffer(), std::string("left"));
-    Halide::Image<float> right(rightBuf.raw_buffer(), std::string("right"));
+    Halide::Image<int16_t> left(leftBuf.raw_buffer(), std::string("left"));
+    Halide::Image<int16_t> right(rightBuf.raw_buffer(), std::string("right"));
 
     Halide::Param<float> omegaParam;
     Halide::Param<int> minDispParam;
     Halide::Param<int> maxDispParam;
 
+    // TODO omega should be dynamically chosen
     omegaParam.set(0.5f);
     minDispParam.set(minDisp);
     maxDispParam.set(maxDisp);
@@ -47,9 +46,10 @@ void computeDisparity(
     Halide::RDom rDisp(minDispParam, maxDispParam);
     Halide::RDom rC(0, 2);
 
-    Halide::RDom r3x3(-1, 1, -1, 1);
-    Halide::RDom r3x2(-1, 0, -1, 1);
-    Halide::RDom r2x3(-1, 1, -1, 0);
+    int wndRad = 1;
+    Halide::RDom r3x3(-wndRad, wndRad, -wndRad, wndRad);
+    Halide::RDom r3x2(-wndRad, 0, -wndRad, wndRad);
+    Halide::RDom r2x3(-wndRad, wndRad, -wndRad, 0);
 
     // Helper expressions to clamp to image bounds
     
@@ -94,34 +94,63 @@ void computeDisparity(
     // C(x, y, d)...
     Halide::Func cost("cost");
     cost(x, y, d) += 
-        (1.0f - omegaParam) * cSAD(x, y, rC, d) +
-        omegaParam * cGrad(x, y, rC, d);
+        (1.0f - omegaParam) * Halide::cast(Halide::Float(32), cSAD(x, y, rC, d)) +
+        omegaParam * Halide::cast(Halide::Float(32), cGrad(x, y, rC, d));
 
     // Argmin_d(x, y)...
     Halide::Func minCostDisparity("minCostDisparity");
 
-    minCostDisparity(x, y) = 0;
+    minCostDisparity(x, y) = Halide::cast(Halide::Int(16), 0);
 
     Halide::Expr bestDisparitySoFar =
         cost(x, y, clamp(minCostDisparity(x, y), minDispParam, maxDispParam));
 
     minCostDisparity(x, y) = select(
             cost(x, y, rDisp) < bestDisparitySoFar,
-            rDisp,
+            Halide::cast(Halide::Int(16), rDisp),
             minCostDisparity(x, y));
+    
+    // Argmin_d_reverse(x, y)...
+    Halide::Func costRev("costRev");
+
+    costRev(x, y, d) = cost(x + d, y, -d);
+
+    Halide::Func minCostDisparityRev("minCostDisparityRev");
+
+    minCostDisparityRev(x, y) = Halide::cast(Halide::Int(16), 0);
+
+    Halide::Expr bestDisparitySoFarRev =
+        costRev(x, y, clamp(minCostDisparityRev(x, y), -maxDispParam, -minDispParam));
+
+    minCostDisparityRev(x, y) = select(
+            costRev(x, y, -rDisp) < bestDisparitySoFarRev,
+            Halide::cast(Halide::Int(16), -rDisp),
+            minCostDisparityRev(x, y));
+
+    // Holes(x, y)...
+    Halide::Expr revX = minCostDisparity(x, y) + x;
+    Halide::Expr revXC = Halide::clamp(revX, 0, left.width() - 1);
+
+    Halide::Expr consistent = Halide::select(revXC == revX,
+            Halide::abs(
+                minCostDisparityRev(revXC, y) + minCostDisparity(x, y)
+                ) < 2.0f,
+            false);
 
     // Result(x, y)...
-    // TODO Make this a tuple which includes the disparity
     Halide::Func result("result");
 
-    result(x, y) = minCostDisparity(x, y);
-
+    // TODO Only compute over valid range of x values (ignore left & right border)
+    result(x, y) = // Halide::cast(Halide::Int(16), minCostDisparityRev(revXC, y));
+        Halide::select(consistent,
+            Halide::cast(Halide::Int(16), minCostDisparity(x, y)),
+            0);
 
     // Schedule...
     absDiff
         .reorder(x, c, d, y)
         .compute_at(cSAD, x)
-        .store_root()
+        .store_at(cSAD, d)
         .bound(c, 0, 2);
 
     cSAD
@@ -173,7 +202,7 @@ void computeDisparity(
 
     cost
         .reorder(x, y)
-        .compute_at(minCostDisparity, y)
+        .compute_at(result, y)
         .store_root();
 
     minCostDisparity
@@ -183,7 +212,14 @@ void computeDisparity(
         .bound(x, 0, left.width())
         .bound(y, 0, left.height());
 
-    result.compute_root()
+    minCostDisparityRev
+        .reorder(x, y)
+        .compute_at(result, y)
+        .store_root()
+        .bound(x, 0, left.width())
+        .bound(y, 0, left.height());
+
+    result.compute_inline()
         .reorder(x, y);
 
     std::vector<Halide::Argument> args;
@@ -202,23 +238,26 @@ void computeDisparity(
     Halide::Realization r = result.realize(leftImg.width(), leftImg.height());
     printf("Done...\n");
 
-    // TODO Run it!
+    // Copy out the results from buffer to CImg
+    {
+        Halide::Buffer disparityBuf = r[0];
+        Halide::Image<int16_t> disparityI(disparityBuf);
+
+        disparityImg= CImg<int16_t>(leftImg.width(), leftImg.height());
+        cimg_forXY(disparityImg, x, y) {
+            disparityImg(x, y) = disparityI(x, y);
+        }
+
+    }
 }
 
 void computeAdaptBPStereo(
-        const CImg<float>& left,
-        const CImg<float>& right,
+        const CImg<int16_t>& left,
+        const CImg<int16_t>& right,
         int minDisp,
         int maxDisp,
-        CImg<float>& dispLeft,
-        CImg<float>& dispRight) {
+        CImg<int16_t>& disp) {
     assert(left.is_sameXYZC(right));
-
-    dispLeft = CImg<float>(left.width(), left.height());
-    dispRight = CImg<float>(left.width(), left.height());
-
-    dispLeft = std::numeric_limits<float>::max();
-    dispRight = std::numeric_limits<float>::max();
 
     /**
      * Compute a segmentation via Slic superpixelization.
@@ -236,16 +275,10 @@ void computeAdaptBPStereo(
     printf("Computing superpixels for Right\n");
     // slicSuperpixels(right, numSuperpixels, 15, spRight);
 
-    CImg<float> cSADLeft(maxDisp - minDisp, left.width());
-    CImg<float> cGRADLeft(maxDisp - minDisp, left.width());
-
-    CImg<float> cSADRight(maxDisp - minDisp, left.width());
-    CImg<float> cGRADRight(maxDisp - minDisp, left.width());
-
-    cSADLeft = std::numeric_limits<float>::max();
-    cGRADLeft = std::numeric_limits<float>::max();
-
     CImg<float> costLeft(left.width(), left.height());
 
-    computeDisparity(left, right, minDisp, maxDisp, costLeft, dispLeft);
+    computeDisparity(left.get_RGBtoLab(), right.get_RGBtoLab(),
+            minDisp, maxDisp, costLeft, disp);
+
+    disp.display();
 }
