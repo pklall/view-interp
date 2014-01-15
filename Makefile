@@ -1,15 +1,39 @@
 MODULES   := cimg cvutil main
 TARGET    := main
 
-OPT_LEVEL := 
+# define DEBUG
+# endef
+
+ifdef DEBUG
+
+OPT_LEVEL := -O1
+
+CXX_ASAN  := -g\
+             -fsanitize=address \
+             -fno-omit-frame-pointer \
+             -fno-optimize-sibling-calls \
+
+LD_ASAN   := -fsanitize=address \
+             -lasan \
+
+else
+
+OPT_LEVEL := -Ofast
+
+CXX_ASAN  :=
+
+LD_ASAN   :=
+
+endif
 
 INCLUDES  := -Iextern/libDAI/include \
              -I/usr/include/eigen3 \
              -Iextern/ceres-solver/include \
-			 -Iextern/SLIC-Superpixels \
-			 -Iextern/Halide/include
+             -Iextern/SLIC-Superpixels \
+             -Iextern/Halide/include \
 
 CXXFLAGS  := $(OPT_LEVEL) \
+             $(CXX_ASAN) \
              -std=c++11 \
              -g \
              -Wall \
@@ -17,9 +41,7 @@ CXXFLAGS  := $(OPT_LEVEL) \
              -finline-functions \
              -ffast-math \
              -Wfatal-errors \
-# -fopenmp \
 
-# CXXFLAGS  += -DPRECOMPILE_CIMG
 
 LD_DIRS   := -Lextern/libDAI/lib \
              -Lextern/ceres-solver/build/lib \
@@ -28,9 +50,10 @@ LD_DIRS   := -Lextern/libDAI/lib \
 
 LD_STATIC := -lceres \
              -lslic \
-			 -lHalide
+             -lHalide \
 
 LD_FLAGS  := $(LD_DIRS) \
+             $(LD_ASAN) \
              -ldl \
              -lpthread \
              -lgflags \
@@ -44,15 +67,15 @@ LD_FLAGS  := $(LD_DIRS) \
              -lccolamd \
              -lblas \
              -llapack \
-			 -lpng \
-			 -ljpeg \
-			 -lX11 \
-			 -lopencv_calib3d \
-			 -lopencv_core \
-			 -lopencv_features2d \
-			 -lopencv_imgproc \
-			 -lopencv_legacy \
-			 -lopencv_video
+             -lpng \
+             -ljpeg \
+             -lX11 \
+             -lopencv_calib3d \
+             -lopencv_core \
+             -lopencv_features2d \
+             -lopencv_imgproc \
+             -lopencv_legacy \
+             -lopencv_video \
 
 CXX       := clang++
 LD        := clang++

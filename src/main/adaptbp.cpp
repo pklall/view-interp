@@ -5,8 +5,12 @@
 #include "cvutil/cvutil.h"
 
 #include <tuple>
+#include <vector>
+#include <map>
 
 using namespace std;
+
+// TODO Wrap all of this in a class
 
 void computeDisparity(
         const CImg<int16_t>& leftImg,
@@ -265,70 +269,276 @@ void computeDisparity(
     }
 }
 
-void fitPlanes(
-        const CImg<int>& segmentation,
-        const CImg<int16_t>& disp,
-        vector<Plane>& planes) {
-    assert(segmentation.is_sameXYZC(disp));
+/**
+ * Estimates slant (dD/dt) from a set of samples of (D, t)
+ * samples for which all non-t dimensions are constant.
+ *
+ * For example, if dSamples contains a set of (D, x) samples
+ * from the same horizontal scan-line (fixed y-coordinate),
+ * it will estimate dD/dx.
+ *
+ * Returns true upon success, false if not enough samples were provided.
+ */
+inline bool estimateSlant(
+        const map<uint16_t, vector<tuple<uint16_t, int16_t>>>& dSamples,
+        float& result) {
+    int totalSamplePairs = 0;
+    for (const auto& samples : dSamples) {
+        int n = samples.second.size() - 1;
+        totalSamplePairs += n * (n + 1) / 2;
+    }
 
-    CImg<float> dx(disp.width(), disp.height());
-    dx = -100.0f;
+    if (totalSamplePairs < 1) {
+        return false;
+    }
 
-    vector<tuple<float, float>> dSamples;
+    // Store all possible samples of dt, each consisting of a finite difference
+    // between elements in the same scanline, as given by dSamples.
+    CImg<float> dtSamples(totalSamplePairs);
 
-    for (int y = 0; y < disp.height(); y++) {
-        int curSegment = -1;
+    // Index into dtSamples at which to insert new samples
+    int dtSamplesI = 0;
 
-        dSamples.clear();
+    for (const auto& samplesPair: dSamples) {
+        const vector<tuple<uint16_t, int16_t>>& samples = samplesPair.second;
 
-        for (int x = 0; x < disp.width(); x++) {
-            // If we've reached a new segment
-            if (segmentation(x, y) != curSegment) {
-                int n = dSamples.size() - 1;
-
-                // We can only estimate planes with more than 1 sample in
-                // the segment
-                if (n > 1) {
-                    int numReliablePairs = (n * (n + 1) / 2);
-
-                    CImg<float> dxSamples(numReliablePairs);
-
-                    int index = 0;
-                    for (int i = 0; i < dSamples.size(); i++) {
-                        for (int j = i + 1; j < dSamples.size(); j++) {
-                            dxSamples(index) = 
-                                (get<1>(dSamples[j]) - get<1>(dSamples[i])) /
-                                (get<0>(dSamples[j]) - get<0>(dSamples[i]));
-                            index++;
-                        }
-                    }
-
-                    dxSamples.sort();
-
-                    // FIXME The paper doesn't specify blur kernel size!
-                    dxSamples.blur(2.0f);
-
-                    int estimatedDx = dxSamples(dxSamples.size() / 2);
-
-                    // Write our estimated x-slant to all pixels in the segment
-                    for (int xp = x - 1; segmentation(xp, y) == curSegment; xp--) {
-                        dx(xp, y) = estimatedDx;
-                    }
-                }
-
-                curSegment = segmentation(x, y);
-
-                dSamples.clear();
-            } else if (disp(x, y) != std::numeric_limits<int16_t>::max()) {
-                dSamples.push_back(make_tuple((float) x, (float) disp(x, y)));
+        for (int i = 0; i < samples.size(); i++) {
+            for (int j = i + 1; j < samples.size(); j++) {
+                assert(dtSamplesI < dtSamples.width());
+                dtSamples(dtSamplesI) = 
+                    ((float) get<1>(samples[j]) - get<1>(samples[i])) /
+                    ((float) get<0>(samples[j]) - get<0>(samples[i]));
+                dtSamplesI++;
             }
         }
     }
 
-    disp.display();
-    dx.display();
+    dtSamples.sort();
+
+    // FIXME The paper doesn't specify blur kernel size!
+    // dtSamples.blur(dtSamples.size() / 3.0f);
+
+    result = dtSamples(dtSamples.size() / 2);
+
+    return true;
 }
 
+
+void fitPlanes(
+        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
+        const CImg<int16_t>& disp,
+        vector<Plane>& planes) {
+    // Create a plane for each superpixel
+    planes = vector<Plane>(superpixels.size());
+
+    // A map from y-index to (x, disparity) tuples to store
+    // valid disparities for each scan-line in a superpixel.
+    map<uint16_t, vector<tuple<uint16_t, int16_t>>> xDSamples;
+    
+    // A map from x-index to (y, disparity) tuples to store
+    // valid disparities for each vertical-line in a superpixel.
+    map<uint16_t, vector<tuple<uint16_t, int16_t>>> yDSamples;
+
+    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
+        const auto& pixels = superpixels[superpixelI];
+
+        xDSamples.clear();
+        yDSamples.clear();
+
+        int numValidD = 0;
+
+        // Iterate over all pixels within the superpixel
+        for (const auto& p : pixels) {
+            uint16_t x = get<0>(p);
+            uint16_t y = get<1>(p);
+
+            // If this pixel has a valid disparity, add it
+            if (disp(x, y) != std::numeric_limits<int16_t>::max()) {
+                xDSamples[y].push_back(make_tuple(x, disp(x, y)));
+                yDSamples[x].push_back(make_tuple(y, disp(x, y)));
+
+                numValidD++;
+            }
+        }
+        
+        float cx, cy;
+
+        if (!estimateSlant(xDSamples, cx)) {
+            continue;
+        }
+
+        if (!estimateSlant(yDSamples, cy)) {
+            continue;
+        }
+
+        CImg<float> cSamples(numValidD);
+        int cSamplesI = 0;
+
+        // Iterate again, collecting samples with which to estimate
+        // the 'c' value for the plane
+        for (const auto& p : pixels) {
+            uint16_t x = get<0>(p);
+            uint16_t y = get<1>(p);
+
+            if (disp(x, y) != std::numeric_limits<int16_t>::max()) {
+                float c = disp(x, y) - (cx * x + cy * y);
+
+                cSamples(cSamplesI) = c;
+                cSamplesI++;
+            }
+        }
+
+        // FIXME Paper doesn't specify how much to blur
+        // cSamples.blur(cSamples.width() / 3.0f);
+
+        float c = cSamples(cSamples.width() / 2);
+
+        planes[superpixelI] = Plane(cx, cy, c);
+    }
+}
+
+void superpixelPlanesToDisparity(
+        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
+        const vector<Plane>& planes,
+        CImg<float>& disp) {
+    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
+        const auto& pixels = superpixels[superpixelI];
+
+        if (planes[superpixelI].isValid()) {
+            // Iterate over all pixels within the superpixel
+            for (const auto& p : pixels) {
+                uint16_t x = get<0>(p);
+                uint16_t y = get<1>(p);
+
+                disp(x, y) = planes[superpixelI].dispAt(x, y);
+            }
+        }
+    }
+}
+
+void superpixelPlaneCost(
+        const CImg<float>& left,
+        const CImg<float>& right,
+        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
+        float omega,
+        const vector<Plane>& planes,
+        CImg<float>& segmentPlaneCost) {
+    int N = superpixels.size();
+
+    segmentPlaneCost = CImg<float>(N, N);
+
+    segmentPlaneCost = 0.0f;
+
+    // '1' specifies forward finite differences
+    CImgList<float> leftGrad = left.get_gradient(0, 1);
+    CImgList<float> rightGrad = right.get_gradient(0, 1);
+
+    vector<tuple<int, Plane>> validPlanes;
+
+    for (int planeI = 0; planeI < N; planeI++) {
+        const Plane& plane = planes[planeI];
+        if (plane.isValid()) {
+            validPlanes.push_back(make_tuple(planeI, plane));
+        } else {
+            for (int segmentI = 0; segmentI < N; segmentI++) {
+                segmentPlaneCost(segmentI, planeI) = std::numeric_limits<float>::max();
+            }
+        }
+    }
+
+    // TODO Optimize - Store bounding-box for superpixel, create early-out if
+    //                 a plane transforms the bounding-box outside of the image.
+    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
+        const auto& pixels = superpixels[superpixelI];
+        printf("Processing superpixel %d\n", superpixelI);
+
+        for (const auto& indexedPlane : validPlanes) {
+            int planeI = get<0>(indexedPlane);
+            const Plane& plane = get<1>(indexedPlane);
+
+            // Iterate over all pixels within the superpixel
+            for (const auto& p : pixels) {
+                uint16_t x = get<0>(p);
+                uint16_t y = get<1>(p);
+
+                int rx = (int) (x + plane.dispAt(x, y) + 0.5f);
+                int ry = y;
+
+                if (rx < 0 || rx > right.width() - 2) {
+                    segmentPlaneCost(superpixelI, planeI) =
+                        std::numeric_limits<float>::max();
+                    break;
+                }
+
+                float cost = 0;
+
+                cimg_forZC(left, z, c) {
+                    float sad = abs(right(rx, ry, z, c) -
+                            left(x, y, z, c));
+
+                    float grad = 0;
+
+                    grad += abs(leftGrad(0)(x, y, z, c) -
+                            rightGrad(0)(rx, ry, z, c));
+
+                    grad += abs(leftGrad(1)(x, y, z, c) -
+                            rightGrad(1)(rx, ry, z, c));
+
+                    cost += (1.0f - omega) * sad + omega * grad;
+                }
+
+                segmentPlaneCost(superpixelI, planeI) += cost;
+            }
+        }
+    }
+}
+
+void refinePlanes(
+        const CImg<float>& left,
+        const CImg<float>& right,
+        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
+        const vector<Plane>& planes,
+        float omega,
+        vector<Plane>& refinedPlanes) {
+    // The number of planes and segments. Note that it is assumed that
+    // there is exactly one plane for each segment.
+    int N = planes.size();
+
+    refinedPlanes = vector<Plane>(N);
+
+    CImg<float> segmentPlaneCost;
+    superpixelPlaneCost(left, right, superpixels, omega,
+            planes, segmentPlaneCost);
+
+    segmentPlaneCost.display();
+
+    vector<int> optimalPlane(N);
+
+    for (int segmentI = 0; segmentI < N; segmentI++) {
+        int optimalPlaneI = 0;
+        float optimalPlaneCost = std::numeric_limits<float>::max();
+
+        for (int planeI = 0; planeI < N; planeI++) {
+            float cost = segmentPlaneCost(segmentI, planeI);
+            
+            if (cost < optimalPlaneCost) {
+                optimalPlaneCost = cost;
+                optimalPlaneI = planeI;
+                refinedPlanes[segmentI] = planes[planeI];
+            }
+        }
+    }
+}
+
+/**
+ * Computes stereo correspondence based on 
+ *
+ * Segment-Based Stereo Matching Using Belief Propagation and a Self-Adapting
+ * Dissimilarity Measure (by Klause, Sormann, and Karner)
+ *
+ * a.k.a "AdaptBP" in Middlebury rankings
+ *
+ */
 void computeAdaptBPStereo(
         const CImg<int16_t>& left,
         const CImg<int16_t>& right,
@@ -343,16 +553,37 @@ void computeAdaptBPStereo(
      * Note that this differs from the original paper, which used
      * Mean-shift color segmentation (Comaniciu and Meer)
      */
-    CImg<int> superpixels;
+    CImg<int> segmentation;
+    vector<vector<tuple<uint16_t, uint16_t>>> superpixels;
 
-    int numSuperpixels = (left.width() * left.height()) / 256;
+    int numSuperpixels = 512;
+
+    printf("Number of superpixels: %d\n", numSuperpixels);
 
     printf("Computing superpixels for Left\n");
-    slicSuperpixels(left, numSuperpixels, 15, superpixels);
+    slicSuperpixels(left.get_RGBtoLab(), numSuperpixels, 10, segmentation, superpixels);
 
+    segmentation.display();
+
+    printf("Computing disparity\n");
     computeDisparity(left.get_RGBtoLab(), right.get_RGBtoLab(),
             minDisp, maxDisp, 0.5f, disp);
 
+    disp.display();
+
     vector<Plane> planes;
+    printf("Fiting planes...\n");
     fitPlanes(superpixels, disp, planes);
+
+    CImg<float> pDisp(disp.width(), disp.height());
+    pDisp = 0.0f;
+    superpixelPlanesToDisparity(superpixels, planes, pDisp);
+    pDisp.display();
+
+    vector<Plane> refinedPlanes;
+    refinePlanes(left, right, superpixels, planes, 0.5f, refinedPlanes);
+
+    superpixelPlanesToDisparity(superpixels, refinedPlanes, pDisp);
+    pDisp.display();
 }
+

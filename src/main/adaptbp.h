@@ -3,18 +3,33 @@
 #include "common.h"
 
 struct Plane {
-    float c, cx, cy;
+    constexpr static const float INVALID = std::numeric_limits<float>::max();
+
+    float cx, cy, c;
+
+    Plane() {
+        cx = INVALID;
+        cy = INVALID;
+        c = INVALID;
+    }
+
+    Plane(
+            float _cx,
+            float _cy,
+            float _c) : cx(_cx), cy(_cy), c(_c) {
+    }
+
+    inline float dispAt(
+            float x,
+            float y) const {
+        return c + cx * x + cy * y;
+    }
+
+    inline bool isValid() const {
+        return cx != INVALID && cy != INVALID && c != INVALID;
+    }
 };
 
-/**
- * Computes stereo correspondence based on 
- *
- * Segment-Based Stereo Matching Using Belief Propagation and a Self-Adapting
- * Dissimilarity Measure (by Klause, Sormann, and Karner)
- *
- * a.k.a "AdaptBP" in Middlebury rankings
- *
- */
 void computeAdaptBPStereo(
         const CImg<int16_t>& left,
         const CImg<int16_t>& right,

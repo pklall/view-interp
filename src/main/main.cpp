@@ -73,7 +73,7 @@ void runBPStereo(
         CImg<int16_t>& lst) {
     CImg<int16_t> disp;
 
-    computeAdaptBPStereo(fst, lst, -256, 256, disp);
+    computeAdaptBPStereo(fst, lst, 0, 256, disp);
 }
 
 struct StereoMattingCost {
