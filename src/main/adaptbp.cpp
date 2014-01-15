@@ -315,7 +315,7 @@ inline bool estimateSlant(
 
     dtSamples.sort();
 
-    // FIXME The paper doesn't specify blur kernel size!
+    // TODO The paper doesn't specify blur kernel size!
     // dtSamples.blur(dtSamples.size() / 3.0f);
 
     result = dtSamples(dtSamples.size() / 2);
@@ -388,7 +388,7 @@ void fitPlanes(
             }
         }
 
-        // FIXME Paper doesn't specify how much to blur
+        // TODO Paper doesn't specify how much to blur
         // cSamples.blur(cSamples.width() / 3.0f);
 
         float c = cSamples(cSamples.width() / 2);
@@ -423,6 +423,8 @@ void superpixelPlaneCost(
         float omega,
         const vector<Plane>& planes,
         CImg<float>& segmentPlaneCost) {
+    // FIXME Don't assume that the number of planes and the number of segments are equal!
+    
     int N = superpixels.size();
 
     segmentPlaneCost = CImg<float>(N, N);
@@ -484,6 +486,10 @@ void superpixelPlaneCost(
                     grad += abs(leftGrad(1)(x, y, z, c) -
                             rightGrad(1)(rx, ry, z, c));
 
+                    // FIXME Robustify this by truncating against value
+                    //       determined by the mean & sd of these for reliable
+                    //       disparities found in the first step.
+
                     cost += (1.0f - omega) * sad + omega * grad;
                 }
 
@@ -496,12 +502,15 @@ void superpixelPlaneCost(
 void refinePlanes(
         const CImg<float>& left,
         const CImg<float>& right,
+        const CImg<float>& disp,
         const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
         const vector<Plane>& planes,
         float omega,
         vector<Plane>& refinedPlanes) {
     // The number of planes and segments. Note that it is assumed that
     // there is exactly one plane for each segment.
+
+    // FIXME work with different number of planes and segments
     int N = planes.size();
 
     refinedPlanes = vector<Plane>(N);
@@ -512,7 +521,8 @@ void refinePlanes(
 
     segmentPlaneCost.display();
 
-    vector<int> optimalPlane(N);
+    // Map from each plane to the set of segments for which it is optimal
+    map<int, vector<int>> planeSegments;
 
     for (int segmentI = 0; segmentI < N; segmentI++) {
         int optimalPlaneI = 0;
@@ -524,10 +534,35 @@ void refinePlanes(
             if (cost < optimalPlaneCost) {
                 optimalPlaneCost = cost;
                 optimalPlaneI = planeI;
-                refinedPlanes[segmentI] = planes[planeI];
             }
         }
+
+        planeSegments[optimalPlaneI].push_back(segmentI);
     }
+    
+    // Create new superpixel vector by merging superpixels with the same optimal plane
+    vector<vector<tuple<uint16_t, uint16_t>>> mergedSuperpixels(planeSegments.size());
+
+    int mergedSegmentI = 0;
+    for (const auto& ps : planeSegments) {
+        const vector<int>& segments = ps.second;
+
+        for (int segmentI : segments) {
+            auto& segment = mergedSuperpixels[mergedSegmentI];
+
+            segment.insert(segment.end(), superpixels[segmentI].begin(),
+                    superpixels[segmentI].end());
+        }
+
+        mergedSegmentI++;
+    }
+
+    fitPlanes(mergedSuperpixels, disp, refinedPlanes);
+
+    CImg<float> pDisp(disp.width(), disp.height());
+    pDisp = 0.0f;
+    superpixelPlanesToDisparity(mergedSuperpixels, refinedPlanes, pDisp);
+    pDisp.display();
 }
 
 /**
@@ -581,9 +616,6 @@ void computeAdaptBPStereo(
     pDisp.display();
 
     vector<Plane> refinedPlanes;
-    refinePlanes(left, right, superpixels, planes, 0.5f, refinedPlanes);
-
-    superpixelPlanesToDisparity(superpixels, refinedPlanes, pDisp);
-    pDisp.display();
+    refinePlanes(left, right, disp, superpixels, planes, 0.5f, refinedPlanes);
 }
 
