@@ -16,6 +16,12 @@ void slicSuperpixels(
         int nc,
         CImg<int>& result);
 
+void slicSuperpixels(
+        const CImg<float>& labIn,
+        int numSuperpixels,
+        int nc,
+        vector<vector<tuple<uint16_t, uint16_t>>>& superpixels);
+
 class CVStereo {
     private:
         cv::Mat original[2];

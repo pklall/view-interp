@@ -66,13 +66,43 @@ void slicSuperpixels(
     slic.generate_superpixels(&labInCVIpl, step, nc);
     slic.create_connectivity(&labInCVIpl);
     
-    cv::Mat resultCV;
-    convertCImgToMat(labIn.get_LabtoRGB(), resultCV);
-
     vector<vector<int>>& clusters = slic.getClusters();
 
     result = CImg<int>(labIn.width(), labIn.height());
     cimg_forXY(result, x, y) {
         result(x, y) = clusters[x][y];
+    }
+}
+
+void slicSuperpixels(
+        const CImg<float>& labIn,
+        int numSuperpixels,
+        int nc,
+        vector<vector<tuple<uint16_t, uint16_t>>>& superpixels) {
+    int w = labIn.width();
+    int h = labIn.height();
+
+    double step = sqrt((w * h) / (double) numSuperpixels);
+
+    cv::Mat labInCV;
+
+    convertCImgToMat(labIn, labInCV);
+
+    // FIXME This implementation appears to be blatently stupid w.r.t cache
+    //       utilization.  It should probably be rewritten, perhaps using
+    //       Halide.
+    Slic slic;
+    IplImage labInCVIpl = labInCV;
+    slic.generate_superpixels(&labInCVIpl, step, nc);
+    slic.create_connectivity(&labInCVIpl);
+
+    vector<vector<int>>& clusters = slic.getClusters();
+
+    superpixels = vector<vector<tuple<uint16_t, uint16_t>>>(numSuperpixels);
+
+    for (int x = 0; x < clusters.size(); x++) {
+        for (int y = 0; y < clusters[x].size(); y++) {
+            superpixels[clusters[x][y]].push_back(make_tuple((uint16_t) x, (uint16_t) y));
+        }
     }
 }
