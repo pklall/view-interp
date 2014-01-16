@@ -51,6 +51,7 @@ LD_DIRS   := -Lextern/libDAI/lib \
 LD_STATIC := -lceres \
              -lslic \
              -lHalide \
+			 -ldai \
 
 LD_FLAGS  := $(LD_DIRS) \
              $(LD_ASAN) \
@@ -76,6 +77,7 @@ LD_FLAGS  := $(LD_DIRS) \
              -lopencv_imgproc \
              -lopencv_legacy \
              -lopencv_video \
+			 -lgmp \
 
 CXX       := clang++
 LD        := clang++
