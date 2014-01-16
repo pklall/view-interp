@@ -316,7 +316,7 @@ inline bool estimateSlant(
     dtSamples.sort();
 
     // TODO The paper doesn't specify blur kernel size!
-    // dtSamples.blur(dtSamples.size() / 3.0f);
+    dtSamples.blur(min(1.0f, dtSamples.size() / 6.0f));
 
     result = dtSamples(dtSamples.size() / 2);
 
@@ -372,6 +372,7 @@ void fitPlanes(
         }
 
         CImg<float> cSamples(numValidD);
+
         int cSamplesI = 0;
 
         // Iterate again, collecting samples with which to estimate
@@ -388,8 +389,10 @@ void fitPlanes(
             }
         }
 
+        cSamples.sort();
+        
         // TODO Paper doesn't specify how much to blur
-        // cSamples.blur(cSamples.width() / 3.0f);
+        cSamples.blur(min(1.0f, cSamples.width() / 6.0f));
 
         float c = cSamples(cSamples.width() / 2);
 
@@ -423,11 +426,10 @@ void superpixelPlaneCost(
         float omega,
         const vector<Plane>& planes,
         CImg<float>& segmentPlaneCost) {
-    // FIXME Don't assume that the number of planes and the number of segments are equal!
-    
-    int N = superpixels.size();
+    int numPlanes = planes.size();
+    int numSeg = superpixels.size();
 
-    segmentPlaneCost = CImg<float>(N, N);
+    segmentPlaneCost = CImg<float>(numSeg, numPlanes);
 
     segmentPlaneCost = 0.0f;
 
@@ -435,28 +437,30 @@ void superpixelPlaneCost(
     CImgList<float> leftGrad = left.get_gradient(0, 1);
     CImgList<float> rightGrad = right.get_gradient(0, 1);
 
-    vector<tuple<int, Plane>> validPlanes;
+    map<int, Plane> validPlanes;
 
-    for (int planeI = 0; planeI < N; planeI++) {
+    for (int planeI = 0; planeI < numPlanes; planeI++) {
         const Plane& plane = planes[planeI];
         if (plane.isValid()) {
-            validPlanes.push_back(make_tuple(planeI, plane));
+            validPlanes[planeI] = plane;
         } else {
-            for (int segmentI = 0; segmentI < N; segmentI++) {
+            for (int segmentI = 0; segmentI < numSeg; segmentI++) {
                 segmentPlaneCost(segmentI, planeI) = std::numeric_limits<float>::max();
             }
         }
     }
 
+    // TODO Sort valid planes by the number of reliable samples used to compute them
+
     // TODO Optimize - Store bounding-box for superpixel, create early-out if
     //                 a plane transforms the bounding-box outside of the image.
-    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
+    for (int superpixelI = 0; superpixelI < numSeg; superpixelI++) {
         const auto& pixels = superpixels[superpixelI];
         printf("Processing superpixel %d\n", superpixelI);
 
         for (const auto& indexedPlane : validPlanes) {
-            int planeI = get<0>(indexedPlane);
-            const Plane& plane = get<1>(indexedPlane);
+            int planeI = indexedPlane.first;
+            Plane plane = indexedPlane.second;
 
             // Iterate over all pixels within the superpixel
             for (const auto& p : pixels) {
@@ -510,25 +514,27 @@ void refinePlanes(
     // The number of planes and segments. Note that it is assumed that
     // there is exactly one plane for each segment.
 
-    // FIXME work with different number of planes and segments
-    int N = planes.size();
+    int numPlanes = planes.size();
+    int numSeg = superpixels.size();
 
-    refinedPlanes = vector<Plane>(N);
+    refinedPlanes = vector<Plane>();
 
     CImg<float> segmentPlaneCost;
+    printf("Computing plane cost...\n");
     superpixelPlaneCost(left, right, superpixels, omega,
             planes, segmentPlaneCost);
+    printf("Done\n");
 
     segmentPlaneCost.display();
 
     // Map from each plane to the set of segments for which it is optimal
     map<int, vector<int>> planeSegments;
 
-    for (int segmentI = 0; segmentI < N; segmentI++) {
+    for (int segmentI = 0; segmentI < numSeg; segmentI++) {
         int optimalPlaneI = 0;
         float optimalPlaneCost = std::numeric_limits<float>::max();
 
-        for (int planeI = 0; planeI < N; planeI++) {
+        for (int planeI = 0; planeI < numPlanes; planeI++) {
             float cost = segmentPlaneCost(segmentI, planeI);
             
             if (cost < optimalPlaneCost) {
@@ -607,7 +613,7 @@ void computeAdaptBPStereo(
     disp.display();
 
     vector<Plane> planes;
-    printf("Fiting planes...\n");
+    printf("Fitting planes...\n");
     fitPlanes(superpixels, disp, planes);
 
     CImg<float> pDisp(disp.width(), disp.height());
