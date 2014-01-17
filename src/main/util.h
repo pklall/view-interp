@@ -1,5 +1,7 @@
 #pragma once
 
+#include "common.h"
+
 void featureMatchCV(
         const CImg<float>& a,
         const CImg<float>& b,

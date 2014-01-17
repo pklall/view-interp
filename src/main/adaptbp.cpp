@@ -1,10 +1,6 @@
-#include "Halide.h"
-
 #include "adaptbp.h"
 
 #include "cvutil/cvutil.h"
-
-#include "dai/alldai.h"
 
 #include <tuple>
 #include <vector>
@@ -570,6 +566,7 @@ void AdaptBPStereo::createFactorGraph() {
         }
     }
 
+    /*
     vector<dai::Var> vars;
     list<dai::Factor> factors;
 
@@ -615,7 +612,6 @@ void AdaptBPStereo::createFactorGraph() {
         // factors.push_back(dataTerm);
     }
     
-    /*
     mrf = dai::FactorGraph(
             factors.begin(), factors.end(),
             vars.begin(), vars.end(),

@@ -2,7 +2,8 @@
 
 #include "common.h"
 
-#include "dai/alldai.h"
+typedef opengm::SimpleDiscreteSpace<> Space;
+typedef opengm::GraphicalModel<double, opengm::Adder, opengm::PottsFunction<double>, Space> Model;
 
 struct Plane {
     constexpr static const float INVALID = std::numeric_limits<float>::max();
@@ -55,8 +56,6 @@ class AdaptBPStereo {
         vector<Plane> planes;
 
         CImg<float> segmentPlaneCost;
-
-        dai::FactorGraph mrf;
 
         vector<int> superpixelPlaneMap;
 

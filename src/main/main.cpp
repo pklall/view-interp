@@ -3,13 +3,13 @@
 #include "ceres/ceres.h"
 #include "glog/logging.h"
 
-#include "common.h"
-
 #include "util.h"
 
 #include "adaptbp.h"
 
 #include "cvutil/cvutil.h"
+
+#include "common.h"
 
 
 using namespace std;

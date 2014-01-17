@@ -26,11 +26,11 @@ LD_ASAN   :=
 
 endif
 
-INCLUDES  := -Iextern/libDAI/include \
-             -I/usr/include/eigen3 \
+INCLUDES  := -I/usr/include/eigen3 \
              -Iextern/ceres-solver/include \
              -Iextern/SLIC-Superpixels \
              -Iextern/Halide/include \
+             -Iextern/opengm/include \
 
 CXXFLAGS  := $(OPT_LEVEL) \
              $(CXX_ASAN) \
@@ -43,15 +43,13 @@ CXXFLAGS  := $(OPT_LEVEL) \
              -Wfatal-errors \
 
 
-LD_DIRS   := -Lextern/libDAI/lib \
-             -Lextern/ceres-solver/build/lib \
+LD_DIRS   := -Lextern/ceres-solver/build/lib \
              -Lextern/SLIC-Superpixels \
              -Lextern/Halide/bin \
 
 LD_STATIC := -lceres \
              -lslic \
              -lHalide \
-			 -ldai \
 
 LD_FLAGS  := $(LD_DIRS) \
              $(LD_ASAN) \
@@ -77,7 +75,6 @@ LD_FLAGS  := $(LD_DIRS) \
              -lopencv_imgproc \
              -lopencv_legacy \
              -lopencv_video \
-			 -lgmp \
 
 CXX       := clang++
 LD        := clang++

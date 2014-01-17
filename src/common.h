@@ -8,7 +8,15 @@
 
 #include <cassert>
 
-// #include <omp.h>
+// OpenGM and Halide MUST be included before CImg, which includes
+// X11 headers with conflicting definitions.
+#include "opengm/graphicalmodel/graphicalmodel.hxx"
+#include "opengm/graphicalmodel/space/simplediscretespace.hxx"
+#include "opengm/functions/explicit_function.hxx"
+#include "opengm/functions/potts.hxx"
+
+#include "Halide.h"
+
 
 #define cimg_use_png
 #define cimg_use_jpeg
