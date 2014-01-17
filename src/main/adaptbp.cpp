@@ -4,38 +4,47 @@
 
 #include "cvutil/cvutil.h"
 
+#include "dai/alldai.h"
+
 #include <tuple>
 #include <vector>
+#include <list>
 #include <map>
 
 using namespace std;
 
-// TODO Wrap all of this in a class
+AdaptBPStereo::AdaptBPStereo(
+        const CImg<int16_t>& _left,
+        const CImg<int16_t>& _right,
+        int _minDisp,
+        int _maxDisp) :
+    left(_left),
+    right(_right),
+    minDisp(_minDisp),
+    maxDisp(_maxDisp),
+    omega(0.5f),
+    smoothFactor(1.0f),
+    numSuperpixels(512) {
+}
 
-void computeDisparity(
-        const CImg<int16_t>& leftImg,
-        const CImg<int16_t>& rightImg,
-        int minDisp,
-        int maxDisp,
-        float omega,
-        CImg<int16_t>& disparityImg) {
-    assert(leftImg.is_sameXYZC(rightImg));
+void AdaptBPStereo::computeGreedyDisp() {
+    assert(left.is_sameXYZC(right));
     
     Halide::Buffer leftBuf(
             Halide::Int(16),
-            leftImg.width(), leftImg.height(),
-            1, leftImg.spectrum(),
-            (uint8_t*) leftImg.data(), string("leftBuf"));
+            left.width(), left.height(),
+            1, left.spectrum(),
+            (uint8_t*) left.data(), string("leftBuf"));
 
     Halide::Buffer rightBuf(
             Halide::Int(16),
-            rightImg.width(), rightImg.height(),
-            1, rightImg.spectrum(),
-            (uint8_t*) rightImg.data(), string("rightBuf"));
+            right.width(), right.height(),
+            1, right.spectrum(),
+            (uint8_t*) right.data(), string("rightBuf"));
 
     // Inputs
-    Halide::Image<int16_t> left(leftBuf.raw_buffer(), string("left"));
-    Halide::Image<int16_t> right(rightBuf.raw_buffer(), string("right"));
+    Halide::Image<int16_t> leftImg(leftBuf.raw_buffer(), string("leftImg"));
+    Halide::Image<int16_t> rightImg(rightBuf.raw_buffer(), string("rightImg"));
 
     Halide::Param<float> omegaParam;
     Halide::Param<int> minDispParam;
@@ -68,8 +77,9 @@ void computeDisparity(
 
     Halide::Func leftC("leftC");
     Halide::Func rightC("rightC");
-    leftC(x, y, c) = left(cx, cy, 0, c);
-    rightC(x, y, c) = right(cx, cy, 0, c);
+    // TODO what's the overhead of this?  check compiler output...
+    leftC(x, y, c) = leftImg(cx, cy, 0, c);
+    rightC(x, y, c) = rightImg(cx, cy, 0, c);
     
     // C_SAD(x, y, c, d) ...
     Halide::Func absDiff("absDiff"), cSAD("cSAD");
@@ -175,6 +185,7 @@ void computeDisparity(
         .reorder(x, c, d, y)
         .compute_at(cost, x)
         .store_root()
+        .reorder_storage(x, c, d, y)
         .bound(c, 0, 2);
 
     gradX1
@@ -216,6 +227,8 @@ void computeDisparity(
     cGrad
         .reorder(x, c, d, y)
         .compute_at(cost, x)
+        .reorder_storage(x, c, d, y)
+        .bound(c, 0, 2)
         .store_root();
 
     cost
@@ -241,8 +254,8 @@ void computeDisparity(
         .reorder(x, y);
 
     vector<Halide::Argument> args;
-    args.push_back(left);
-    args.push_back(right);
+    args.push_back(leftImg);
+    args.push_back(rightImg);
     args.push_back(minDispParam);
     args.push_back(maxDispParam);
     args.push_back(omegaParam);
@@ -259,11 +272,11 @@ void computeDisparity(
     // Copy out the results from buffer to CImg
     {
         Halide::Buffer disparityBuf = r[0];
-        Halide::Image<int16_t> disparityI(disparityBuf);
+        Halide::Image<int16_t> disparityImg(disparityBuf);
 
-        disparityImg= CImg<int16_t>(leftImg.width(), leftImg.height());
-        cimg_forXY(disparityImg, x, y) {
-            disparityImg(x, y) = disparityI(x, y);
+        disp = CImg<int16_t>(left.width(), left.height());
+        cimg_forXY(disp, x, y) {
+            disp(x, y) = disparityImg(x, y);
         }
 
     }
@@ -279,7 +292,7 @@ void computeDisparity(
  *
  * Returns true upon success, false if not enough samples were provided.
  */
-inline bool estimateSlant(
+inline bool AdaptBPStereo::estimateSlant(
         const map<uint16_t, vector<tuple<uint16_t, int16_t>>>& dSamples,
         float& result) {
     int totalSamplePairs = 0;
@@ -324,12 +337,9 @@ inline bool estimateSlant(
 }
 
 
-void fitPlanes(
-        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
-        const CImg<int16_t>& disp,
-        vector<Plane>& planes) {
+void AdaptBPStereo::fitPlanes() {
     // Create a plane for each superpixel
-    planes = vector<Plane>(superpixels.size());
+    planes.clear();
 
     // A map from y-index to (x, disparity) tuples to store
     // valid disparities for each scan-line in a superpixel.
@@ -396,36 +406,26 @@ void fitPlanes(
 
         float c = cSamples(cSamples.width() / 2);
 
-        planes[superpixelI] = Plane(cx, cy, c);
+        planes.push_back(Plane(cx, cy, c));
     }
 }
 
-void superpixelPlanesToDisparity(
-        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
-        const vector<Plane>& planes,
+void AdaptBPStereo::getDisparity(
         CImg<float>& disp) {
     for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
         const auto& pixels = superpixels[superpixelI];
 
-        if (planes[superpixelI].isValid()) {
-            // Iterate over all pixels within the superpixel
-            for (const auto& p : pixels) {
-                uint16_t x = get<0>(p);
-                uint16_t y = get<1>(p);
+        // Iterate over all pixels within the superpixel
+        for (const auto& p : pixels) {
+            uint16_t x = get<0>(p);
+            uint16_t y = get<1>(p);
 
-                disp(x, y) = planes[superpixelI].dispAt(x, y);
-            }
+            disp(x, y) = planes[superpixelPlaneMap[superpixelI]].dispAt(x, y);
         }
     }
 }
 
-void superpixelPlaneCost(
-        const CImg<float>& left,
-        const CImg<float>& right,
-        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
-        float omega,
-        const vector<Plane>& planes,
-        CImg<float>& segmentPlaneCost) {
+void AdaptBPStereo::computeSegmentPlaneCost() {
     int numPlanes = planes.size();
     int numSeg = superpixels.size();
 
@@ -434,33 +434,18 @@ void superpixelPlaneCost(
     segmentPlaneCost = 0.0f;
 
     // '1' specifies forward finite differences
-    CImgList<float> leftGrad = left.get_gradient(0, 1);
-    CImgList<float> rightGrad = right.get_gradient(0, 1);
-
-    map<int, Plane> validPlanes;
-
-    for (int planeI = 0; planeI < numPlanes; planeI++) {
-        const Plane& plane = planes[planeI];
-        if (plane.isValid()) {
-            validPlanes[planeI] = plane;
-        } else {
-            for (int segmentI = 0; segmentI < numSeg; segmentI++) {
-                segmentPlaneCost(segmentI, planeI) = std::numeric_limits<float>::max();
-            }
-        }
-    }
+    CImgList<int16_t> leftGrad = left.get_gradient(0, 1);
+    CImgList<int16_t> rightGrad = right.get_gradient(0, 1);
 
     // TODO Sort valid planes by the number of reliable samples used to compute them
 
     // TODO Optimize - Store bounding-box for superpixel, create early-out if
-    //                 a plane transforms the bounding-box outside of the image.
+    //                 a plane transforms the bounding-box outside of valid range.
     for (int superpixelI = 0; superpixelI < numSeg; superpixelI++) {
         const auto& pixels = superpixels[superpixelI];
-        printf("Processing superpixel %d\n", superpixelI);
 
-        for (const auto& indexedPlane : validPlanes) {
-            int planeI = indexedPlane.first;
-            Plane plane = indexedPlane.second;
+        for (int planeI = 0; planeI < planes.size(); planeI++) {
+            const Plane& plane = planes[planeI];
 
             // Iterate over all pixels within the superpixel
             for (const auto& p : pixels) {
@@ -479,10 +464,10 @@ void superpixelPlaneCost(
                 float cost = 0;
 
                 cimg_forZC(left, z, c) {
-                    float sad = abs(right(rx, ry, z, c) -
+                    int16_t sad = abs(right(rx, ry, z, c) -
                             left(x, y, z, c));
 
-                    float grad = 0;
+                    int16_t grad = 0;
 
                     grad += abs(leftGrad(0)(x, y, z, c) -
                             rightGrad(0)(rx, ry, z, c));
@@ -490,9 +475,9 @@ void superpixelPlaneCost(
                     grad += abs(leftGrad(1)(x, y, z, c) -
                             rightGrad(1)(rx, ry, z, c));
 
-                    // FIXME Robustify this by truncating against value
-                    //       determined by the mean & sd of these for reliable
-                    //       disparities found in the first step.
+                    // TODO Robustify this by truncating against value
+                    //      determined by the mean & sd of these for reliable
+                    //      disparities found in the first step.
 
                     cost += (1.0f - omega) * sad + omega * grad;
                 }
@@ -503,29 +488,12 @@ void superpixelPlaneCost(
     }
 }
 
-void refinePlanes(
-        const CImg<float>& left,
-        const CImg<float>& right,
-        const CImg<float>& disp,
-        const vector<vector<tuple<uint16_t, uint16_t>>>& superpixels,
-        const vector<Plane>& planes,
-        float omega,
-        vector<Plane>& refinedPlanes) {
+void AdaptBPStereo::mergeSegmentsByPlane() {
     // The number of planes and segments. Note that it is assumed that
     // there is exactly one plane for each segment.
 
     int numPlanes = planes.size();
     int numSeg = superpixels.size();
-
-    refinedPlanes = vector<Plane>();
-
-    CImg<float> segmentPlaneCost;
-    printf("Computing plane cost...\n");
-    superpixelPlaneCost(left, right, superpixels, omega,
-            planes, segmentPlaneCost);
-    printf("Done\n");
-
-    segmentPlaneCost.display();
 
     // Map from each plane to the set of segments for which it is optimal
     map<int, vector<int>> planeSegments;
@@ -547,9 +515,11 @@ void refinePlanes(
     }
     
     // Create new superpixel vector by merging superpixels with the same optimal plane
+    // FIXME this should modify superpixels in place, and efficiently pre-allocate into vectors ahead of time
     vector<vector<tuple<uint16_t, uint16_t>>> mergedSuperpixels(planeSegments.size());
 
     int mergedSegmentI = 0;
+
     for (const auto& ps : planeSegments) {
         const vector<int>& segments = ps.second;
 
@@ -562,14 +532,96 @@ void refinePlanes(
 
         mergedSegmentI++;
     }
-
-    fitPlanes(mergedSuperpixels, disp, refinedPlanes);
-
-    CImg<float> pDisp(disp.width(), disp.height());
-    pDisp = 0.0f;
-    superpixelPlanesToDisparity(mergedSuperpixels, refinedPlanes, pDisp);
-    pDisp.display();
 }
+
+void AdaptBPStereo::createFactorGraph() {
+    int numSegments = superpixels.size();
+    int numPlanes = segmentPlaneCost.height();
+    
+    CImg<float> segTotCol(numSegments);
+
+    segTotCol = 0.0f;
+
+    // Lower-trianglular matrix containing the length of the border
+    // between segments.
+    CImg<int> borderLength(numSegments, numSegments);
+
+    borderLength = 0;
+
+    cimg_forXY(left, x, y) {
+        cimg_forC(left, c) {
+            segTotCol(segmentation(x, y)) += left(x, y, 0, c);
+        }
+    }
+
+    for (int y = 1; y < left.height(); y++) {
+        for (int x = 1; x < left.width(); x++) {
+            int segA, segB;
+
+            segA = segmentation(x - 1, y);
+            segB = segmentation(x, y);
+
+            borderLength(min(segA, segB), max(segA, segB))++;
+
+            segA = segmentation(x, y - 1);
+            segB = segmentation(x, y);
+
+            borderLength(min(segA, segB), max(segA, segB))++;
+        }
+    }
+
+    vector<dai::Var> vars;
+    list<dai::Factor> factors;
+
+    vars.reserve(numSegments);
+
+    for (int i = 0; i < numSegments; i++) {
+        vars.push_back(dai::Var(i, numPlanes));
+    }
+
+    for (int segI = 0; segI < numSegments; segI++) {
+        // Pairwise terms...
+        for (int segI2 = segI + 1; segI2 < numSegments; segI2++) {
+            if (segI2 == segI) {
+                continue;
+            }
+
+            int blength = borderLength(segI, segI2);
+
+            if (blength > 0) {
+                float meanCol1 = segTotCol(segI) / superpixels[segI].size();
+                float meanCol2 = segTotCol(segI2) / superpixels[segI2].size();
+
+                float colorSim = (1.0f - min(abs(meanCol1 - meanCol2), 255.0f) / 255.0f) * 0.5f
+                    + 0.5f;
+
+                // TODO double check this
+                float pair = colorSim * blength * smoothFactor;
+
+                dai::Factor pairTerm = dai::createFactorPotts(
+                        vars[segI], vars[segI2], pair);
+
+                factors.push_back(pairTerm);
+            }
+        }
+
+        // Data Term...
+        // dai::Factor dataTerm(vars[segI]);
+
+        // for (int planeI = 0; planeI < numPlanes; planeI++) {
+            // dataTerm.set(planeI, segmentPlaneCost(segI, planeI));
+        // }
+ 
+        // factors.push_back(dataTerm);
+    }
+    
+    /*
+    mrf = dai::FactorGraph(
+            factors.begin(), factors.end(),
+            vars.begin(), vars.end(),
+            factors.size(), vars.size());
+    */
+} 
 
 /**
  * Computes stereo correspondence based on 
@@ -580,12 +632,7 @@ void refinePlanes(
  * a.k.a "AdaptBP" in Middlebury rankings
  *
  */
-void computeAdaptBPStereo(
-        const CImg<int16_t>& left,
-        const CImg<int16_t>& right,
-        int minDisp,
-        int maxDisp,
-        CImg<int16_t>& disp) {
+void AdaptBPStereo::computeStereo() {
     assert(left.is_sameXYZC(right));
 
     /**
@@ -594,34 +641,25 @@ void computeAdaptBPStereo(
      * Note that this differs from the original paper, which used
      * Mean-shift color segmentation (Comaniciu and Meer)
      */
-    CImg<int> segmentation;
-    vector<vector<tuple<uint16_t, uint16_t>>> superpixels;
-
-    int numSuperpixels = 512;
-
-    printf("Number of superpixels: %d\n", numSuperpixels);
-
     printf("Computing superpixels for Left\n");
     slicSuperpixels(left.get_RGBtoLab(), numSuperpixels, 10, segmentation, superpixels);
 
-    segmentation.display();
-
     printf("Computing disparity\n");
-    computeDisparity(left.get_RGBtoLab(), right.get_RGBtoLab(),
-            minDisp, maxDisp, 0.5f, disp);
+    computeGreedyDisp();
 
-    disp.display();
-
-    vector<Plane> planes;
     printf("Fitting planes...\n");
-    fitPlanes(superpixels, disp, planes);
+    fitPlanes();
 
-    CImg<float> pDisp(disp.width(), disp.height());
-    pDisp = 0.0f;
-    superpixelPlanesToDisparity(superpixels, planes, pDisp);
-    pDisp.display();
+    printf("Computing segment-plane cost\n");
+    computeSegmentPlaneCost();
 
-    vector<Plane> refinedPlanes;
-    refinePlanes(left, right, disp, superpixels, planes, 0.5f, refinedPlanes);
+    // printf("Merging segments by plane\n");
+    // mergeSegmentsByPlane();
+
+    // printf("Computing segment-plane cost\n");
+    // computeSegmentPlaneCost();
+
+    printf("Creating factor graph\n");
+    createFactorGraph();
 }
 
