@@ -9,6 +9,8 @@
 
 using namespace std;
 
+namespace ogm = opengm;
+
 AdaptBPStereo::AdaptBPStereo(
         const CImg<int16_t>& _left,
         const CImg<int16_t>& _right,
@@ -19,8 +21,8 @@ AdaptBPStereo::AdaptBPStereo(
     minDisp(_minDisp),
     maxDisp(_maxDisp),
     omega(0.5f),
-    smoothFactor(1.0f),
-    numSuperpixels(512) {
+    smoothFactor(10.0f),
+    numSuperpixels(256) {
 }
 
 void AdaptBPStereo::computeGreedyDisp() {
@@ -325,7 +327,7 @@ inline bool AdaptBPStereo::estimateSlant(
     dtSamples.sort();
 
     // TODO The paper doesn't specify blur kernel size!
-    dtSamples.blur(min(1.0f, dtSamples.size() / 6.0f));
+    // dtSamples.blur(min(1.0f, dtSamples.size() / 6.0f));
 
     result = dtSamples(dtSamples.size() / 2);
 
@@ -398,7 +400,7 @@ void AdaptBPStereo::fitPlanes() {
         cSamples.sort();
         
         // TODO Paper doesn't specify how much to blur
-        cSamples.blur(min(1.0f, cSamples.width() / 6.0f));
+        // cSamples.blur(min(1.0f, cSamples.width() / 6.0f));
 
         float c = cSamples(cSamples.width() / 2);
 
@@ -408,6 +410,8 @@ void AdaptBPStereo::fitPlanes() {
 
 void AdaptBPStereo::getDisparity(
         CImg<float>& disp) {
+    disp = CImg<float>(left.width(), left.height());
+
     for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
         const auto& pixels = superpixels[superpixelI];
 
@@ -448,6 +452,14 @@ void AdaptBPStereo::computeSegmentPlaneCost() {
                 uint16_t x = get<0>(p);
                 uint16_t y = get<1>(p);
 
+                float disp = plane.dispAt(x, y);
+
+                if (disp > maxDisp || disp < minDisp) {
+                    segmentPlaneCost(superpixelI, planeI) =
+                        std::numeric_limits<float>::max();
+                    break;
+                }
+
                 int rx = (int) (x + plane.dispAt(x, y) + 0.5f);
                 int ry = y;
 
@@ -485,9 +497,6 @@ void AdaptBPStereo::computeSegmentPlaneCost() {
 }
 
 void AdaptBPStereo::mergeSegmentsByPlane() {
-    // The number of planes and segments. Note that it is assumed that
-    // there is exactly one plane for each segment.
-
     int numPlanes = planes.size();
     int numSeg = superpixels.size();
 
@@ -511,7 +520,6 @@ void AdaptBPStereo::mergeSegmentsByPlane() {
     }
     
     // Create new superpixel vector by merging superpixels with the same optimal plane
-    // FIXME this should modify superpixels in place, and efficiently pre-allocate into vectors ahead of time
     vector<vector<tuple<uint16_t, uint16_t>>> mergedSuperpixels(planeSegments.size());
 
     int mergedSegmentI = 0;
@@ -528,9 +536,48 @@ void AdaptBPStereo::mergeSegmentsByPlane() {
 
         mergedSegmentI++;
     }
+
+    superpixels = mergedSuperpixels;
+
+    // Recompute segmentation to match the updated superpixels
+    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
+        const auto& pixels = superpixels[superpixelI];
+
+        // Iterate over all pixels within the superpixel
+        for (const auto& p : pixels) {
+            uint16_t x = get<0>(p);
+            uint16_t y = get<1>(p);
+
+            segmentation(x, y) = superpixelI;
+        }
+    }
 }
 
-void AdaptBPStereo::createFactorGraph() {
+void AdaptBPStereo::computeGreedySuperpixelPlaneMap() {
+    int numPlanes = planes.size();
+    int numSeg = superpixels.size();
+
+    superpixelPlaneMap.clear();
+    superpixelPlaneMap.reserve(numSeg);
+
+    for (int segmentI = 0; segmentI < numSeg; segmentI++) {
+        int optimalPlaneI = 0;
+        float optimalPlaneCost = std::numeric_limits<float>::max();
+
+        for (int planeI = 0; planeI < numPlanes; planeI++) {
+            float cost = segmentPlaneCost(segmentI, planeI);
+            
+            if (cost < optimalPlaneCost) {
+                optimalPlaneCost = cost;
+                optimalPlaneI = planeI;
+            }
+        }
+
+        superpixelPlaneMap[segmentI] = optimalPlaneI;
+    }
+}
+
+void AdaptBPStereo::createMRF() {
     int numSegments = superpixels.size();
     int numPlanes = segmentPlaneCost.height();
     
@@ -566,15 +613,11 @@ void AdaptBPStereo::createFactorGraph() {
         }
     }
 
-    /*
-    vector<dai::Var> vars;
-    list<dai::Factor> factors;
+    // 'numSegments' variables, each can take 'numPlanes' labels
+    printf("Constructing MRF with %d variables and %d labels\n", numSegments, numPlanes);
 
-    vars.reserve(numSegments);
-
-    for (int i = 0; i < numSegments; i++) {
-        vars.push_back(dai::Var(i, numPlanes));
-    }
+    Space space(numSegments, numPlanes);
+    mrf = GModel(space);
 
     for (int segI = 0; segI < numSegments; segI++) {
         // Pairwise terms...
@@ -595,29 +638,65 @@ void AdaptBPStereo::createFactorGraph() {
                 // TODO double check this
                 float pair = colorSim * blength * smoothFactor;
 
-                dai::Factor pairTerm = dai::createFactorPotts(
-                        vars[segI], vars[segI2], pair);
+                ogm::PottsFunction<float> pairTerm(numPlanes, numPlanes, 0, pair);
 
-                factors.push_back(pairTerm);
+                // vars[segI], vars[segI2], pair);
+                GModel::FunctionIdentifier fid = mrf.addFunction(pairTerm);
+
+                size_t vars[] = {(size_t) segI, (size_t) segI2};
+                mrf.addFactor(fid, vars, vars + 2);
             }
         }
 
         // Data Term...
-        // dai::Factor dataTerm(vars[segI]);
 
-        // for (int planeI = 0; planeI < numPlanes; planeI++) {
-            // dataTerm.set(planeI, segmentPlaneCost(segI, planeI));
-        // }
- 
-        // factors.push_back(dataTerm);
+        size_t shape[] = {(size_t) numPlanes};
+
+        ogm::ExplicitFunction<float> dataTerm(shape, shape + 1);
+
+        for (int planeI = 0; planeI < numPlanes; planeI++) {
+            dataTerm(planeI) = segmentPlaneCost(segI, planeI);
+        }
+
+        GModel::FunctionIdentifier fid = mrf.addFunction(dataTerm);
+
+        size_t vars[] = {(size_t) segI};
+        mrf.addFactor(fid, vars, vars + 1);
     }
-    
-    mrf = dai::FactorGraph(
-            factors.begin(), factors.end(),
-            vars.begin(), vars.end(),
-            factors.size(), vars.size());
-    */
 } 
+
+void AdaptBPStereo::solveMRF() {
+
+    typedef ogm::MinSTCutBoost<size_t, float, ogm::PUSH_RELABEL> MinCutType;
+    typedef ogm::GraphCut<GModel, ogm::Minimizer, MinCutType> MinGraphCut;
+    typedef ogm::AlphaExpansion<GModel, MinGraphCut> MinAlphaExpansion;
+    
+    MinAlphaExpansion ae(mrf);
+    
+    ae.infer();
+
+    superpixelPlaneMap = vector<size_t>(superpixels.size());
+    ae.arg(superpixelPlaneMap);
+
+    /*
+    typedef ogm::BeliefPropagationUpdateRules<GModel, ogm::Minimizer> UpdateRules;
+    typedef ogm::MessagePassing<GModel, ogm::Minimizer, UpdateRules,
+            ogm::MaxDistance> BeliefPropagation;
+    const size_t maxNumberOfIterations = 1;
+    const double convergenceBound = 1e-7;
+    const double damping = 0.0;
+    BeliefPropagation::Parameter parameter(maxNumberOfIterations, convergenceBound, damping);
+    BeliefPropagation bp(mrf, parameter);
+
+    bp.setStartingPoint(superpixelPlaneMap.begin());
+
+    BeliefPropagation::VerboseVisitorType visitor;
+    bp.infer(visitor);
+
+    superpixelPlaneMap = vector<size_t>(superpixels.size());
+    bp.arg(superpixelPlaneMap);
+    */
+}
 
 /**
  * Computes stereo correspondence based on 
@@ -646,16 +725,25 @@ void AdaptBPStereo::computeStereo() {
     printf("Fitting planes...\n");
     fitPlanes();
 
+    printf("Computing segment-plane cost...\n");
+    computeSegmentPlaneCost();
+
+    printf("Merging segments by plane\n");
+    mergeSegmentsByPlane();
+
+    fitPlanes();
+
     printf("Computing segment-plane cost\n");
     computeSegmentPlaneCost();
 
-    // printf("Merging segments by plane\n");
-    // mergeSegmentsByPlane();
+    computeGreedySuperpixelPlaneMap();
 
-    // printf("Computing segment-plane cost\n");
-    // computeSegmentPlaneCost();
+    createMRF();
 
-    printf("Creating factor graph\n");
-    createFactorGraph();
+    solveMRF();
+
+    CImg<float> finalDisp;
+    getDisparity(finalDisp);
+    finalDisp.save(("results/smooth_factor_" + to_string(smoothFactor) + ".png").c_str());
 }
 

@@ -2,8 +2,16 @@
 
 #include "common.h"
 
-typedef opengm::SimpleDiscreteSpace<> Space;
-typedef opengm::GraphicalModel<double, opengm::Adder, opengm::PottsFunction<double>, Space> Model;
+namespace ogm = opengm;
+
+typedef ogm::SimpleDiscreteSpace<> Space;
+
+typedef ogm::meta::TypeListGenerator<
+    ogm::ExplicitFunction<float>,
+    ogm::PottsFunction<float>
+>::type FunctionTypeList;
+
+typedef ogm::GraphicalModel<float, ogm::Adder, FunctionTypeList, Space> GModel;
 
 struct Plane {
     constexpr static const float INVALID = std::numeric_limits<float>::max();
@@ -57,7 +65,9 @@ class AdaptBPStereo {
 
         CImg<float> segmentPlaneCost;
 
-        vector<int> superpixelPlaneMap;
+        GModel mrf;
+
+        vector<size_t> superpixelPlaneMap;
 
         void computeGreedyDisp();
 
@@ -71,7 +81,11 @@ class AdaptBPStereo {
 
         void mergeSegmentsByPlane();
 
-        void createFactorGraph();
+        void computeGreedySuperpixelPlaneMap();
+
+        void createMRF();
+
+        void solveMRF();
 
     public:
         AdaptBPStereo(
