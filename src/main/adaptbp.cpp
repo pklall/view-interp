@@ -22,7 +22,7 @@ AdaptBPStereo::AdaptBPStereo(
     maxDisp(_maxDisp),
     omega(0.5f),
     smoothFactor(10.0f),
-    numSuperpixels(256) {
+    numSuperpixels(2048) {
 }
 
 void AdaptBPStereo::computeGreedyDisp() {
@@ -164,13 +164,13 @@ void AdaptBPStereo::computeGreedyDisp() {
     
     result(x, y) =
         Halide::select(consistent,
-                Halide::cast(Halide::Int(16),
+                Halide::cast(Halide::Float(32),
                     Halide::select(x == validX,
                         minCostDisparity(validX, y),
-                        Halide::Int(16).max()
+                        Halide::Float(32).max()
                         )
                     ),
-                Halide::Int(16).max());
+                Halide::Float(32).max());
 
     // Schedule...
     absDiff
@@ -291,7 +291,7 @@ void AdaptBPStereo::computeGreedyDisp() {
  * Returns true upon success, false if not enough samples were provided.
  */
 inline bool AdaptBPStereo::estimateSlant(
-        const map<uint16_t, vector<tuple<uint16_t, int16_t>>>& dSamples,
+        const map<uint16_t, vector<tuple<uint16_t, float>>>& dSamples,
         float& result) {
     int totalSamplePairs = 0;
     for (const auto& samples : dSamples) {
@@ -311,7 +311,7 @@ inline bool AdaptBPStereo::estimateSlant(
     int dtSamplesI = 0;
 
     for (const auto& samplesPair: dSamples) {
-        const vector<tuple<uint16_t, int16_t>>& samples = samplesPair.second;
+        const vector<tuple<uint16_t, float>>& samples = samplesPair.second;
 
         for (int i = 0; i < samples.size(); i++) {
             for (int j = i + 1; j < samples.size(); j++) {
@@ -327,7 +327,7 @@ inline bool AdaptBPStereo::estimateSlant(
     dtSamples.sort();
 
     // TODO The paper doesn't specify blur kernel size!
-    // dtSamples.blur(min(1.0f, dtSamples.size() / 6.0f));
+    // dtSamples.blur(min(1.0f, dtSamples.size() / 16.0f));
 
     result = dtSamples(dtSamples.size() / 2);
 
@@ -335,20 +335,25 @@ inline bool AdaptBPStereo::estimateSlant(
 }
 
 
-void AdaptBPStereo::fitPlanes() {
-    // Create a plane for each superpixel
-    planes.clear();
+void AdaptBPStereo::fitPlanes(
+        bool assignSegmentsToPlanes) {
+    if (assignSegmentsToPlanes) {
+        // Create a plane for each superpixel
+        planes = vector<Plane>(segmentation.size());
+    } else {
+        planes.clear();
+    }
 
     // A map from y-index to (x, disparity) tuples to store
     // valid disparities for each scan-line in a superpixel.
-    map<uint16_t, vector<tuple<uint16_t, int16_t>>> xDSamples;
+    map<uint16_t, vector<tuple<uint16_t, float>>> xDSamples;
     
     // A map from x-index to (y, disparity) tuples to store
     // valid disparities for each vertical-line in a superpixel.
-    map<uint16_t, vector<tuple<uint16_t, int16_t>>> yDSamples;
+    map<uint16_t, vector<tuple<uint16_t, float>>> yDSamples;
 
-    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
-        const auto& pixels = superpixels[superpixelI];
+    for (int superpixelI = 0; superpixelI < segmentation.size(); superpixelI++) {
+        const auto& superpixel = segmentation[superpixelI];
 
         xDSamples.clear();
         yDSamples.clear();
@@ -356,12 +361,12 @@ void AdaptBPStereo::fitPlanes() {
         int numValidD = 0;
 
         // Iterate over all pixels within the superpixel
-        for (const auto& p : pixels) {
+        for (const auto& p : superpixel.getPixels()) {
             uint16_t x = get<0>(p);
             uint16_t y = get<1>(p);
 
             // If this pixel has a valid disparity, add it
-            if (disp(x, y) != std::numeric_limits<int16_t>::max()) {
+            if (disp(x, y) >= minDisp && disp(x, y) <= maxDisp) {
                 xDSamples[y].push_back(make_tuple(x, disp(x, y)));
                 yDSamples[x].push_back(make_tuple(y, disp(x, y)));
 
@@ -385,11 +390,11 @@ void AdaptBPStereo::fitPlanes() {
 
         // Iterate again, collecting samples with which to estimate
         // the 'c' value for the plane
-        for (const auto& p : pixels) {
+        for (const auto& p : superpixel.getPixels()) {
             uint16_t x = get<0>(p);
             uint16_t y = get<1>(p);
 
-            if (disp(x, y) != std::numeric_limits<int16_t>::max()) {
+            if (disp(x, y) >= minDisp && disp(x, y) <= maxDisp) {
                 float c = disp(x, y) - (cx * x + cy * y);
 
                 cSamples(cSamplesI) = c;
@@ -400,11 +405,25 @@ void AdaptBPStereo::fitPlanes() {
         cSamples.sort();
         
         // TODO Paper doesn't specify how much to blur
-        // cSamples.blur(min(1.0f, cSamples.width() / 6.0f));
+        // cSamples.blur(min(1.0f, cSamples.width() / 16.0f));
 
         float c = cSamples(cSamples.width() / 2);
 
-        planes.push_back(Plane(cx, cy, c));
+        if (assignSegmentsToPlanes) {
+            planes[superpixelI] = Plane(cx, cy, c);
+        } else {
+            planes.push_back(Plane(cx, cy, c));
+        }
+    }
+
+    if (assignSegmentsToPlanes) {
+        int numSegments = segmentation.size();
+
+        superpixelPlaneMap = vector<size_t>(numSegments);
+
+        for (int segI = 0; segI < numSegments; segI++) {
+            superpixelPlaneMap[segI] = segI;
+        }
     }
 }
 
@@ -412,22 +431,28 @@ void AdaptBPStereo::getDisparity(
         CImg<float>& disp) {
     disp = CImg<float>(left.width(), left.height());
 
-    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
-        const auto& pixels = superpixels[superpixelI];
+    disp = 0.0f;
 
-        // Iterate over all pixels within the superpixel
-        for (const auto& p : pixels) {
-            uint16_t x = get<0>(p);
-            uint16_t y = get<1>(p);
+    for (int superpixelI = 0; superpixelI < segmentation.size(); superpixelI++) {
+        const auto& superpixel = segmentation[superpixelI];
 
-            disp(x, y) = planes[superpixelPlaneMap[superpixelI]].dispAt(x, y);
+        const Plane& plane = planes[superpixelPlaneMap[superpixelI]];
+
+        if (plane.isValid()) {
+            // Iterate over all pixels within the superpixel
+            for (const auto& p : superpixel.getPixels()) {
+                uint16_t x = get<0>(p);
+                uint16_t y = get<1>(p);
+
+                disp(x, y) = plane.dispAt(x, y);
+            }
         }
     }
 }
 
 void AdaptBPStereo::computeSegmentPlaneCost() {
     int numPlanes = planes.size();
-    int numSeg = superpixels.size();
+    int numSeg = segmentation.size();
 
     segmentPlaneCost = CImg<float>(numSeg, numPlanes);
 
@@ -442,21 +467,20 @@ void AdaptBPStereo::computeSegmentPlaneCost() {
     // TODO Optimize - Store bounding-box for superpixel, create early-out if
     //                 a plane transforms the bounding-box outside of valid range.
     for (int superpixelI = 0; superpixelI < numSeg; superpixelI++) {
-        const auto& pixels = superpixels[superpixelI];
+        const auto& superpixel = segmentation[superpixelI];
 
         for (int planeI = 0; planeI < planes.size(); planeI++) {
             const Plane& plane = planes[planeI];
 
             // Iterate over all pixels within the superpixel
-            for (const auto& p : pixels) {
+            for (const auto& p : superpixel.getPixels()) {
                 uint16_t x = get<0>(p);
                 uint16_t y = get<1>(p);
 
                 float disp = plane.dispAt(x, y);
 
                 if (disp > maxDisp || disp < minDisp) {
-                    segmentPlaneCost(superpixelI, planeI) =
-                        std::numeric_limits<float>::max();
+                    segmentPlaneCost(superpixelI, planeI) = minDisp - 1;
                     break;
                 }
 
@@ -464,8 +488,7 @@ void AdaptBPStereo::computeSegmentPlaneCost() {
                 int ry = y;
 
                 if (rx < 0 || rx > right.width() - 2) {
-                    segmentPlaneCost(superpixelI, planeI) =
-                        std::numeric_limits<float>::max();
+                    segmentPlaneCost(superpixelI, planeI) = minDisp - 1;
                     break;
                 }
 
@@ -497,8 +520,9 @@ void AdaptBPStereo::computeSegmentPlaneCost() {
 }
 
 void AdaptBPStereo::mergeSegmentsByPlane() {
+    /*
     int numPlanes = planes.size();
-    int numSeg = superpixels.size();
+    int numSeg = segmentation.size();
 
     // Map from each plane to the set of segments for which it is optimal
     map<int, vector<int>> planeSegments;
@@ -537,25 +561,15 @@ void AdaptBPStereo::mergeSegmentsByPlane() {
         mergedSegmentI++;
     }
 
-    superpixels = mergedSuperpixels;
+    segmentation.superpixels = mergedSuperpixels;
 
-    // Recompute segmentation to match the updated superpixels
-    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
-        const auto& pixels = superpixels[superpixelI];
-
-        // Iterate over all pixels within the superpixel
-        for (const auto& p : pixels) {
-            uint16_t x = get<0>(p);
-            uint16_t y = get<1>(p);
-
-            segmentation(x, y) = superpixelI;
-        }
-    }
+    segmentation.recomputeSegmentMap();
+    */
 }
 
 void AdaptBPStereo::computeGreedySuperpixelPlaneMap() {
     int numPlanes = planes.size();
-    int numSeg = superpixels.size();
+    int numSeg = segmentation.size();
 
     superpixelPlaneMap.clear();
     superpixelPlaneMap.reserve(numSeg);
@@ -578,7 +592,7 @@ void AdaptBPStereo::computeGreedySuperpixelPlaneMap() {
 }
 
 void AdaptBPStereo::createMRF() {
-    int numSegments = superpixels.size();
+    int numSegments = segmentation.size();
     int numPlanes = segmentPlaneCost.height();
     
     CImg<float> segTotCol(numSegments);
@@ -629,8 +643,8 @@ void AdaptBPStereo::createMRF() {
             int blength = borderLength(segI, segI2);
 
             if (blength > 0) {
-                float meanCol1 = segTotCol(segI) / superpixels[segI].size();
-                float meanCol2 = segTotCol(segI2) / superpixels[segI2].size();
+                float meanCol1 = segTotCol(segI) / segmentation[segI].size();
+                float meanCol2 = segTotCol(segI2) / segmentation[segI2].size();
 
                 float colorSim = (1.0f - min(abs(meanCol1 - meanCol2), 255.0f) / 255.0f) * 0.5f
                     + 0.5f;
@@ -675,7 +689,7 @@ void AdaptBPStereo::solveMRF() {
     
     ae.infer();
 
-    superpixelPlaneMap = vector<size_t>(superpixels.size());
+    superpixelPlaneMap = vector<size_t>(segmentation.size());
     ae.arg(superpixelPlaneMap);
 
     /*
@@ -717,33 +731,47 @@ void AdaptBPStereo::computeStereo() {
      * Mean-shift color segmentation (Comaniciu and Meer)
      */
     printf("Computing superpixels for Left\n");
-    slicSuperpixels(left.get_RGBtoLab(), numSuperpixels, 10, segmentation, superpixels);
+    segmentation.createSlicSuperpixels(left.get_RGBtoLab(), numSuperpixels, 10);
 
     printf("Computing disparity\n");
-    computeGreedyDisp();
-
+    // computeGreedyDisp();
+    CVStereo stereo(left, right, true);
+    stereo.matchStereo(minDisp, maxDisp, 3, 1.0f);
+    stereo.getStereo(disp);
+    
     printf("Fitting planes...\n");
-    fitPlanes();
+    fitPlanes(true);
 
-    printf("Computing segment-plane cost...\n");
-    computeSegmentPlaneCost();
+    // fitPlanes(false);
 
-    printf("Merging segments by plane\n");
-    mergeSegmentsByPlane();
+    // printf("Computing segment-plane cost...\n");
+    // computeSegmentPlaneCost();
 
-    fitPlanes();
+    // printf("Merging segments by plane\n");
+    // mergeSegmentsByPlane();
 
-    printf("Computing segment-plane cost\n");
-    computeSegmentPlaneCost();
+    // fitPlanes(false);
 
-    computeGreedySuperpixelPlaneMap();
+    // printf("Computing segment-plane cost\n");
+    // computeSegmentPlaneCost();
 
-    createMRF();
+    // computeGreedySuperpixelPlaneMap();
 
-    solveMRF();
+    // createMRF();
+
+    // solveMRF();
 
     CImg<float> finalDisp;
     getDisparity(finalDisp);
-    finalDisp.save(("results/smooth_factor_" + to_string(smoothFactor) + ".png").c_str());
+
+    // Use planar disparity to fill holes in original disparity
+    CImg<float> filledDisp = disp;
+    cimg_forXY(filledDisp, x, y) {
+        if (filledDisp(x, y) < minDisp || filledDisp(x, y) > maxDisp) {
+            filledDisp(x, y) = finalDisp(x, y);
+        }
+    }
+
+    (disp, finalDisp, filledDisp).display();
 }
 

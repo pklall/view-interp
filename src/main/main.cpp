@@ -24,6 +24,12 @@ using ceres::Solve;
 
 #define dbgOut std::cout
 
+void naiveStereoReconstruct(
+        const CImg<float>& original,
+        const CImg<float>& disparity,
+        CImg<float>& result,
+        float scale);
+
 void runBPStereo(CImg<int16_t>& fst, CImg<int16_t>& lst);
 
 void runStereoMatte(CImg<float>& fst, CImg<float>& lst);
@@ -71,9 +77,29 @@ int main(int argc, char** argv) {
 void runBPStereo(
         CImg<int16_t>& fst,
         CImg<int16_t>& lst) {
-    CImg<int16_t> disp;
+    CImg<float> disp;
 
-    AdaptBPStereo(fst, lst, 0, 512).computeStereo();
+    int minDisp = -128;
+    int maxDisp = 128;
+
+    auto stereo = AdaptBPStereo(fst, lst, minDisp, maxDisp);
+    stereo.computeStereo();
+    stereo.getDisparity(disp);
+
+    cimg_forXY(disp, x, y) {
+        if (disp(x, y) < minDisp || disp(x, y) > maxDisp) {
+            disp(x, y) = std::numeric_limits<float>::max();
+        }
+    }
+
+    for (int i = 0; i <= 20; i++) {
+        CImg<float> reconstruction;
+
+        naiveStereoReconstruct(fst, disp, reconstruction, (i - 5.0f) / 10.0f);
+
+        string fname = "results/reconstruction_" + to_string(i) + ".png";
+        reconstruction.save(fname.c_str());
+    }
 }
 
 struct StereoMattingCost {
@@ -163,12 +189,14 @@ void naiveStereoReconstruct(
         int sx = (sorted(x, y) % disparity.width());
         int sy = (sorted(x, y) / disparity.width());
 
-        float dx = sx - scale * disparity(sx, sy);
-        float dy = sy;
+        if (disparity(sx, sy) != std::numeric_limits<float>::max()) {
+            float dx = sx - scale * disparity(sx, sy);
+            float dy = sy;
 
-        if (original.containsXYZC(sx, sy) && result.containsXYZC(dx, dy)) {
-            cimg_forZC(original, z, c) {
-                result(dx, dy, z, c) = original(sx, sy, z, c);
+            if (original.containsXYZC(sx, sy) && result.containsXYZC(dx, dy)) {
+                cimg_forZC(original, z, c) {
+                    result(dx, dy, z, c) = original(sx, sy, z, c);
+                }
             }
         }
     }
@@ -181,18 +209,21 @@ void runCVStereo(
 
     int maxDisp = 256;
 
+    printf("Computing stereo...\n");
     {
         CVStereo stereo(fst, lst, true);
         stereo.matchStereo(-maxDisp, maxDisp, 3, 1.0f);
         stereo.getStereo(dispLeft);
-        dispLeft.display();
     }
+    printf("Done\n");
 
+    printf("Computing stereo...\n");
     {
         CVStereo stereo(lst, fst, true);
         stereo.matchStereo(-maxDisp, maxDisp, 3, 1.0f);
         stereo.getStereo(dispRight);
     }
+    printf("Done\n");
 
     // Use infinity to signify lack of data
     cimg_forXY(dispLeft, x, y) {

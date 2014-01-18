@@ -51,8 +51,7 @@ void slicSuperpixels(
         const CImg<float>& labIn,
         int numSuperpixels,
         int nc,
-        CImg<int>& result,
-        vector<vector<tuple<uint16_t, uint16_t>>>& superpixels) {
+        CImg<int>& result) {
     int w = labIn.width();
     int h = labIn.height();
 
@@ -71,11 +70,8 @@ void slicSuperpixels(
 
     result = CImg<int>(labIn.width(), labIn.height());
 
-    superpixels = vector<vector<tuple<uint16_t, uint16_t>>>(numSuperpixels);
-
     cimg_forXY(result, x, y) {
         result(x, y) = clusters[x][y];
-        superpixels[clusters[x][y]].push_back(make_tuple((uint16_t) x, (uint16_t) y));
     }
 }
 
