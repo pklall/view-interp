@@ -14,8 +14,6 @@ class Superpixel {
         inline void addPixel(
                 uint16_t x,
                 uint16_t y) {
-            pixels.push_back(make_tuple(x, y));
-
             if (pixels.size() == 0) {
                 minX = x;
                 maxX = x;
@@ -27,6 +25,8 @@ class Superpixel {
                 minY = min(minY, y);
                 maxY = max(maxY, y);
             }
+
+            pixels.push_back(make_tuple(x, y));
         }
 
         inline void compress() {
@@ -42,14 +42,14 @@ class Superpixel {
         }
 
         inline void getBounds(
-                int& minX,
-                int& minY, 
-                int& maxX,
-                int& maxY) const {
-            minX = this->minX;
-            minY = this->minY;
-            maxX = this->maxX;
-            maxY = this->maxY;
+                int& _minX,
+                int& _minY, 
+                int& _maxX,
+                int& _maxY) const {
+            _minX = minX;
+            _minY = minY;
+            _maxX = maxX;
+            _maxY = maxY;
         }
 
         inline void getCenter(
@@ -131,12 +131,6 @@ struct Plane {
             float x,
             float y) const {
         return c + cx * x + cy * y;
-    }
-
-    inline float reverseDispAt(
-            float dx,
-            float y) const {
-        return (dx - c - cy * y) / cx;
     }
 
     inline bool isValid() const {

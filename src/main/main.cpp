@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
 void runInterpolation(
         const CImg<int16_t>& fst,
         const CImg<int16_t>& lst) {
-    int maxDisp = 256;
+    int maxDisp = 128;
     int minDisp = -maxDisp;
 
     printf("Computing stereo...\n");
@@ -112,12 +112,20 @@ void runInterpolation(
 
     PlanarDepth pd = PlanarDepth(sp, segmentation);
                 
-    CImg<float> disp;
+    // CImg<float> disp;
 
-    pd.getDisparity(disp);
+    // pd.getDisparity(disp);
     
-    disp.display();
+    // disp.display();
+    
+    for (int i = 0; i <= 20; i++) {
+        CImg<float> reconstruction;
 
+        pd.renderInterpolated((i - 10.0f) / 10.0f, reconstruction);
+
+        string fname = "results/reconstruction_" + to_string(i) + ".png";
+        reconstruction.save(fname.c_str());
+    }
 }
 
 void runBPStereo(
