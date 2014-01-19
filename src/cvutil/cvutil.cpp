@@ -51,7 +51,7 @@ void slicSuperpixels(
         const CImg<float>& labIn,
         int numSuperpixels,
         int nc,
-        CImg<int>& result) {
+        CImg<size_t>& result) {
     int w = labIn.width();
     int h = labIn.height();
 
@@ -68,7 +68,7 @@ void slicSuperpixels(
     
     vector<vector<int>>& clusters = slic.getClusters();
 
-    result = CImg<int>(labIn.width(), labIn.height());
+    result = CImg<size_t>(labIn.width(), labIn.height());
 
     cimg_forXY(result, x, y) {
         result(x, y) = clusters[x][y];

@@ -51,13 +51,20 @@ class Superpixel {
             maxX = this->maxX;
             maxY = this->maxY;
         }
+
+        inline void getCenter(
+                int& x,
+                int& y) const {
+            x = (minX + maxX) / 2;
+            y = (minY + maxY) / 2;
+        }
 };
 
 class Segmentation {
     private:
         vector<Superpixel> superpixels;
 
-        CImg<int> segmentMap;
+        CImg<size_t> segmentMap;
 
     public:
         vector<Superpixel>& getSuperpixels() {
@@ -68,7 +75,7 @@ class Segmentation {
             return superpixels;
         }
 
-        inline const CImg<int>& getSegmentMap() const {
+        inline const CImg<size_t>& getSegmentMap() const {
             return segmentMap;
         }
 
@@ -84,11 +91,11 @@ class Segmentation {
             return superpixels[index];
         }
 
-        inline int& operator()(size_t x, size_t y) {
+        inline size_t& operator()(size_t x, size_t y) {
             return segmentMap(x, y);
         }
 
-        inline int operator()(size_t x, size_t y) const {
+        inline size_t operator()(size_t x, size_t y) const {
             return segmentMap(x, y);
         }
 
@@ -126,6 +133,12 @@ struct Plane {
         return c + cx * x + cy * y;
     }
 
+    inline float reverseDispAt(
+            float dx,
+            float y) const {
+        return (dx - c - cy * y) / cx;
+    }
+
     inline bool isValid() const {
         return cx != INVALID && cy != INVALID && c != INVALID;
     }
@@ -139,6 +152,13 @@ struct StereoProblem {
     int maxDisp;
 
     CImg<float> disp;
+
+    StereoProblem(
+            CImg<uint16_t> left, 
+            CImg<uint16_t> right, 
+            int minDisp,
+            int maxDisp,
+            CImg<float> disp);
 
     inline bool isValidDisp(
             size_t x,
@@ -168,4 +188,8 @@ class PlanarDepth {
 
         void getDisparity(
                 CImg<float>& disp) const;
+
+        void renderInterpolated(
+                float t,
+                CImg<float>& result);
 };

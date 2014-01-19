@@ -30,6 +30,10 @@ void naiveStereoReconstruct(
         CImg<float>& result,
         float scale);
 
+void runInterpolation(
+        const CImg<int16_t>& fst,
+        const CImg<int16_t>& lst);
+
 void runBPStereo(CImg<int16_t>& fst, CImg<int16_t>& lst);
 
 void runStereoMatte(CImg<float>& fst, CImg<float>& lst);
@@ -69,9 +73,51 @@ int main(int argc, char** argv) {
 
         printf("Running bpstereo\n");
         runBPStereo(fst, lst);
+    } else if (op == "interp") {
+        CImg<int16_t> fst(argv[2]);
+        CImg<int16_t> lst(argv[3]);
+
+        printf("Running interpolation\n");
+        runInterpolation(fst, lst);
     }
 
     return 0;
+}
+
+void runInterpolation(
+        const CImg<int16_t>& fst,
+        const CImg<int16_t>& lst) {
+    int maxDisp = 256;
+    int minDisp = -maxDisp;
+
+    printf("Computing stereo...\n");
+    CImg<float> dispLeft;
+
+    CVStereo stereo(fst, lst, true);
+
+    stereo.matchStereo(minDisp, maxDisp, 3, 1.0f);
+
+    stereo.getStereo(dispLeft);
+
+    printf("Done\n");
+
+    StereoProblem sp(fst, lst, minDisp, maxDisp, dispLeft);
+
+    Segmentation segmentation;
+
+    segmentation.createSlicSuperpixels(
+            fst.get_RGBtoLab(),
+            fst.width() * fst.height() / (8 * 8),
+            10);
+
+    PlanarDepth pd = PlanarDepth(sp, segmentation);
+                
+    CImg<float> disp;
+
+    pd.getDisparity(disp);
+    
+    disp.display();
+
 }
 
 void runBPStereo(

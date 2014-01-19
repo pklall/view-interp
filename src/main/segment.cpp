@@ -37,6 +37,17 @@ void Segmentation::renderVisualization(
     result = segmentMap.get_map(CImg<float>().lines_LUT256());
 }
 
+StereoProblem::StereoProblem(
+        CImg<uint16_t> _left, 
+        CImg<uint16_t> _right, 
+        int _minDisp,
+        int _maxDisp,
+        CImg<float> _disp) :
+    left(_left), right(_right),
+    minDisp(_minDisp), maxDisp(_maxDisp),
+    disp(_disp) {
+}
+
 /**
  * Estimates slant (dD/dt) from a set of samples of (D, t)
  * samples for which all non-t dimensions are constant.
@@ -190,6 +201,75 @@ void PlanarDepth::getDisparity(
                 uint16_t y = get<1>(p);
 
                 disp(x, y) = plane.dispAt(x, y);
+            }
+        }
+    }
+}
+
+void PlanarDepth::renderInterpolated(
+        float t,
+        CImg<float>& result) {
+    vector<size_t> segmentIndices;
+
+    for (size_t i = 0; i < segmentation.size(); i++) {
+        segmentIndices[i] = i;
+    }
+
+    // Sort segments (by index) according to depth at center
+    // for back-to-front rendering (Painter's Algo.)
+    std::sort(segmentIndices.begin(), segmentIndices.end(), 
+            [&](size_t a, size_t b){
+            int aX, aY, bX, bY;
+            segmentation[a].getCenter(aX, aY);
+            segmentation[b].getCenter(bX, bY);
+            return planes[a].dispAt(aX, aY) < planes[b].dispAt(bX, bY);
+            });
+
+    // Add an alpha channel to the result
+    result.resize(stereo.left.width(), stereo.left.height(), 0,
+            stereo.left.spectrum());
+
+    result = 0.0f;
+    
+    for (size_t segI : segmentIndices) {
+        const Superpixel& superpixel = segmentation[segI];
+
+        Plane& plane = planes[segI];
+
+        if (plane.isValid()) {
+            int minX, minY, maxX, maxY;
+
+            superpixel.getBounds(minX, minY, maxX, maxY);
+
+            cimg_forC(stereo.left, c) {
+                for (int y = minY; y <= maxY; y++) {
+                    float minXD = minX + plane.dispAt(minX, y);
+                    float maxXD = maxX + plane.dispAt(maxX, y);
+
+                    for (int dx = (int) minXD;
+                            dx <= (int) (maxXD + 0.5f);
+                            dx++) {
+                        float sx = plane.reverseDispAt(dx, y);
+
+                        int sxiL = (int) sx;
+                        int sxiR = (int) (sx + 0.5f);
+
+                        float sxiLweight = sx - ((float) sxiL);
+                        float sxiRweight = ((float) sxiR) - sx;
+
+                        sxiLweight *= segmentation(sxiL, y) == segI;
+                        sxiRweight *= segmentation(sxiR, y) == segI;
+
+                        int totWeight = sxiLweight + sxiRweight;
+
+                        sxiLweight /= totWeight;
+                        sxiRweight /= totWeight;
+
+                        result(dx, y, 0, c) = 
+                            stereo.left(sxiL, y, 0, c) * sxiLweight +
+                            stereo.left(sxiR, y, 0, c) * sxiRweight;
+                    }
+                }
             }
         }
     }
