@@ -60,20 +60,32 @@ class Segmentation {
         CImg<int> segmentMap;
 
     public:
-        vector<Superpixel>& getSuperpixels();
+        vector<Superpixel>& getSuperpixels() {
+            return superpixels;
+        }
 
-        const vector<Superpixel>& getSuperpixels() const;
+        const vector<Superpixel>& getSuperpixels() const {
+            return superpixels;
+        }
 
-        inline const CImg<int>& getSegmentMap() {
+        inline const CImg<int>& getSegmentMap() const {
             return segmentMap;
         }
 
-        inline size_t size() {
+        inline size_t size() const {
             return superpixels.size();
         }
 
         inline Superpixel& operator[](size_t index) {
             return superpixels[index];
+        }
+
+        inline const Superpixel& operator[](size_t index) const {
+            return superpixels[index];
+        }
+
+        inline int& operator()(size_t x, size_t y) {
+            return segmentMap(x, y);
         }
 
         inline int operator()(size_t x, size_t y) const {
@@ -119,16 +131,41 @@ struct Plane {
     }
 };
 
+struct StereoProblem {
+    CImg<uint16_t> left, right;
+
+    int minDisp;
+
+    int maxDisp;
+
+    CImg<float> disp;
+
+    inline bool isValidDisp(
+            size_t x,
+            size_t y) const {
+        return disp(x, y) >= minDisp && disp(x, y) <= maxDisp;
+    }
+};
+
 class PlanarDepth {
     private:
-        Segmentation segments;
+        const StereoProblem& stereo;
+        
+        const Segmentation& segmentation;
 
         vector<Plane> planes;
 
-        int minDisp;
+        bool estimateSlant(
+                const map<uint16_t, vector<tuple<uint16_t, float>>>& dSamples,
+                float& result) const;
 
-        int maxDisp;
+        void fitPlanes();
 
     public:
-        
+        PlanarDepth(
+                const StereoProblem& _stereo,
+                const Segmentation& _segmentation);
+
+        void getDisparity(
+                CImg<float>& disp) const;
 };
