@@ -15,23 +15,32 @@ class Superpixel {
 
         vector<tuple<uint16_t, uint16_t>> pixels;
 
+        float totalLab[3];
+
     public:
+        Superpixel();
+
         inline void addPixel(
                 uint16_t x,
-                uint16_t y) {
-            if (pixels.size() == 0) {
-                minX = x;
-                maxX = x;
-                minY = y;
-                maxY = y;
-            } else {
-                minX = min(minX, x);
-                maxX = max(maxX, x);
-                minY = min(minY, y);
-                maxY = max(maxY, y);
+                uint16_t y,
+                const float lab[3]) {
+            minX = min(minX, x);
+            maxX = max(maxX, x);
+            minY = min(minY, y);
+            maxY = max(maxY, y);
+
+            for (int i = 0; i < 3; i++) {
+                totalLab[i] += lab[i];
             }
 
             pixels.push_back(make_tuple(x, y));
+        }
+        
+        inline void avgLab(
+                float lab[3]) const {
+            for (int i = 0; i < 3; i++) {
+                lab[i] = totalLab[i] / size();
+            }
         }
 
         inline void compress() {
@@ -100,11 +109,7 @@ class Segmentation {
         CImg<size_t> segmentMap;
 
     public:
-        vector<Superpixel>& getSuperpixels() {
-            return superpixels;
-        }
-
-        const vector<Superpixel>& getSuperpixels() const {
+        inline const vector<Superpixel>& getSuperpixels() const {
             return superpixels;
         }
 
@@ -114,10 +119,6 @@ class Segmentation {
 
         inline size_t size() const {
             return superpixels.size();
-        }
-
-        inline Superpixel& operator[](size_t index) {
-            return superpixels[index];
         }
 
         inline const Superpixel& operator[](size_t index) const {
@@ -140,10 +141,10 @@ class Segmentation {
                 int nc);
 
         void renderVisualization(
-                CImg<float>& result);
+                CImg<float>& result) const;
 
         void getConnectivity(
-                Connectivity& c);
+                Connectivity& c) const;
 };
 
 struct Plane {
@@ -199,9 +200,9 @@ struct StereoProblem {
 
 class PlanarDepth {
     private:
-        StereoProblem* stereo;
+        const StereoProblem* stereo;
         
-        Segmentation* segmentation;
+        const Segmentation* segmentation;
 
         vector<Plane> planes;
 
@@ -213,8 +214,8 @@ class PlanarDepth {
 
     public:
         PlanarDepth(
-                StereoProblem* _stereo,
-                Segmentation* _segmentation);
+                const StereoProblem* _stereo,
+                const Segmentation* _segmentation);
 
         void getDisparity(
                 CImg<float>& disp) const;
@@ -223,3 +224,47 @@ class PlanarDepth {
                 float t,
                 CImg<float>& result);
 };
+
+class SegmentLabelProblem {
+    private:
+        typedef opengm::SimpleDiscreteSpace<> Space;
+
+        typedef opengm::meta::TypeListGenerator<
+            opengm::ExplicitFunction<float>,
+            opengm::PottsFunction<float>
+                >::type FunctionTypeList;
+
+        typedef opengm::GraphicalModel<float, opengm::Adder, FunctionTypeList,
+                Space> GModel;
+
+        const Segmentation* segmentation;
+
+        size_t numLabels;
+
+        GModel model;
+
+        vector<size_t> labels;
+
+    public:
+        SegmentLabelProblem(
+                const Segmentation* _segmentation,
+                size_t _numLabels);
+
+        void setUnaryFactor(
+                size_t segment,
+                size_t label,
+                iterator<input_iterator_tag, float> factorsBegin,
+                iterator<input_iterator_tag, float> factorsEnd);
+
+        void setBinaryFactor(
+                size_t segment1,
+                size_t segment2,
+                float factor);
+
+        void solveMAP();
+
+        inline const vector<size_t>& getLabels() const {
+            return labels;
+        }
+};
+

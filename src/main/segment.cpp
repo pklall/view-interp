@@ -2,6 +2,14 @@
 
 #include "cvutil/cvutil.h"
 
+Superpixel::Superpixel() : totalLab{0.0f, 0.0f, 0.0f} {
+    minX = std::numeric_limits<uint16_t>::max();
+    minY = std::numeric_limits<uint16_t>::max();
+
+    maxX = std::numeric_limits<uint16_t>::min();
+    maxY = std::numeric_limits<uint16_t>::min();
+}
+
 void Connectivity::increment(
         size_t a,
         size_t b) {
@@ -44,12 +52,19 @@ void Segmentation::createSlicSuperpixels(
         const CImg<float>& lab,
         int numSuperpixels,
         int nc) {
+    assert(lab.spectrum() == 3);
+
     slicSuperpixels(lab, numSuperpixels, nc, segmentMap);
 
     superpixels = vector<Superpixel>(numSuperpixels);
 
+    float labTmp[3];
     cimg_forXY(segmentMap, x, y) {
-       superpixels[segmentMap(x, y)].addPixel(x, y);
+        cimg_forC(lab, c) {
+            labTmp[c] = lab(x, y, 0, c);
+        }
+
+        superpixels[segmentMap(x, y)].addPixel(x, y, labTmp);
     }
 
     for (Superpixel& s : superpixels) {
@@ -58,12 +73,42 @@ void Segmentation::createSlicSuperpixels(
 }
 
 void Segmentation::renderVisualization(
-        CImg<float>& result) {
-    result = segmentMap.get_map(CImg<float>().lines_LUT256());
+        CImg<float>& result) const {
+    result.resize(segmentMap.width(), segmentMap.height(), 1, 3, -1);
+
+    for (const Superpixel& sp : superpixels) {
+        float lab[3];
+
+        sp.avgLab(lab);
+
+        cimg_forC(result, c) {
+            for (const auto& coord : sp.getPixels()) {
+                uint16_t x = get<0>(coord);
+                uint16_t y = get<1>(coord);
+
+                result(x, y, 0, c) = lab[c];
+            }
+        }
+    }
+
+    result.LabtoRGB();
 }
 
 void Segmentation::getConnectivity(
-        Connectivity& c) {
+        Connectivity& c) const {
+    c = Connectivity();
+
+    for (int y = 1; y < segmentMap.height(); y++) {
+        for (int x = 1; x < segmentMap.width(); x++) {
+            size_t segCur = segmentMap(x, y);
+            size_t segLeft = segmentMap(x - 1, y);
+            size_t segTop = segmentMap(x, y - 1);
+
+            c.increment(segCur, segLeft);
+
+            c.increment(segCur, segTop);
+        }
+    }
 }
 
 StereoProblem::StereoProblem(
@@ -206,8 +251,8 @@ void PlanarDepth::fitPlanes() {
 
 
 PlanarDepth::PlanarDepth(
-        StereoProblem* _stereo,
-        Segmentation* _segmentation)
+        const StereoProblem* _stereo,
+        const Segmentation* _segmentation)
     : stereo(_stereo), segmentation(_segmentation) {
     fitPlanes();
 }

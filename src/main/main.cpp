@@ -110,6 +110,12 @@ void runInterpolation(
             fst.width() * fst.height() / (8 * 8),
             10);
 
+    {
+        CImg<float> vis;
+        segmentation.renderVisualization(vis);
+        (fst, vis).display();
+    }
+
     PlanarDepth pd = PlanarDepth(&sp, &segmentation);
                 
     CImg<float> disp;
