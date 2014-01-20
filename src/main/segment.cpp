@@ -366,13 +366,14 @@ SegmentLabelProblem::SegmentLabelProblem(
 
 void SegmentLabelProblem::addUnaryFactor(
         size_t segment,
-        function<float(size_t)> labelFactor) {
+        const map<size_t, float>& labelWeights) {
     size_t shape[] = {(size_t) numLabels};
 
-    opengm::ExplicitFunction<float> dataTerm(shape, shape + 1);
+    SparseFunction dataTerm(shape, shape + 1, std::numeric_limits<float>::max());
 
-    for (size_t labelI = 0; labelI < numLabels; labelI++) {
-        dataTerm(labelI) = labelFactor(labelI);
+    for (const auto& labelWeight : labelWeights) {
+        size_t coordinate[] = {labelWeight.first};
+        dataTerm.insert(coordinate, labelWeight.second);
     }
 
     GModel::FunctionIdentifier fid = model.addFunction(dataTerm);
@@ -385,6 +386,12 @@ void SegmentLabelProblem::addBinaryFactor(
         size_t segment1,
         size_t segment2,
         float factor) {
+    opengm::PottsFunction<float> pairTerm(numLabels, numLabels, 0, factor);
+
+    GModel::FunctionIdentifier fid = model.addFunction(pairTerm);
+
+    size_t vars[] = {segment1, segment2};
+    model.addFactor(fid, begin(vars), end(vars));
 }
 
 void SegmentLabelProblem::solveMAP() {

@@ -229,8 +229,10 @@ class SegmentLabelProblem {
     private:
         typedef opengm::SimpleDiscreteSpace<> Space;
 
+        typedef opengm::SparseFunction<float, size_t, size_t> SparseFunction;
+
         typedef opengm::meta::TypeListGenerator<
-            opengm::ExplicitFunction<float>,
+            SparseFunction,
             opengm::PottsFunction<float>
                 >::type FunctionTypeList;
 
@@ -252,7 +254,7 @@ class SegmentLabelProblem {
 
         void addUnaryFactor(
                 size_t segment,
-                function<float(size_t)> labelFactor);
+                const map<size_t, float>& labelWeights);
 
         void addBinaryFactor(
                 size_t segment1,

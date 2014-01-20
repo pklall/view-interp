@@ -14,6 +14,7 @@
 #include "opengm/graphicalmodel/graphicalmodel.hxx"
 #include "opengm/graphicalmodel/space/simplediscretespace.hxx"
 #include "opengm/functions/explicit_function.hxx"
+#include "opengm/functions/sparsemarray.hxx"
 #include "opengm/functions/potts.hxx"
 #include "opengm/inference/messagepassing/messagepassing.hxx"
 #include "opengm/operations/adder.hxx"
