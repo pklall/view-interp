@@ -250,13 +250,11 @@ class SegmentLabelProblem {
                 const Segmentation* _segmentation,
                 size_t _numLabels);
 
-        void setUnaryFactor(
+        void addUnaryFactor(
                 size_t segment,
-                size_t label,
-                iterator<input_iterator_tag, float> factorsBegin,
-                iterator<input_iterator_tag, float> factorsEnd);
+                function<float(size_t)> labelFactor);
 
-        void setBinaryFactor(
+        void addBinaryFactor(
                 size_t segment1,
                 size_t segment2,
                 float factor);

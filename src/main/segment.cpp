@@ -353,3 +353,50 @@ void PlanarDepth::renderInterpolated(
         }
     }
 }
+
+SegmentLabelProblem::SegmentLabelProblem(
+        const Segmentation* _segmentation,
+        size_t _numLabels) :
+    segmentation(_segmentation), numLabels(_numLabels) {
+
+    Space space(segmentation->size(), numLabels);
+
+    model = GModel(space);
+}
+
+void SegmentLabelProblem::addUnaryFactor(
+        size_t segment,
+        function<float(size_t)> labelFactor) {
+    size_t shape[] = {(size_t) numLabels};
+
+    opengm::ExplicitFunction<float> dataTerm(shape, shape + 1);
+
+    for (size_t labelI = 0; labelI < numLabels; labelI++) {
+        dataTerm(labelI) = labelFactor(labelI);
+    }
+
+    GModel::FunctionIdentifier fid = model.addFunction(dataTerm);
+
+    size_t vars[] = {(size_t) numLabels};
+    model.addFactor(fid, begin(vars), end(vars));
+}
+
+void SegmentLabelProblem::addBinaryFactor(
+        size_t segment1,
+        size_t segment2,
+        float factor) {
+}
+
+void SegmentLabelProblem::solveMAP() {
+    typedef opengm::MinSTCutBoost<size_t, float, opengm::PUSH_RELABEL> MinCutType;
+    typedef opengm::GraphCut<GModel, opengm::Minimizer, MinCutType> MinGraphCut;
+    typedef opengm::AlphaExpansion<GModel, MinGraphCut> MinAlphaExpansion;
+    
+    MinAlphaExpansion ae(model);
+    
+    ae.infer();
+
+    labels = vector<size_t>(segmentation->size());
+    ae.arg(labels);
+}
+
