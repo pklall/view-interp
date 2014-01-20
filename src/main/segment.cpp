@@ -2,6 +2,31 @@
 
 #include "cvutil/cvutil.h"
 
+void Connectivity::increment(
+        size_t a,
+        size_t b) {
+    connectivity[a][b]++;
+    connectivity[b][a]++;
+}
+
+int Connectivity::getConnectivity(
+        size_t a,
+        size_t b) const {
+    auto foundA = connectivity.find(a);
+
+    if (foundA == connectivity.end()) {
+        return 0;
+    } else {
+        const auto& foundB = (*foundA).second.find(b);
+
+        if (foundB == (*foundA).second.end()) {
+            return 0;
+        } else {
+            return foundB->second;
+        }
+    }
+}
+
 void Segmentation::recomputeSegmentMap() {
     for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
         const auto& pixels = superpixels[superpixelI].getPixels();
@@ -35,6 +60,10 @@ void Segmentation::createSlicSuperpixels(
 void Segmentation::renderVisualization(
         CImg<float>& result) {
     result = segmentMap.get_map(CImg<float>().lines_LUT256());
+}
+
+void Segmentation::getConnectivity(
+        Connectivity& c) {
 }
 
 StereoProblem::StereoProblem(
@@ -104,7 +133,7 @@ inline bool PlanarDepth::estimateSlant(
 
 void PlanarDepth::fitPlanes() {
     // Create a plane for each superpixel
-    planes = vector<Plane>(segmentation.size());
+    planes = vector<Plane>(segmentation->size());
 
     // A map from y-index to (x, disparity) tuples to store
     // valid disparities for each scan-line in a superpixel.
@@ -114,8 +143,8 @@ void PlanarDepth::fitPlanes() {
     // valid disparities for each vertical-line in a superpixel.
     map<uint16_t, vector<tuple<uint16_t, float>>> yDSamples;
 
-    for (int superpixelI = 0; superpixelI < segmentation.size(); superpixelI++) {
-        const auto& superpixel = segmentation[superpixelI];
+    for (int superpixelI = 0; superpixelI < segmentation->size(); superpixelI++) {
+        const auto& superpixel = (*segmentation)[superpixelI];
 
         xDSamples.clear();
         yDSamples.clear();
@@ -128,9 +157,9 @@ void PlanarDepth::fitPlanes() {
             uint16_t y = get<1>(p);
 
             // If this pixel has a valid disparity, add it
-            if (stereo.isValidDisp(x, y)) {
-                xDSamples[y].push_back(make_tuple(x, stereo.disp(x, y)));
-                yDSamples[x].push_back(make_tuple(y, stereo.disp(x, y)));
+            if (stereo->isValidDisp(x, y)) {
+                xDSamples[y].push_back(make_tuple(x, stereo->disp(x, y)));
+                yDSamples[x].push_back(make_tuple(y, stereo->disp(x, y)));
 
                 numValidD++;
             }
@@ -156,8 +185,8 @@ void PlanarDepth::fitPlanes() {
             uint16_t x = get<0>(p);
             uint16_t y = get<1>(p);
 
-            if (stereo.isValidDisp(x, y)) {
-                float c = stereo.disp(x, y) - (cx * x + cy * y);
+            if (stereo->isValidDisp(x, y)) {
+                float c = stereo->disp(x, y) - (cx * x + cy * y);
 
                 cSamples(cSamplesI) = c;
                 cSamplesI++;
@@ -177,21 +206,20 @@ void PlanarDepth::fitPlanes() {
 
 
 PlanarDepth::PlanarDepth(
-        const StereoProblem& _stereo,
-        const Segmentation& _segmentation)
+        StereoProblem* _stereo,
+        Segmentation* _segmentation)
     : stereo(_stereo), segmentation(_segmentation) {
-
     fitPlanes();
 }
 
 void PlanarDepth::getDisparity(
         CImg<float>& disp) const {
-    disp = CImg<float>(stereo.left.width(), stereo.right.height());
+    disp = CImg<float>(stereo->left.width(), stereo->right.height());
 
     disp = 0.0f;
 
-    for (int superpixelI = 0; superpixelI < segmentation.size(); superpixelI++) {
-        const auto& superpixel = segmentation[superpixelI];
+    for (int superpixelI = 0; superpixelI < segmentation->size(); superpixelI++) {
+        const auto& superpixel = (*segmentation)[superpixelI];
 
         const Plane& plane = planes[superpixelI];
 
@@ -209,34 +237,29 @@ void PlanarDepth::getDisparity(
 void PlanarDepth::renderInterpolated(
         float t,
         CImg<float>& result) {
-    vector<size_t> segmentIndices(segmentation.size());
+    vector<size_t> segmentIndices(segmentation->size());
 
-    for (size_t i = 0; i < segmentation.size(); i++) {
+    for (size_t i = 0; i < segmentation->size(); i++) {
         segmentIndices[i] = i;
     }
 
-    printf("Sorting segments...\n");
-
     // Sort segments (by index) according to depth at center
     // for back-to-front rendering (Painter's Algo.)
-    std::sort(segmentIndices.begin(), segmentIndices.end(), 
-            [&](size_t a, size_t b){
+    std::sort(segmentIndices.begin(), segmentIndices.end(), [&](size_t a, size_t b) {
             int aX, aY, bX, bY;
-            segmentation[a].getCenter(aX, aY);
-            segmentation[b].getCenter(bX, bY);
+            (*segmentation)[a].getCenter(aX, aY);
+            (*segmentation)[b].getCenter(bX, bY);
             return planes[a].dispAt(aX, aY) > planes[b].dispAt(bX, bY);
             });
 
-    printf("Done\n");
-
     // Add an alpha channel to the result
-    result.resize(stereo.left.width(), stereo.left.height(), 1,
-            stereo.left.spectrum(), -1);
+    result.resize(stereo->left.width(), stereo->left.height(), 1,
+            stereo->left.spectrum(), -1);
 
     result = 0.0f;
     
     for (size_t segI : segmentIndices) {
-        const Superpixel& superpixel = segmentation[segI];
+        const Superpixel& superpixel = (*segmentation)[segI];
 
         Plane& plane = planes[segI];
 
@@ -245,7 +268,7 @@ void PlanarDepth::renderInterpolated(
 
             superpixel.getBounds(minX, minY, maxX, maxY);
 
-            cimg_forC(stereo.left, c) {
+            cimg_forC(stereo->left, c) {
                 for (int y = minY; y <= maxY; y++) {
                     int minXD = (int) (minX + plane.dispAt(minX, y) * t);
                     int maxXD = (int) (maxX + plane.dispAt(maxX, y) * t + 0.5f);
@@ -257,7 +280,7 @@ void PlanarDepth::renderInterpolated(
                         float sx = (dx - t * (plane.c + plane.cy * y)) /
                             (1.0f + plane.cx * t);
 
-                        sx = fmin(stereo.left.width() - 1, sx);
+                        sx = fmin(stereo->left.width() - 1, sx);
                         sx = fmax(0.0f, sx);
                         
                         int sxiL = (int) sx;
@@ -266,8 +289,8 @@ void PlanarDepth::renderInterpolated(
                         float sxiLweight = 1.0f - (sx - ((float) sxiL));
                         float sxiRweight = 1.0f - (((float) sxiR) - sx);
 
-                        sxiLweight *= segmentation(sxiL, y) == segI;
-                        sxiRweight *= segmentation(sxiR, y) == segI;
+                        sxiLweight *= (*segmentation)(sxiL, y) == segI;
+                        sxiRweight *= (*segmentation)(sxiR, y) == segI;
 
                         float totWeight = sxiLweight + sxiRweight;
 
@@ -276,8 +299,8 @@ void PlanarDepth::renderInterpolated(
                             sxiRweight /= totWeight;
 
                             result(dx, y, 0, c) = 
-                                stereo.left(sxiL, y, 0, c) * sxiLweight +
-                                stereo.left(sxiR, y, 0, c) * sxiRweight;
+                                stereo->left(sxiL, y, 0, c) * sxiLweight +
+                                stereo->left(sxiR, y, 0, c) * sxiRweight;
                         }
                     }
                 }

@@ -141,7 +141,7 @@ void CVStereo::matchStereo(
     int uniquenessRatio=0;
     int speckleWindowSize=0;
     int speckleRange=0;
-    bool fullDP=true;
+    bool fullDP=false;
 
     cv::StereoSGBM sgbm(minDisparity, numDisparities, SADWindowSize,
             P1, P2, disp12MaxDiff, preFilterCap, uniquenessRatio, speckleWindowSize,

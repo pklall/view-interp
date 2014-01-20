@@ -2,6 +2,11 @@
 
 #include "common.h"
 
+class Superpixel;
+class Connectivity;
+class Segmentation;
+class PlanarDepth;
+
 class Superpixel {
     private:
         uint16_t minX, maxX;
@@ -60,6 +65,34 @@ class Superpixel {
         }
 };
 
+class Connectivity {
+    friend Segmentation;
+    
+    private:
+        map<size_t, map<size_t, int>> connectivity;
+
+        void increment(
+                size_t a,
+                size_t b);
+
+    public:
+        int getConnectivity(
+                size_t a,
+                size_t b) const;
+
+        inline void forEachNeighbor(
+                size_t s,
+                function<void(size_t, int)> fun) const {
+            const auto& foundS = connectivity.find(s);
+
+            if (foundS != connectivity.end()) {
+                for (const auto& edge : (*foundS).second) {
+                    fun(edge.first, edge.second);
+                }
+            }
+        }
+};
+
 class Segmentation {
     private:
         vector<Superpixel> superpixels;
@@ -108,6 +141,9 @@ class Segmentation {
 
         void renderVisualization(
                 CImg<float>& result);
+
+        void getConnectivity(
+                Connectivity& c);
 };
 
 struct Plane {
@@ -163,9 +199,9 @@ struct StereoProblem {
 
 class PlanarDepth {
     private:
-        const StereoProblem& stereo;
+        StereoProblem* stereo;
         
-        const Segmentation& segmentation;
+        Segmentation* segmentation;
 
         vector<Plane> planes;
 
@@ -177,8 +213,8 @@ class PlanarDepth {
 
     public:
         PlanarDepth(
-                const StereoProblem& _stereo,
-                const Segmentation& _segmentation);
+                StereoProblem* _stereo,
+                Segmentation* _segmentation);
 
         void getDisparity(
                 CImg<float>& disp) const;

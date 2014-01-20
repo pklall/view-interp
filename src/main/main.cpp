@@ -110,16 +110,17 @@ void runInterpolation(
             fst.width() * fst.height() / (8 * 8),
             10);
 
-    PlanarDepth pd = PlanarDepth(sp, segmentation);
+    PlanarDepth pd = PlanarDepth(&sp, &segmentation);
                 
-    // CImg<float> disp;
+    CImg<float> disp;
 
-    // pd.getDisparity(disp);
+    pd.getDisparity(disp);
     
-    // disp.display();
+    (sp.disp, disp).display();
     
+    CImg<float> reconstruction;
     for (int i = 0; i <= 20; i++) {
-        CImg<float> reconstruction;
+        printf("Rendering %d\n", i);
 
         pd.renderInterpolated((i - 10.0f) / 10.0f, reconstruction);
 
