@@ -2,24 +2,24 @@
 
 #include "cvutil/cvutil.h"
 
-Superpixel::Superpixel() : totalLab{0.0f, 0.0f, 0.0f} {
-    minX = std::numeric_limits<uint16_t>::max();
-    minY = std::numeric_limits<uint16_t>::max();
+Segment::Segment() : totalLab{0.0f, 0.0f, 0.0f} {
+    minX = std::numeric_limits<imageI_t>::max();
+    minY = std::numeric_limits<imageI_t>::max();
 
-    maxX = std::numeric_limits<uint16_t>::min();
-    maxY = std::numeric_limits<uint16_t>::min();
+    maxX = std::numeric_limits<imageI_t>::min();
+    maxY = std::numeric_limits<imageI_t>::min();
 }
 
 void Connectivity::increment(
-        size_t a,
-        size_t b) {
+        segmentH_t a,
+        segmentH_t b) {
     connectivity[a][b]++;
     connectivity[b][a]++;
 }
 
 int Connectivity::getConnectivity(
-        size_t a,
-        size_t b) const {
+        segmentH_t a,
+        segmentH_t b) const {
     auto foundA = connectivity.find(a);
 
     if (foundA == connectivity.end()) {
@@ -36,12 +36,12 @@ int Connectivity::getConnectivity(
 }
 
 void Segmentation::recomputeSegmentMap() {
-    for (int superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
+    for (segmentH_t superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
         const auto& pixels = superpixels[superpixelI].getPixels();
 
         for (const auto& p : pixels) {
-            uint16_t x = get<0>(p);
-            uint16_t y = get<1>(p);
+            imageI_t x = get<0>(p);
+            imageI_t y = get<1>(p);
 
             segmentMap(x, y) = superpixelI;
         }
@@ -50,25 +50,48 @@ void Segmentation::recomputeSegmentMap() {
 
 void Segmentation::createSlicSuperpixels(
         const CImg<float>& lab,
-        int numSuperpixels,
+        int numSegments,
         int nc) {
     assert(lab.spectrum() == 3);
 
-    slicSuperpixels(lab, numSuperpixels, nc, segmentMap);
+    slicSuperpixels(lab, numSegments, nc, segmentMap);
 
-    superpixels = vector<Superpixel>(numSuperpixels);
+    superpixels = vector<Segment>(numSegments);
+
+    // slicSuperpixels() results in degenerate segments without any
+    // pixels.  To eliminate these, we need a mapping from
+    // original handles to a contiguous set of handles to
+    // valid segments.
+    map<segmentH_t, segmentH_t> validSegmentHandles;
+
+    segmentH_t curHandle = 0;
 
     float labTmp[3];
+
     cimg_forXY(segmentMap, x, y) {
         cimg_forC(lab, c) {
             labTmp[c] = lab(x, y, 0, c);
         }
 
-        superpixels[segmentMap(x, y)].addPixel(x, y, labTmp);
+        if (validSegmentHandles.count(segmentMap(x, y)) == 0) {
+            validSegmentHandles[segmentMap(x, y)] = curHandle;
+
+            curHandle++;
+        }
+
+        superpixels[validSegmentHandles[segmentMap(x, y)]].addPixel(x, y, labTmp);
     }
 
-    for (Superpixel& s : superpixels) {
+    superpixels.resize(curHandle);
+
+    recomputeSegmentMap();
+
+    for (Segment& s : superpixels) {
         s.compress();
+    }
+
+    for (const Segment& s : superpixels) {
+        assert(s.size() > 0);
     }
 }
 
@@ -76,15 +99,15 @@ void Segmentation::renderVisualization(
         CImg<float>& result) const {
     result.resize(segmentMap.width(), segmentMap.height(), 1, 3, -1);
 
-    for (const Superpixel& sp : superpixels) {
+    for (const Segment& sp : superpixels) {
         float lab[3];
 
         sp.avgLab(lab);
 
         cimg_forC(result, c) {
             for (const auto& coord : sp.getPixels()) {
-                uint16_t x = get<0>(coord);
-                uint16_t y = get<1>(coord);
+                imageI_t x = get<0>(coord);
+                imageI_t y = get<1>(coord);
 
                 result(x, y, 0, c) = lab[c];
             }
@@ -100,9 +123,9 @@ void Segmentation::getConnectivity(
 
     for (int y = 1; y < segmentMap.height(); y++) {
         for (int x = 1; x < segmentMap.width(); x++) {
-            size_t segCur = segmentMap(x, y);
-            size_t segLeft = segmentMap(x - 1, y);
-            size_t segTop = segmentMap(x, y - 1);
+            segmentH_t segCur = segmentMap(x, y);
+            segmentH_t segLeft = segmentMap(x - 1, y);
+            segmentH_t segTop = segmentMap(x, y - 1);
 
             c.increment(segCur, segLeft);
 
@@ -122,20 +145,11 @@ StereoProblem::StereoProblem(
     disp(_disp) {
 }
 
-/**
- * Estimates slant (dD/dt) from a set of samples of (D, t)
- * samples for which all non-t dimensions are constant.
- *
- * For example, if dSamples contains a set of (D, x) samples
- * from the same horizontal scan-line (fixed y-coordinate),
- * it will estimate dD/dx.
- *
- * Returns true upon success, false if not enough samples were provided.
- */
-inline bool PlanarDepth::estimateSlant(
-        const map<uint16_t, vector<tuple<uint16_t, float>>>& dSamples,
-        float& result) const {
+bool PlanarDepth::tabulateSlantSamples(
+        const map<imageI_t, vector<tuple<imageI_t, float>>>& dSamples,
+        CImg<float>& dtSamples) const {
     int totalSamplePairs = 0;
+
     for (const auto& samples : dSamples) {
         int n = samples.second.size() - 1;
         totalSamplePairs += n * (n + 1) / 2;
@@ -147,13 +161,13 @@ inline bool PlanarDepth::estimateSlant(
 
     // Store all possible samples of dt, each consisting of a finite difference
     // between elements in the same scanline, as given by dSamples.
-    CImg<float> dtSamples(totalSamplePairs);
+    dtSamples.resize(totalSamplePairs, 1, 1, 1, -1);
 
     // Index into dtSamples at which to insert new samples
     int dtSamplesI = 0;
 
     for (const auto& samplesPair: dSamples) {
-        const vector<tuple<uint16_t, float>>& samples = samplesPair.second;
+        const vector<tuple<imageI_t, float>>& samples = samplesPair.second;
 
         for (int i = 0; i < samples.size(); i++) {
             for (int j = i + 1; j < samples.size(); j++) {
@@ -168,6 +182,28 @@ inline bool PlanarDepth::estimateSlant(
 
     dtSamples.sort();
 
+    return true;
+}
+
+/**
+ * Estimates slant (dD/dt) from a set of samples of (D, t)
+ * samples for which all non-t dimensions are constant.
+ *
+ * For example, if dSamples contains a set of (D, x) samples
+ * from the same horizontal scan-line (fixed y-coordinate),
+ * it will estimate dD/dx.
+ *
+ * Returns true upon success, false if not enough samples were provided.
+ */
+inline bool PlanarDepth::estimateSlant(
+        const map<imageI_t, vector<tuple<imageI_t, float>>>& dSamples,
+        float& result) const {
+    CImg<float> dtSamples;
+
+    if (!tabulateSlantSamples(dSamples, dtSamples)) {
+        return false;
+    }
+
     // TODO The paper doesn't specify blur kernel size!
     // dtSamples.blur(min(1.0f, dtSamples.size() / 16.0f));
 
@@ -176,19 +212,24 @@ inline bool PlanarDepth::estimateSlant(
     return true;
 }
 
-void PlanarDepth::fitPlanes() {
-    // Create a plane for each superpixel
-    planes = vector<Plane>(segmentation->size());
+void PlanarDepth::fitPlanesMedian() {
+    planes.clear();
+
+    // Allocate an invalid plane at 0
+    planes.push_back(Plane());
 
     // A map from y-index to (x, disparity) tuples to store
     // valid disparities for each scan-line in a superpixel.
-    map<uint16_t, vector<tuple<uint16_t, float>>> xDSamples;
+    map<imageI_t, vector<tuple<imageI_t, float>>> xDSamples;
     
     // A map from x-index to (y, disparity) tuples to store
     // valid disparities for each vertical-line in a superpixel.
-    map<uint16_t, vector<tuple<uint16_t, float>>> yDSamples;
+    map<imageI_t, vector<tuple<imageI_t, float>>> yDSamples;
 
     for (int superpixelI = 0; superpixelI < segmentation->size(); superpixelI++) {
+        // By default, all planes are mapped to the invalid plane at 0
+        segmentPlaneMap[superpixelI] = 0;
+
         const auto& superpixel = (*segmentation)[superpixelI];
 
         xDSamples.clear();
@@ -198,8 +239,8 @@ void PlanarDepth::fitPlanes() {
 
         // Iterate over all pixels within the superpixel
         for (const auto& p : superpixel.getPixels()) {
-            uint16_t x = get<0>(p);
-            uint16_t y = get<1>(p);
+            imageI_t x = get<0>(p);
+            imageI_t y = get<1>(p);
 
             // If this pixel has a valid disparity, add it
             if (stereo->isValidDisp(x, y)) {
@@ -227,8 +268,8 @@ void PlanarDepth::fitPlanes() {
         // Iterate again, collecting samples with which to estimate
         // the 'c' value for the plane
         for (const auto& p : superpixel.getPixels()) {
-            uint16_t x = get<0>(p);
-            uint16_t y = get<1>(p);
+            imageI_t x = get<0>(p);
+            imageI_t y = get<1>(p);
 
             if (stereo->isValidDisp(x, y)) {
                 float c = stereo->disp(x, y) - (cx * x + cy * y);
@@ -245,16 +286,46 @@ void PlanarDepth::fitPlanes() {
 
         float c = cSamples(cSamples.width() / 2);
 
-        planes[superpixelI] = Plane(cx, cy, c);
+        planes.push_back(Plane(cx, cy, c));
+        segmentPlaneMap[superpixelI] = planes.size() - 1;
     }
+
+    planes.shrink_to_fit();
 }
 
+float PlanarDepth::getPlaneCostL1(
+        segmentH_t segment,
+        const Plane& plane) const {
+    if (!plane.isValid()) {
+        return std::numeric_limits<float>::max();
+    }
+
+    const Segment& superpixel = (*segmentation)[segment];
+
+    float l1Dist = 0;
+
+    for (const auto& p : superpixel.getPixels()) {
+        imageI_t x = get<0>(p);
+        imageI_t y = get<1>(p);
+
+        if (stereo->isValidDisp(x, y)) {
+            float planeDisp = plane.dispAt((float) x, (float) y);
+
+            float dispSample = stereo->disp(x, y);
+
+            l1Dist += fabs(planeDisp - dispSample);
+        }
+    }
+
+    return l1Dist;
+}
 
 PlanarDepth::PlanarDepth(
         const StereoProblem* _stereo,
         const Segmentation* _segmentation)
     : stereo(_stereo), segmentation(_segmentation) {
-    fitPlanes();
+    planes = vector<Plane>(1);
+    segmentPlaneMap = vector<planeH_t>(segmentation->size());
 }
 
 void PlanarDepth::getDisparity(
@@ -263,15 +334,15 @@ void PlanarDepth::getDisparity(
 
     disp = 0.0f;
 
-    for (int superpixelI = 0; superpixelI < segmentation->size(); superpixelI++) {
+    for (segmentH_t superpixelI = 0; superpixelI < segmentation->size(); superpixelI++) {
         const auto& superpixel = (*segmentation)[superpixelI];
 
-        const Plane& plane = planes[superpixelI];
+        const Plane& plane = getPlane(superpixelI);
 
         if (plane.isValid()) {
             for (const auto& p : superpixel.getPixels()) {
-                uint16_t x = get<0>(p);
-                uint16_t y = get<1>(p);
+                imageI_t x = get<0>(p);
+                imageI_t y = get<1>(p);
 
                 disp(x, y) = plane.dispAt(x, y);
             }
@@ -282,19 +353,20 @@ void PlanarDepth::getDisparity(
 void PlanarDepth::renderInterpolated(
         float t,
         CImg<float>& result) {
-    vector<size_t> segmentIndices(segmentation->size());
+    vector<segmentH_t> segmentIndices(segmentation->size());
 
-    for (size_t i = 0; i < segmentation->size(); i++) {
+    for (segmentH_t i = 0; i < segmentation->size(); i++) {
         segmentIndices[i] = i;
     }
 
     // Sort segments (by index) according to depth at center
     // for back-to-front rendering (Painter's Algo.)
-    std::sort(segmentIndices.begin(), segmentIndices.end(), [&](size_t a, size_t b) {
-            int aX, aY, bX, bY;
-            (*segmentation)[a].getCenter(aX, aY);
-            (*segmentation)[b].getCenter(bX, bY);
-            return planes[a].dispAt(aX, aY) > planes[b].dispAt(bX, bY);
+    std::sort(segmentIndices.begin(), segmentIndices.end(),
+            [&](segmentH_t a, segmentH_t b) {
+                int aX, aY, bX, bY;
+                (*segmentation)[a].getCenter(aX, aY);
+                (*segmentation)[b].getCenter(bX, bY);
+                return getPlane(a).dispAt(aX, aY) > getPlane(b).dispAt(bX, bY);
             });
 
     // Add an alpha channel to the result
@@ -303,10 +375,10 @@ void PlanarDepth::renderInterpolated(
 
     result = 0.0f;
     
-    for (size_t segI : segmentIndices) {
-        const Superpixel& superpixel = (*segmentation)[segI];
+    for (segmentH_t segI : segmentIndices) {
+        const Segment& superpixel = (*segmentation)[segI];
 
-        Plane& plane = planes[segI];
+        const Plane& plane = getPlane(segI);
 
         if (plane.isValid()) {
             int minX, minY, maxX, maxY;
@@ -356,54 +428,226 @@ void PlanarDepth::renderInterpolated(
 
 SegmentLabelProblem::SegmentLabelProblem(
         const Segmentation* _segmentation,
-        size_t _numLabels) :
-    segmentation(_segmentation), numLabels(_numLabels) {
+        size_t _numLabelsTotal,
+        size_t _numLabelsPerSeg) :
+    segmentation(_segmentation),
+    numLabelsTotal(_numLabelsTotal),
+    numLabelsPerSeg(_numLabelsPerSeg) {
 
-    Space space(segmentation->size(), numLabels);
+    Space space(segmentation->size(), numLabelsPerSeg);
 
     model = GModel(space);
 }
 
 void SegmentLabelProblem::addUnaryFactor(
-        size_t segment,
-        const map<size_t, float>& labelWeights) {
-    size_t shape[] = {(size_t) numLabels};
+        segmentH_t segment,
+        const map<planeH_t, float>& labelWeights) {
+    assert(labelWeights.size() == numLabelsPerSeg);
 
-    SparseFunction dataTerm(shape, shape + 1, std::numeric_limits<float>::max());
+    size_t shape[] = {(size_t) numLabelsPerSeg};
 
-    for (const auto& labelWeight : labelWeights) {
-        size_t coordinate[] = {labelWeight.first};
-        dataTerm.insert(coordinate, labelWeight.second);
+    ExplicitFunction dataTerm(begin(shape), end(shape));
+
+    size_t index = 0;
+    for (const auto& element : labelWeights) {
+        planeH_t pH = element.first;
+        float cost = element.second;
+        
+        planeIndexMap[make_tuple(segment, pH)] = index;
+        indexPlaneMap[make_tuple(segment, index)] = pH;
+
+        size_t coordinate[] = {index};
+
+        dataTerm(coordinate) = cost;
+
+        index++;
     }
 
     GModel::FunctionIdentifier fid = model.addFunction(dataTerm);
 
-    size_t vars[] = {(size_t) numLabels};
+    size_t vars[] = {(size_t) numLabelsPerSeg};
+
     model.addFactor(fid, begin(vars), end(vars));
 }
 
 void SegmentLabelProblem::addBinaryFactor(
-        size_t segment1,
-        size_t segment2,
-        float factor) {
-    opengm::PottsFunction<float> pairTerm(numLabels, numLabels, 0, factor);
+        segmentH_t segment1,
+        segmentH_t segment2,
+        function<float(planeH_t, planeH_t)> func) {
+    // Wrap func to convert labels stored by the model into plane handles
+    auto wrapper = [=](size_t val1, size_t val2) -> float {
+        auto val1F = indexPlaneMap.find(make_tuple(segment1, val1));
+
+        auto val2F = indexPlaneMap.find(make_tuple(segment2, val2));
+
+        return func(val1F->second, val2F->second);
+    };
+
+    CustomFunction pairTerm(numLabelsPerSeg, numLabelsPerSeg, wrapper);
 
     GModel::FunctionIdentifier fid = model.addFunction(pairTerm);
 
-    size_t vars[] = {segment1, segment2};
+    size_t vars[] = {(size_t) segment1, (size_t) segment2};
+
     model.addFactor(fid, begin(vars), end(vars));
 }
 
-void SegmentLabelProblem::solveMAP() {
+void SegmentLabelProblem::solveMAP(
+        vector<planeH_t>& labels) {
     typedef opengm::MinSTCutBoost<size_t, float, opengm::PUSH_RELABEL> MinCutType;
     typedef opengm::GraphCut<GModel, opengm::Minimizer, MinCutType> MinGraphCut;
     typedef opengm::AlphaExpansion<GModel, MinGraphCut> MinAlphaExpansion;
     
     MinAlphaExpansion ae(model);
-    
+
+    labels.resize(segmentation->size());
+
+    vector<size_t> sol(segmentation->size());
+
+    for (segmentH_t i = 0; i < segmentation->size(); i++) {
+        sol[i] = planeIndexMap[make_tuple(i, labels[i])];
+    }
+
+    ae.setStartingPoint(sol.begin());
+
     ae.infer();
 
-    labels = vector<size_t>(segmentation->size());
-    ae.arg(labels);
+    ae.arg(sol);
+
+    for (segmentH_t i = 0; i < segmentation->size(); i++) {
+        labels[i] = indexPlaneMap[make_tuple(i, sol[i])];
+    }
+}
+
+PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
+        PlanarDepth* _depth,
+        const Segmentation* _segmentation,
+        const Connectivity* _connectivity) :
+    depth(_depth),
+    segmentation(_segmentation),
+    connectivity(_connectivity)
+{
+}
+
+void PlanarDepthSmoothingProblem::createModel(
+        int numLabelsPerSeg = 30) {
+    size_t numLabels = depth->getPlanes().size();
+
+    model = unique_ptr<SegmentLabelProblem>(new SegmentLabelProblem(segmentation, numLabels, numLabelsPerSeg));
+
+    // Store a mapping of visited segments along with their "distance" to the current
+    // segment (by color and/or path length).
+    set<segmentH_t> visited;
+
+    priority_queue<tuple<float, segmentH_t>> toVisit;
+
+    map<planeH_t, float> unaryWeights;
+
+    auto colorCost = [](float lab1[3], float lab2[3]) -> float {
+        float colorDiff = 0.0f;
+
+        colorDiff += fabs(lab1[0] - lab2[0]);
+        colorDiff += fabs(lab1[1] - lab2[1]);
+        colorDiff += fabs(lab1[2] - lab2[2]);
+
+        return colorDiff;
+    };
+
+    // Loop over all segments
+    for (size_t segI = 0; segI < segmentation->size(); segI++) {
+        printf("Processing segment: %d\n", segI);
+        
+        toVisit = priority_queue<tuple<float, segmentH_t>>();
+        
+        visited.clear();
+
+        unaryWeights.clear();
+        
+        toVisit.push(make_tuple(0.0f, segI));
+
+        float lab[3];
+
+        (*segmentation)[segI].avgLab(lab);
+        
+        while (unaryWeights.size() < numLabelsPerSeg) {
+            // Pop off the index of the next segment to visit
+            auto cur = toVisit.top();
+
+            toVisit.pop();
+
+            float colCost = get<0>(cur);
+            segmentH_t curSeg = get<1>(cur);
+            planeH_t planeH = depth->getSegmentPlaneMap()[curSeg];
+            const Plane& plane = depth->getPlanes()[planeH];
+
+            float unaryCost = depth->getPlaneCostL1(segI, plane);
+
+            if (plane.isValid()) {
+                unaryWeights[planeH] = unaryCost;
+            }
+
+            connectivity->forEachNeighbor(curSeg,
+                    [&](size_t nI, int conn) {
+                        if (visited.count(nI) == 0) {
+                            visited.insert(nI);
+
+                            float curLab[3];
+
+                            (*segmentation)[nI].avgLab(curLab);
+
+                            float colCost = colorCost(curLab, lab);
+                            
+                            toVisit.push(make_tuple(colCost, nI));
+                        }
+                    });
+        }
+
+        model->addUnaryFactor(segI, unaryWeights);
+
+        float curLab[3];
+        (*segmentation)[segI].avgLab(curLab);
+        connectivity->forEachNeighbor(segI,
+                [&](size_t nI, int conn) {
+                    // Don't process pairs twice
+                    if (segI < nI) {
+                        float lab[3];
+                        (*segmentation)[nI].avgLab(lab);
+
+                        float colorDiff = colorCost(curLab, lab);
+
+                        int cX1, cY1;
+                        int cX2, cY2;
+
+                        (*segmentation)[segI].getCenter(cX1, cY1);
+                        (*segmentation)[nI].getCenter(cX2, cY2);
+
+                        // Crude approximation of the point between segments
+                        // segI and nI.  This enables approximation of the
+                        // depth discontinuity between segments.
+                        float middleX = (cX1 + cX2) / 2.0f;
+                        float middleY = (cY1 + cY2) / 2.0f;
+
+                        model->addBinaryFactor(segI, nI, 
+                            [this, colorDiff, conn, middleX, middleY](planeH_t pH1, planeH_t pH2) -> float {
+
+                                const Plane& p1 = this->depth->getPlanes()[pH1];
+                                const Plane& p2 = this->depth->getPlanes()[pH2];
+
+                                float d1 = p1.dispAt(middleX, middleY);
+                                float d2 = p2.dispAt(middleX, middleY);
+
+                                float depthDiscontinuity = fabs(d1 - d2);
+
+                                return fabs(this->smoothnessCoeff * conn *
+                                    depthDiscontinuity / colorDiff);
+                        });
+                    }
+                });
+        printf("Done\n");
+    }
+}
+
+void PlanarDepthSmoothingProblem::solve() {
+    model->solveMAP(depth->getSegmentPlaneMap());
 }
 

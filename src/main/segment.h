@@ -1,28 +1,37 @@
 #pragma once
 
 #include "common.h"
+#include "custom_function.h"
 
-class Superpixel;
+class Segment;
 class Connectivity;
 class Segmentation;
 class PlanarDepth;
 
-class Superpixel {
+typedef unsigned int imageI_t;
+
+// A handle to a segment
+typedef uint16_t segmentH_t;
+
+// A handle to a plane
+typedef uint16_t planeH_t;
+
+class Segment {
     private:
-        uint16_t minX, maxX;
+        imageI_t minX, maxX;
 
-        uint16_t minY, maxY;
+        imageI_t minY, maxY;
 
-        vector<tuple<uint16_t, uint16_t>> pixels;
+        vector<tuple<imageI_t, imageI_t>> pixels;
 
         float totalLab[3];
 
     public:
-        Superpixel();
+        Segment();
 
         inline void addPixel(
-                uint16_t x,
-                uint16_t y,
+                imageI_t x,
+                imageI_t y,
                 const float lab[3]) {
             minX = min(minX, x);
             maxX = max(maxX, x);
@@ -47,11 +56,11 @@ class Superpixel {
             pixels.shrink_to_fit();
         }
 
-        inline size_t size() const {
+        inline unsigned int size() const {
             return pixels.size();
         }
 
-        inline const vector<tuple<uint16_t, uint16_t>>& getPixels() const {
+        inline const vector<tuple<imageI_t, imageI_t>>& getPixels() const {
             return pixels;
         }
 
@@ -78,25 +87,27 @@ class Connectivity {
     friend Segmentation;
     
     private:
-        map<size_t, map<size_t, int>> connectivity;
+        map<segmentH_t, map<segmentH_t, int>> connectivity;
 
         void increment(
-                size_t a,
-                size_t b);
+                segmentH_t a,
+                segmentH_t b);
 
     public:
         int getConnectivity(
-                size_t a,
-                size_t b) const;
+                segmentH_t a,
+                segmentH_t b) const;
 
         inline void forEachNeighbor(
-                size_t s,
-                function<void(size_t, int)> fun) const {
+                segmentH_t  s,
+                function<void(segmentH_t, int)> fun) const {
             const auto& foundS = connectivity.find(s);
 
             if (foundS != connectivity.end()) {
                 for (const auto& edge : (*foundS).second) {
-                    fun(edge.first, edge.second);
+                    if (edge.second > 0) {
+                        fun(edge.first, edge.second);
+                    }
                 }
             }
         }
@@ -104,32 +115,32 @@ class Connectivity {
 
 class Segmentation {
     private:
-        vector<Superpixel> superpixels;
+        vector<Segment> superpixels;
 
-        CImg<size_t> segmentMap;
+        CImg<segmentH_t> segmentMap;
 
     public:
-        inline const vector<Superpixel>& getSuperpixels() const {
+        inline const vector<Segment>& getSegments() const {
             return superpixels;
         }
 
-        inline const CImg<size_t>& getSegmentMap() const {
+        inline const CImg<segmentH_t>& getSegmentMap() const {
             return segmentMap;
         }
 
-        inline size_t size() const {
+        inline unsigned int size() const {
             return superpixels.size();
         }
 
-        inline const Superpixel& operator[](size_t index) const {
+        inline const Segment& operator[](segmentH_t index) const {
             return superpixels[index];
         }
 
-        inline size_t& operator()(size_t x, size_t y) {
+        inline segmentH_t& operator()(imageI_t x, imageI_t y) {
             return segmentMap(x, y);
         }
 
-        inline size_t operator()(size_t x, size_t y) const {
+        inline segmentH_t operator()(imageI_t x, imageI_t y) const {
             return segmentMap(x, y);
         }
 
@@ -137,7 +148,7 @@ class Segmentation {
 
         void createSlicSuperpixels(
                 const CImg<float>& lab,
-                int numSuperpixels,
+                int numSegments,
                 int nc);
 
         void renderVisualization(
@@ -192,8 +203,8 @@ struct StereoProblem {
             CImg<float> disp);
 
     inline bool isValidDisp(
-            size_t x,
-            size_t y) const {
+            imageI_t x,
+            imageI_t y) const {
         return disp(x, y) >= minDisp && disp(x, y) <= maxDisp;
     }
 };
@@ -206,16 +217,43 @@ class PlanarDepth {
 
         vector<Plane> planes;
 
-        bool estimateSlant(
-                const map<uint16_t, vector<tuple<uint16_t, float>>>& dSamples,
-                float& result) const;
+        vector<planeH_t> segmentPlaneMap;
 
-        void fitPlanes();
+        bool tabulateSlantSamples(
+                const map<imageI_t, vector<tuple<imageI_t, float>>>& dSamples,
+                CImg<float>& dtSamples) const;
+
+        bool estimateSlant(
+                const map<imageI_t, vector<tuple<imageI_t, float>>>& dSamples,
+                float& result) const;
 
     public:
         PlanarDepth(
                 const StereoProblem* _stereo,
                 const Segmentation* _segmentation);
+
+        inline const vector<Plane>& getPlanes() const {
+            return planes;
+        }
+
+        inline const Plane& getPlane(
+                segmentH_t segI) const {
+            return planes[segmentPlaneMap[segI]];
+        }
+
+        inline vector<planeH_t>& getSegmentPlaneMap() {
+            return segmentPlaneMap;
+        }
+
+        inline const vector<planeH_t>& getSegmentPlaneMap() const {
+            return segmentPlaneMap;
+        }
+
+        void fitPlanesMedian();
+
+        float getPlaneCostL1(
+                segmentH_t segment,
+                const Plane& plane) const;
 
         void getDisparity(
                 CImg<float>& disp) const;
@@ -229,11 +267,13 @@ class SegmentLabelProblem {
     private:
         typedef opengm::SimpleDiscreteSpace<> Space;
 
-        typedef opengm::SparseFunction<float, size_t, size_t> SparseFunction;
+        typedef opengm::ExplicitFunction<float, size_t, size_t> ExplicitFunction;
+
+        typedef opengm::CustomFunction<float, size_t, size_t> CustomFunction;
 
         typedef opengm::meta::TypeListGenerator<
-            SparseFunction,
-            opengm::PottsFunction<float>
+            ExplicitFunction,
+            CustomFunction
                 >::type FunctionTypeList;
 
         typedef opengm::GraphicalModel<float, opengm::Adder, FunctionTypeList,
@@ -241,30 +281,56 @@ class SegmentLabelProblem {
 
         const Segmentation* segmentation;
 
-        size_t numLabels;
+        size_t numLabelsTotal;
+
+        size_t numLabelsPerSeg;
 
         GModel model;
 
-        vector<size_t> labels;
+        map<tuple<segmentH_t, planeH_t>, size_t> planeIndexMap;
+
+        map<tuple<segmentH_t, size_t>, planeH_t> indexPlaneMap;
 
     public:
         SegmentLabelProblem(
                 const Segmentation* _segmentation,
-                size_t _numLabels);
+                size_t _numLabelsTotal,
+                size_t _numLabelsPerSeg);
 
         void addUnaryFactor(
-                size_t segment,
-                const map<size_t, float>& labelWeights);
+                segmentH_t segment,
+                const map<planeH_t, float>& labelWeights);
 
         void addBinaryFactor(
-                size_t segment1,
-                size_t segment2,
-                float factor);
+                segmentH_t segment1,
+                segmentH_t segment2,
+                function<float(planeH_t, planeH_t)> func);
 
-        void solveMAP();
+        void solveMAP(
+                vector<planeH_t>& labels);
+};
 
-        inline const vector<size_t>& getLabels() const {
-            return labels;
-        }
+class PlanarDepthSmoothingProblem {
+    private:
+        PlanarDepth* depth;
+
+        const Segmentation* segmentation;
+
+        const Connectivity* connectivity;
+
+        unique_ptr<SegmentLabelProblem> model;
+
+    public:
+        float smoothnessCoeff;
+
+        PlanarDepthSmoothingProblem(
+                PlanarDepth* _depth,
+                const Segmentation* _segmentation,
+                const Connectivity* _connectivity);
+
+        void createModel(
+                int numLabelsPerSeg);
+
+        void solve();
 };
 

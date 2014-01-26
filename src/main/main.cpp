@@ -31,8 +31,8 @@ void naiveStereoReconstruct(
         float scale);
 
 void runInterpolation(
-        const CImg<int16_t>& fst,
-        const CImg<int16_t>& lst);
+        const CImg<float>& fst,
+        const CImg<float>& lst);
 
 void runBPStereo(CImg<int16_t>& fst, CImg<int16_t>& lst);
 
@@ -74,8 +74,8 @@ int main(int argc, char** argv) {
         printf("Running bpstereo\n");
         runBPStereo(fst, lst);
     } else if (op == "interp") {
-        CImg<int16_t> fst(argv[2]);
-        CImg<int16_t> lst(argv[3]);
+        CImg<float> fst(argv[2]);
+        CImg<float> lst(argv[3]);
 
         printf("Running interpolation\n");
         runInterpolation(fst, lst);
@@ -85,8 +85,8 @@ int main(int argc, char** argv) {
 }
 
 void runInterpolation(
-        const CImg<int16_t>& fst,
-        const CImg<int16_t>& lst) {
+        const CImg<float>& fst,
+        const CImg<float>& lst) {
     int maxDisp = 128;
     int minDisp = -maxDisp;
 
@@ -110,19 +110,38 @@ void runInterpolation(
             fst.width() * fst.height() / (8 * 8),
             10);
 
-    {
+    Connectivity connectivity;
+
+    segmentation.getConnectivity(connectivity);
+
+    /*{
+        // Visualize the segmentation
         CImg<float> vis;
         segmentation.renderVisualization(vis);
         (fst, vis).display();
-    }
+    }*/
 
     PlanarDepth pd = PlanarDepth(&sp, &segmentation);
-                
-    CImg<float> disp;
 
-    pd.getDisparity(disp);
-    
-    (sp.disp, disp).display();
+    pd.fitPlanesMedian();
+
+    PlanarDepthSmoothingProblem pdRefine(&pd,
+            &segmentation, &connectivity);
+
+    pdRefine.smoothnessCoeff = 1.0f;
+
+    pdRefine.createModel(30);
+
+    pdRefine.solve();
+
+    {
+        // Visualize disparity before and after plane processing
+        CImg<float> disp;
+
+        pd.getDisparity(disp);
+
+        (sp.disp, disp).display();
+    }
     
     CImg<float> reconstruction;
     for (int i = 0; i <= 20; i++) {
@@ -275,6 +294,7 @@ void runCVStereo(
         CVStereo stereo(fst, lst, true);
         stereo.matchStereo(-maxDisp, maxDisp, 3, 1.0f);
         stereo.getStereo(dispLeft);
+        dispLeft.display();
     }
     printf("Done\n");
 

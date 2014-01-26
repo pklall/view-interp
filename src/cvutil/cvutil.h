@@ -14,7 +14,7 @@ void slicSuperpixels(
         const CImg<float>& labIn,
         int numSuperpixels,
         int nc,
-        CImg<size_t>& result);
+        CImg<uint16_t>& result);
 
 class CVStereo {
     private:
