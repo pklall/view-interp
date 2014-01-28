@@ -250,6 +250,8 @@ void PlanarDepth::fitPlanesMedian() {
                 numValidD++;
             }
         }
+
+        printf("numValidD = %d\n", numValidD);
         
         float cx, cy;
 
@@ -366,7 +368,7 @@ void PlanarDepth::renderInterpolated(
                 int aX, aY, bX, bY;
                 (*segmentation)[a].getCenter(aX, aY);
                 (*segmentation)[b].getCenter(bX, bY);
-                return getPlane(a).dispAt(aX, aY) > getPlane(b).dispAt(bX, bY);
+                return getPlane(a).dispAt(aX, aY) < getPlane(b).dispAt(bX, bY);
             });
 
     // Add an alpha channel to the result
@@ -480,7 +482,9 @@ void SegmentLabelProblem::addBinaryFactor(
 
         auto val2F = indexPlaneMap.find(make_tuple(segment2, val2));
 
-        return func(val1F->second, val2F->second);
+        float result = func(val1F->second, val2F->second);
+
+        return result;
     };
 
     CustomFunction pairTerm(numLabelsPerSeg, numLabelsPerSeg, wrapper);
@@ -494,10 +498,38 @@ void SegmentLabelProblem::addBinaryFactor(
 
 void SegmentLabelProblem::solveMAP(
         vector<planeH_t>& labels) {
+    typedef opengm::MQPBO<GModel, opengm::Minimizer> MQPBO;
+
+    MQPBO::Parameter params;
+    params.useKovtunsMethod_ = false;
+
+    MQPBO solver(model, params);
+
+    labels.resize(segmentation->size());
+
+    vector<size_t> sol(segmentation->size());
+
+    for (segmentH_t i = 0; i < segmentation->size(); i++) {
+        sol[i] = planeIndexMap[make_tuple(i, labels[i])];
+    }
+
+    solver.setStartingPoint(sol.begin());
+
+    solver.infer();
+
+    solver.arg(sol);
+
+    for (segmentH_t i = 0; i < segmentation->size(); i++) {
+        labels[i] = indexPlaneMap[make_tuple(i, sol[i])];
+    }
+
+    /*
     typedef opengm::MinSTCutBoost<size_t, float, opengm::PUSH_RELABEL> MinCutType;
     typedef opengm::GraphCut<GModel, opengm::Minimizer, MinCutType> MinGraphCut;
+    // typedef opengm::AlphaBetaSwap<GModel, MinGraphCut> AlphaBetaSwap;
     typedef opengm::AlphaExpansion<GModel, MinGraphCut> MinAlphaExpansion;
     
+    // AlphaBetaSwap ae(model);
     MinAlphaExpansion ae(model);
 
     labels.resize(segmentation->size());
@@ -517,6 +549,7 @@ void SegmentLabelProblem::solveMAP(
     for (segmentH_t i = 0; i < segmentation->size(); i++) {
         labels[i] = indexPlaneMap[make_tuple(i, sol[i])];
     }
+    */
 }
 
 PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
@@ -555,8 +588,6 @@ void PlanarDepthSmoothingProblem::createModel(
 
     // Loop over all segments
     for (size_t segI = 0; segI < segmentation->size(); segI++) {
-        printf("Processing segment: %d\n", segI);
-        
         toVisit = priority_queue<tuple<float, segmentH_t>>();
         
         visited.clear();
@@ -580,9 +611,9 @@ void PlanarDepthSmoothingProblem::createModel(
             planeH_t planeH = depth->getSegmentPlaneMap()[curSeg];
             const Plane& plane = depth->getPlanes()[planeH];
 
-            float unaryCost = depth->getPlaneCostL1(segI, plane);
-
             if (plane.isValid()) {
+                float unaryCost = depth->getPlaneCostL1(segI, plane);
+
                 unaryWeights[planeH] = unaryCost;
             }
 
@@ -638,12 +669,24 @@ void PlanarDepthSmoothingProblem::createModel(
 
                                 float depthDiscontinuity = fabs(d1 - d2);
 
-                                return fabs(this->smoothnessCoeff * conn *
-                                    depthDiscontinuity / colorDiff);
+                                assert(isfinite(this->smoothnessCoeff));
+                                assert(isfinite(depthDiscontinuity));
+
+                                assert(this->smoothnessCoeff >= 0.0f);
+                                assert(conn >= 0.0f);
+                                assert(depthDiscontinuity >= 0.0f);
+
+                                // FIXME This pairwise energy term is stupid 
+                                // (for testing submodular-energies only!)
+                                if (pH1 == pH2) {
+                                    return 0.5f;
+                                }
+                                return 1.0f;
+
+                                // return (pH1 != pH2); // this->smoothnessCoeff * conn * depthDiscontinuity;
                         });
                     }
                 });
-        printf("Done\n");
     }
 }
 

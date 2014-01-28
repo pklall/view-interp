@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
 void runInterpolation(
         const CImg<float>& fst,
         const CImg<float>& lst) {
-    int maxDisp = 128;
+    int maxDisp = 256;
     int minDisp = -maxDisp;
 
     printf("Computing stereo...\n");
@@ -110,6 +110,15 @@ void runInterpolation(
             fst.width() * fst.height() / (8 * 8),
             10);
 
+    {
+        // Visualize segmentation
+        CImg<float> vis;
+
+        segmentation.renderVisualization(vis);
+
+        vis.save("results/segmentation.png");
+    }
+
     Connectivity connectivity;
 
     segmentation.getConnectivity(connectivity);
@@ -125,23 +134,25 @@ void runInterpolation(
 
     pd.fitPlanesMedian();
 
-    PlanarDepthSmoothingProblem pdRefine(&pd,
-            &segmentation, &connectivity);
-
-    pdRefine.smoothnessCoeff = 1.0f;
-
-    pdRefine.createModel(30);
-
-    pdRefine.solve();
-
     {
         // Visualize disparity before and after plane processing
         CImg<float> disp;
 
         pd.getDisparity(disp);
 
-        (sp.disp, disp).display();
+        sp.disp.save("results/original_disparity.png");
+        disp.get_equalize(255).save("results/plane_disparity.png");
+        // (sp.disp, disp).display();
     }
+
+    PlanarDepthSmoothingProblem pdRefine(&pd,
+            &segmentation, &connectivity);
+
+    pdRefine.smoothnessCoeff = 1.0f;
+
+    pdRefine.createModel(10);
+
+    pdRefine.solve();
     
     CImg<float> reconstruction;
     for (int i = 0; i <= 20; i++) {

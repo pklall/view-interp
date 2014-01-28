@@ -1,4 +1,4 @@
-MODULES   := cimg cvutil main
+MODULES   := cimg cvutil qpbo main 
 TARGET    := main
 
 # define DEBUG
@@ -31,6 +31,7 @@ INCLUDES  := -I/usr/include/eigen3 \
              -Iextern/SLIC-Superpixels \
              -Iextern/Halide/include \
              -Iextern/opengm/include \
+			 -Isrc/qpbo \
 
 CXXFLAGS  := $(OPT_LEVEL) \
              $(CXX_ASAN) \
