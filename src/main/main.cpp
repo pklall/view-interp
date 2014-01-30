@@ -134,26 +134,31 @@ void runInterpolation(
 
     pd.fitPlanesMedian();
 
-    {
-        // Visualize disparity before and after plane processing
-        CImg<float> disp;
-
-        pd.getDisparity(disp);
-
-        sp.disp.save("results/original_disparity.png");
-        disp.get_equalize(255).save("results/plane_disparity.png");
-        // (sp.disp, disp).display();
-    }
-
     PlanarDepthSmoothingProblem pdRefine(&pd,
             &segmentation, &connectivity);
 
-    pdRefine.smoothnessCoeff = 1.0f;
-
     pdRefine.createModel(10);
 
-    pdRefine.solve();
-    
+    CImg<float> disp;
+
+    while (true) {
+        int smoothness;
+
+        cin >> smoothness;
+
+        printf("Recomputing with smoothness = %d\n", smoothness);
+
+        pdRefine.smoothnessCoeff = (float) smoothness;
+
+        pdRefine.solve();
+
+        pd.getDisparity(disp);
+
+        string fname = "results/smoothness_" + to_string(smoothness) + ".pfm";
+        disp.display();
+        // (sp.disp, disp).display();
+    }
+
     CImg<float> reconstruction;
     for (int i = 0; i <= 20; i++) {
         printf("Rendering %d\n", i);

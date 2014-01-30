@@ -502,6 +502,8 @@ void SegmentLabelProblem::solveMAP(
 
     MQPBO::Parameter params;
     params.useKovtunsMethod_ = false;
+    params.permutationType_ = MQPBO::PermutationType::NONE;
+    params.rounds_ = 1;
 
     MQPBO solver(model, params);
 
@@ -669,21 +671,7 @@ void PlanarDepthSmoothingProblem::createModel(
 
                                 float depthDiscontinuity = fabs(d1 - d2);
 
-                                assert(isfinite(this->smoothnessCoeff));
-                                assert(isfinite(depthDiscontinuity));
-
-                                assert(this->smoothnessCoeff >= 0.0f);
-                                assert(conn >= 0.0f);
-                                assert(depthDiscontinuity >= 0.0f);
-
-                                // FIXME This pairwise energy term is stupid 
-                                // (for testing submodular-energies only!)
-                                if (pH1 == pH2) {
-                                    return 0.5f;
-                                }
-                                return 1.0f;
-
-                                // return (pH1 != pH2); // this->smoothnessCoeff * conn * depthDiscontinuity;
+                                return this->smoothnessCoeff * conn * depthDiscontinuity;
                         });
                     }
                 });
