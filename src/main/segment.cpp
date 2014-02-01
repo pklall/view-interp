@@ -447,19 +447,18 @@ float PlanarDepthSmoothingProblem::binaryCost(
         segmentH_t segB,
         planeH_t planeA,
         planeH_t planeB) {
-    /*
     float labA[3];
     float labB[3];
 
     (*segmentation)[segA].avgLab(labA);
-    (*segmentation)[segB].avgLab(labb);
+    (*segmentation)[segB].avgLab(labB);
 
     float colorDiff = 0.0f;
 
     colorDiff += fabs(labA[0] - labB[0]);
     colorDiff += fabs(labA[1] - labB[1]);
     colorDiff += fabs(labA[2] - labB[2]);
-    */
+
     int cX1, cY1;
     int cX2, cY2;
 
@@ -482,7 +481,7 @@ float PlanarDepthSmoothingProblem::binaryCost(
 
     int conn = connectivity->getConnectivity(segA, segB);
 
-    return this->smoothnessCoeff * conn * depthDiscontinuity;
+    return this->smoothnessCoeff * conn * depthDiscontinuity / colorDiff;
 }
 
 float PlanarDepthSmoothingProblem::unaryCost(
@@ -527,7 +526,6 @@ void PlanarDepthSmoothingProblem::createModel() {
                 uCost,
                 neighborGen));
 }
-
 
 void PlanarDepthSmoothingProblem::solve() {
     set<segmentH_t> visited;

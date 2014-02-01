@@ -142,6 +142,8 @@ void runInterpolation(
     while (true) {
         int smoothness;
 
+        cout << "Smoothness level?" << endl;
+
         cin >> smoothness;
 
         printf("Recomputing with smoothness = %d\n", smoothness);

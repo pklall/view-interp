@@ -167,17 +167,24 @@ class LocalExpansion {
             qpbo->infer();
 
             vector<bool> optimalVariables;
+            vector<size_t> labels;
 
             float partialOpt = qpbo->partialOptimality(optimalVariables);
+
+            qpbo->arg(labels);
             
             int numChanged = 0;
 
-            for (int i = 0; i < optimalVariables.size(); i++) {
-                if (optimalVariables[i]) {
-                    (*labeling)[i] = label;
+            int nodeIndex = 0;
+
+            for (const node_t& node : nodes) {
+                if (optimalVariables[nodeIndex] && labels[nodeIndex] == 1) {
+                    (*labeling)[node] = label;
 
                     numChanged++;
                 }
+
+                nodeIndex++;
             }
         }
 };
