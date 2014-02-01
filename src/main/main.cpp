@@ -137,8 +137,6 @@ void runInterpolation(
     PlanarDepthSmoothingProblem pdRefine(&pd,
             &segmentation, &connectivity);
 
-    pdRefine.createModel(10);
-
     CImg<float> disp;
 
     while (true) {

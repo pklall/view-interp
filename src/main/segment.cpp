@@ -2,6 +2,11 @@
 
 #include "cvutil/cvutil.h"
 
+#include "localexpansion.hpp"
+
+#include <queue>
+#include <set>
+
 Segment::Segment() : totalLab{0.0f, 0.0f, 0.0f} {
     minX = std::numeric_limits<imageI_t>::max();
     minY = std::numeric_limits<imageI_t>::max();
@@ -250,8 +255,6 @@ void PlanarDepth::fitPlanesMedian() {
                 numValidD++;
             }
         }
-
-        printf("numValidD = %d\n", numValidD);
         
         float cx, cy;
 
@@ -428,132 +431,6 @@ void PlanarDepth::renderInterpolated(
     }
 }
 
-SegmentLabelProblem::SegmentLabelProblem(
-        const Segmentation* _segmentation,
-        size_t _numLabelsTotal,
-        size_t _numLabelsPerSeg) :
-    segmentation(_segmentation),
-    numLabelsTotal(_numLabelsTotal),
-    numLabelsPerSeg(_numLabelsPerSeg) {
-
-    Space space(segmentation->size(), numLabelsPerSeg);
-
-    model = GModel(space);
-}
-
-void SegmentLabelProblem::addUnaryFactor(
-        segmentH_t segment,
-        const map<planeH_t, float>& labelWeights) {
-    assert(labelWeights.size() == numLabelsPerSeg);
-
-    size_t shape[] = {(size_t) numLabelsPerSeg};
-
-    ExplicitFunction dataTerm(begin(shape), end(shape));
-
-    size_t index = 0;
-    for (const auto& element : labelWeights) {
-        planeH_t pH = element.first;
-        float cost = element.second;
-        
-        planeIndexMap[make_tuple(segment, pH)] = index;
-        indexPlaneMap[make_tuple(segment, index)] = pH;
-
-        size_t coordinate[] = {index};
-
-        dataTerm(coordinate) = cost;
-
-        index++;
-    }
-
-    GModel::FunctionIdentifier fid = model.addFunction(dataTerm);
-
-    size_t vars[] = {(size_t) numLabelsPerSeg};
-
-    model.addFactor(fid, begin(vars), end(vars));
-}
-
-void SegmentLabelProblem::addBinaryFactor(
-        segmentH_t segment1,
-        segmentH_t segment2,
-        function<float(planeH_t, planeH_t)> func) {
-    // Wrap func to convert labels stored by the model into plane handles
-    auto wrapper = [=](size_t val1, size_t val2) -> float {
-        auto val1F = indexPlaneMap.find(make_tuple(segment1, val1));
-
-        auto val2F = indexPlaneMap.find(make_tuple(segment2, val2));
-
-        float result = func(val1F->second, val2F->second);
-
-        return result;
-    };
-
-    CustomFunction pairTerm(numLabelsPerSeg, numLabelsPerSeg, wrapper);
-
-    GModel::FunctionIdentifier fid = model.addFunction(pairTerm);
-
-    size_t vars[] = {(size_t) segment1, (size_t) segment2};
-
-    model.addFactor(fid, begin(vars), end(vars));
-}
-
-void SegmentLabelProblem::solveMAP(
-        vector<planeH_t>& labels) {
-    typedef opengm::MQPBO<GModel, opengm::Minimizer> MQPBO;
-
-    MQPBO::Parameter params;
-    params.useKovtunsMethod_ = false;
-    params.permutationType_ = MQPBO::PermutationType::NONE;
-    params.rounds_ = 1;
-
-    MQPBO solver(model, params);
-
-    labels.resize(segmentation->size());
-
-    vector<size_t> sol(segmentation->size());
-
-    for (segmentH_t i = 0; i < segmentation->size(); i++) {
-        sol[i] = planeIndexMap[make_tuple(i, labels[i])];
-    }
-
-    solver.setStartingPoint(sol.begin());
-
-    solver.infer();
-
-    solver.arg(sol);
-
-    for (segmentH_t i = 0; i < segmentation->size(); i++) {
-        labels[i] = indexPlaneMap[make_tuple(i, sol[i])];
-    }
-
-    /*
-    typedef opengm::MinSTCutBoost<size_t, float, opengm::PUSH_RELABEL> MinCutType;
-    typedef opengm::GraphCut<GModel, opengm::Minimizer, MinCutType> MinGraphCut;
-    // typedef opengm::AlphaBetaSwap<GModel, MinGraphCut> AlphaBetaSwap;
-    typedef opengm::AlphaExpansion<GModel, MinGraphCut> MinAlphaExpansion;
-    
-    // AlphaBetaSwap ae(model);
-    MinAlphaExpansion ae(model);
-
-    labels.resize(segmentation->size());
-
-    vector<size_t> sol(segmentation->size());
-
-    for (segmentH_t i = 0; i < segmentation->size(); i++) {
-        sol[i] = planeIndexMap[make_tuple(i, labels[i])];
-    }
-
-    ae.setStartingPoint(sol.begin());
-
-    ae.infer();
-
-    ae.arg(sol);
-
-    for (segmentH_t i = 0; i < segmentation->size(); i++) {
-        labels[i] = indexPlaneMap[make_tuple(i, sol[i])];
-    }
-    */
-}
-
 PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
         PlanarDepth* _depth,
         const Segmentation* _segmentation,
@@ -562,123 +439,139 @@ PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
     segmentation(_segmentation),
     connectivity(_connectivity)
 {
+    createModel();
 }
 
-void PlanarDepthSmoothingProblem::createModel(
-        int numLabelsPerSeg = 30) {
-    size_t numLabels = depth->getPlanes().size();
+float PlanarDepthSmoothingProblem::binaryCost(
+        segmentH_t segA,
+        segmentH_t segB,
+        planeH_t planeA,
+        planeH_t planeB) {
+    /*
+    float labA[3];
+    float labB[3];
 
-    model = unique_ptr<SegmentLabelProblem>(new SegmentLabelProblem(segmentation, numLabels, numLabelsPerSeg));
+    (*segmentation)[segA].avgLab(labA);
+    (*segmentation)[segB].avgLab(labb);
 
-    // Store a mapping of visited segments along with their "distance" to the current
-    // segment (by color and/or path length).
+    float colorDiff = 0.0f;
+
+    colorDiff += fabs(labA[0] - labB[0]);
+    colorDiff += fabs(labA[1] - labB[1]);
+    colorDiff += fabs(labA[2] - labB[2]);
+    */
+    int cX1, cY1;
+    int cX2, cY2;
+
+    (*segmentation)[segA].getCenter(cX1, cY1);
+    (*segmentation)[segB].getCenter(cX2, cY2);
+
+    // Crude approximation of the point between segments
+    // segI and nI.  This enables approximation of the
+    // depth discontinuity between segments.
+    float middleX = (cX1 + cX2) / 2.0f;
+    float middleY = (cY1 + cY2) / 2.0f;
+
+    const Plane& p1 = this->depth->getPlanes()[planeA];
+    const Plane& p2 = this->depth->getPlanes()[planeB];
+
+    float d1 = p1.dispAt(middleX, middleY);
+    float d2 = p2.dispAt(middleX, middleY);
+
+    float depthDiscontinuity = fabs(d1 - d2);
+
+    int conn = connectivity->getConnectivity(segA, segB);
+
+    return this->smoothnessCoeff * conn * depthDiscontinuity;
+}
+
+float PlanarDepthSmoothingProblem::unaryCost(
+        segmentH_t segH,
+        planeH_t planeH) {
+    return depth->getPlaneCostL1(segH, depth->getPlanes()[planeH]);
+}
+
+void PlanarDepthSmoothingProblem::neighborhoodGenerator(
+        segmentH_t s,
+        vector<segmentH_t>& neighborhood) {
+    connectivity->forEachNeighbor(s,
+            [&](segmentH_t segment, int conn) {
+            neighborhood.push_back(segment);
+            });
+}
+
+void PlanarDepthSmoothingProblem::createModel() {
+    function<float(segmentH_t, segmentH_t, planeH_t, planeH_t)> bcost =
+        bind(&PlanarDepthSmoothingProblem::binaryCost,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2,
+                std::placeholders::_3,
+                std::placeholders::_4);
+
+    function<float(segmentH_t, planeH_t)> uCost =
+        bind(&PlanarDepthSmoothingProblem::unaryCost,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2);
+
+    function<void(segmentH_t, vector<planeH_t>&)> neighborGen =
+        bind(&PlanarDepthSmoothingProblem::neighborhoodGenerator,
+                this,
+                std::placeholders::_1,
+                std::placeholders::_2);
+
+    model = unique_ptr<Solver>(new Solver(
+                &(depth->getSegmentPlaneMap()),
+                bcost,
+                uCost,
+                neighborGen));
+}
+
+
+void PlanarDepthSmoothingProblem::solve() {
     set<segmentH_t> visited;
 
-    priority_queue<tuple<float, segmentH_t>> toVisit;
+    queue<segmentH_t> toVisit;
 
-    map<planeH_t, float> unaryWeights;
+    const int numSegmentsPerExpansion = 20;
 
-    auto colorCost = [](float lab1[3], float lab2[3]) -> float {
-        float colorDiff = 0.0f;
+    set<segmentH_t> expandNodes;
 
-        colorDiff += fabs(lab1[0] - lab2[0]);
-        colorDiff += fabs(lab1[1] - lab2[1]);
-        colorDiff += fabs(lab1[2] - lab2[2]);
-
-        return colorDiff;
-    };
-
-    // Loop over all segments
+    // Loop over all segments and try to expand the plane
+    // at that segment to adjacent nodes (by breadth-first traversal)
     for (size_t segI = 0; segI < segmentation->size(); segI++) {
-        toVisit = priority_queue<tuple<float, segmentH_t>>();
+        if (!depth->getPlane(segI).isValid()) {
+            continue;
+        }
+
+        toVisit = queue<segmentH_t>();
         
         visited.clear();
 
-        unaryWeights.clear();
-        
-        toVisit.push(make_tuple(0.0f, segI));
+        toVisit.push(segI);
 
-        float lab[3];
+        expandNodes.clear();
 
-        (*segmentation)[segI].avgLab(lab);
-        
-        while (unaryWeights.size() < numLabelsPerSeg) {
+        while (expandNodes.size() < numSegmentsPerExpansion) {
             // Pop off the index of the next segment to visit
-            auto cur = toVisit.top();
+            segmentH_t curSeg = toVisit.front();
 
             toVisit.pop();
 
-            float colCost = get<0>(cur);
-            segmentH_t curSeg = get<1>(cur);
-            planeH_t planeH = depth->getSegmentPlaneMap()[curSeg];
-            const Plane& plane = depth->getPlanes()[planeH];
-
-            if (plane.isValid()) {
-                float unaryCost = depth->getPlaneCostL1(segI, plane);
-
-                unaryWeights[planeH] = unaryCost;
-            }
+            expandNodes.insert(curSeg);
 
             connectivity->forEachNeighbor(curSeg,
                     [&](size_t nI, int conn) {
                         if (visited.count(nI) == 0) {
                             visited.insert(nI);
 
-                            float curLab[3];
-
-                            (*segmentation)[nI].avgLab(curLab);
-
-                            float colCost = colorCost(curLab, lab);
-                            
-                            toVisit.push(make_tuple(colCost, nI));
+                            toVisit.push(nI);
                         }
                     });
         }
 
-        model->addUnaryFactor(segI, unaryWeights);
-
-        float curLab[3];
-        (*segmentation)[segI].avgLab(curLab);
-        connectivity->forEachNeighbor(segI,
-                [&](size_t nI, int conn) {
-                    // Don't process pairs twice
-                    if (segI < nI) {
-                        float lab[3];
-                        (*segmentation)[nI].avgLab(lab);
-
-                        float colorDiff = colorCost(curLab, lab);
-
-                        int cX1, cY1;
-                        int cX2, cY2;
-
-                        (*segmentation)[segI].getCenter(cX1, cY1);
-                        (*segmentation)[nI].getCenter(cX2, cY2);
-
-                        // Crude approximation of the point between segments
-                        // segI and nI.  This enables approximation of the
-                        // depth discontinuity between segments.
-                        float middleX = (cX1 + cX2) / 2.0f;
-                        float middleY = (cY1 + cY2) / 2.0f;
-
-                        model->addBinaryFactor(segI, nI, 
-                            [this, colorDiff, conn, middleX, middleY](planeH_t pH1, planeH_t pH2) -> float {
-
-                                const Plane& p1 = this->depth->getPlanes()[pH1];
-                                const Plane& p2 = this->depth->getPlanes()[pH2];
-
-                                float d1 = p1.dispAt(middleX, middleY);
-                                float d2 = p2.dispAt(middleX, middleY);
-
-                                float depthDiscontinuity = fabs(d1 - d2);
-
-                                return this->smoothnessCoeff * conn * depthDiscontinuity;
-                        });
-                    }
-                });
+        model->tryExpand(expandNodes, depth->getSegmentPlaneMap()[segI]);
     }
-}
-
-void PlanarDepthSmoothingProblem::solve() {
-    model->solveMAP(depth->getSegmentPlaneMap());
 }
 

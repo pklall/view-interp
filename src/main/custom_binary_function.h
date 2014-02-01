@@ -14,15 +14,15 @@ namespace opengm {
 ///
 /// \ingroup functions
 template<class T, class I = size_t, class L = size_t>
-class CustomFunction
-: public FunctionBase<CustomFunction<T, I, L>, T, I, L>
+class CustomBinaryFunction
+: public FunctionBase<CustomBinaryFunction<T, I, L>, T, I, L>
 {
 public:
    typedef T ValueType;
    typedef I IndexType;
    typedef L LabelType;
 
-   CustomFunction(const LabelType, const LabelType,
+   CustomBinaryFunction(const LabelType, const LabelType,
            std::function<ValueType(LabelType, LabelType)>);
    size_t shape(const IndexType) const;
    size_t size() const;
@@ -38,8 +38,8 @@ private:
 /// \cond HIDDEN_SYMBOLS
 /// FunctionRegistration
 template <class T, class I, class L>
-struct FunctionRegistration< CustomFunction<T, I, L> >{
-   /// Id  of the CustomFunction
+struct FunctionRegistration< CustomBinaryFunction<T, I, L> >{
+   /// Id  of the CustomBinaryFunction
    enum ID {
       Id = opengm::FUNCTION_TYPE_ID_OFFSET + 12
    };
@@ -52,7 +52,7 @@ struct FunctionRegistration< CustomFunction<T, I, L> >{
 ///
 template <class T, class I, class L>
 inline
-CustomFunction<T, I, L>::CustomFunction
+CustomBinaryFunction<T, I, L>::CustomBinaryFunction
 (
    const LabelType numberOfLabels1, 
    const LabelType numberOfLabels2,
@@ -65,8 +65,8 @@ CustomFunction<T, I, L>::CustomFunction
 
 template <class T, class I, class L>
 template <class ITERATOR>
-inline typename CustomFunction<T, I, L>::ValueType
-CustomFunction<T, I, L>::operator()
+inline typename CustomBinaryFunction<T, I, L>::ValueType
+CustomBinaryFunction<T, I, L>::operator()
 (
    ITERATOR begin
 ) const {
@@ -78,7 +78,7 @@ CustomFunction<T, I, L>::operator()
 /// \param i dimension
 template <class T, class I, class L>
 inline size_t
-CustomFunction<T, I, L>::shape
+CustomBinaryFunction<T, I, L>::shape
 (
    const IndexType i
 ) const {
@@ -89,14 +89,14 @@ CustomFunction<T, I, L>::shape
 // order (number of variables) of the function
 template <class T, class I, class L>
 inline size_t
-CustomFunction<T, I, L>::dimension() const {
+CustomBinaryFunction<T, I, L>::dimension() const {
    return 2;
 }
 
 /// number of entries a value table encoding this function would have (used for I/O)
 template <class T, class I, class L>
 inline size_t
-CustomFunction<T, I, L>::size() const {
+CustomBinaryFunction<T, I, L>::size() const {
    return numberOfLabels1_ * numberOfLabels2_;
 }
 

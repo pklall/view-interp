@@ -1,7 +1,8 @@
 #pragma once
 
 #include "common.h"
-#include "custom_function.h"
+
+#include "localexpansion.hpp"
 
 class Segment;
 class Connectivity;
@@ -97,6 +98,8 @@ class Connectivity {
         int getConnectivity(
                 segmentH_t a,
                 segmentH_t b) const;
+
+        
 
         inline void forEachNeighbor(
                 segmentH_t  s,
@@ -263,62 +266,33 @@ class PlanarDepth {
                 CImg<float>& result);
 };
 
-class SegmentLabelProblem {
-    private:
-        typedef opengm::SimpleDiscreteSpace<> Space;
-
-        typedef opengm::ExplicitFunction<float, size_t, size_t> ExplicitFunction;
-
-        typedef opengm::CustomFunction<float, size_t, size_t> CustomFunction;
-
-        typedef opengm::meta::TypeListGenerator<
-            ExplicitFunction,
-            CustomFunction
-                >::type FunctionTypeList;
-
-        typedef opengm::GraphicalModel<float, opengm::Adder, FunctionTypeList,
-                Space> GModel;
-
-        const Segmentation* segmentation;
-
-        size_t numLabelsTotal;
-
-        size_t numLabelsPerSeg;
-
-        GModel model;
-
-        map<tuple<segmentH_t, planeH_t>, size_t> planeIndexMap;
-
-        map<tuple<segmentH_t, size_t>, planeH_t> indexPlaneMap;
-
-    public:
-        SegmentLabelProblem(
-                const Segmentation* _segmentation,
-                size_t _numLabelsTotal,
-                size_t _numLabelsPerSeg);
-
-        void addUnaryFactor(
-                segmentH_t segment,
-                const map<planeH_t, float>& labelWeights);
-
-        void addBinaryFactor(
-                segmentH_t segment1,
-                segmentH_t segment2,
-                function<float(planeH_t, planeH_t)> func);
-
-        void solveMAP(
-                vector<planeH_t>& labels);
-};
-
 class PlanarDepthSmoothingProblem {
     private:
+        typedef LocalExpansion<segmentH_t, planeH_t> Solver;
+
         PlanarDepth* depth;
 
         const Segmentation* segmentation;
 
         const Connectivity* connectivity;
 
-        unique_ptr<SegmentLabelProblem> model;
+        unique_ptr<Solver> model;
+
+        float binaryCost(
+                segmentH_t a,
+                segmentH_t b,
+                planeH_t a_label,
+                planeH_t b_label);
+
+        float unaryCost(
+                segmentH_t n,
+                planeH_t n_label);
+
+        void neighborhoodGenerator(
+                segmentH_t s,
+                vector<segmentH_t>& neighborhood);
+
+        void createModel();
 
     public:
         float smoothnessCoeff;
@@ -327,9 +301,6 @@ class PlanarDepthSmoothingProblem {
                 PlanarDepth* _depth,
                 const Segmentation* _segmentation,
                 const Connectivity* _connectivity);
-
-        void createModel(
-                int numLabelsPerSeg);
 
         void solve();
 };
