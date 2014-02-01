@@ -11,6 +11,7 @@
 
 #include "common.h"
 
+#include "time.h"
 
 using namespace std;
 
@@ -105,10 +106,14 @@ void runInterpolation(
 
     Segmentation segmentation;
 
+    printf("Computing segmentation\n");
+
     segmentation.createSlicSuperpixels(
             fst.get_RGBtoLab(),
             fst.width() * fst.height() / (8 * 8),
             10);
+
+    printf("Done\n");
 
     {
         // Visualize segmentation
@@ -119,9 +124,13 @@ void runInterpolation(
         vis.save("results/segmentation.png");
     }
 
+    printf("Computing connectivity\n");
+
     Connectivity connectivity;
 
     segmentation.getConnectivity(connectivity);
+
+    printf("Done\n");
 
     /*{
         // Visualize the segmentation
@@ -142,7 +151,7 @@ void runInterpolation(
     while (true) {
         int smoothness;
 
-        cout << "Smoothness level?" << endl;
+        cout << endl << "Smoothness level?" << endl;
 
         cin >> smoothness;
 

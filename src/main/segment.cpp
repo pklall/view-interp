@@ -442,7 +442,13 @@ PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
     createModel();
 }
 
-float PlanarDepthSmoothingProblem::binaryCost(
+float PlanarDepthSmoothingProblem::UnaryCost::operator()(
+        segmentH_t segH,
+        planeH_t planeH) {
+    return self->depth->getPlaneCostL1(segH, self->depth->getPlanes()[planeH]);
+}
+
+float PlanarDepthSmoothingProblem::BinaryCost::operator()(
         segmentH_t segA,
         segmentH_t segB,
         planeH_t planeA,
@@ -450,8 +456,8 @@ float PlanarDepthSmoothingProblem::binaryCost(
     float labA[3];
     float labB[3];
 
-    (*segmentation)[segA].avgLab(labA);
-    (*segmentation)[segB].avgLab(labB);
+    (*self->segmentation)[segA].avgLab(labA);
+    (*self->segmentation)[segB].avgLab(labB);
 
     float colorDiff = 0.0f;
 
@@ -462,8 +468,8 @@ float PlanarDepthSmoothingProblem::binaryCost(
     int cX1, cY1;
     int cX2, cY2;
 
-    (*segmentation)[segA].getCenter(cX1, cY1);
-    (*segmentation)[segB].getCenter(cX2, cY2);
+    (*self->segmentation)[segA].getCenter(cX1, cY1);
+    (*self->segmentation)[segB].getCenter(cX2, cY2);
 
     // Crude approximation of the point between segments
     // segI and nI.  This enables approximation of the
@@ -471,23 +477,17 @@ float PlanarDepthSmoothingProblem::binaryCost(
     float middleX = (cX1 + cX2) / 2.0f;
     float middleY = (cY1 + cY2) / 2.0f;
 
-    const Plane& p1 = this->depth->getPlanes()[planeA];
-    const Plane& p2 = this->depth->getPlanes()[planeB];
+    const Plane& p1 = self->depth->getPlanes()[planeA];
+    const Plane& p2 = self->depth->getPlanes()[planeB];
 
     float d1 = p1.dispAt(middleX, middleY);
     float d2 = p2.dispAt(middleX, middleY);
 
     float depthDiscontinuity = fabs(d1 - d2);
 
-    int conn = connectivity->getConnectivity(segA, segB);
+    int conn = self->connectivity->getConnectivity(segA, segB);
 
-    return this->smoothnessCoeff * conn * depthDiscontinuity / colorDiff;
-}
-
-float PlanarDepthSmoothingProblem::unaryCost(
-        segmentH_t segH,
-        planeH_t planeH) {
-    return depth->getPlaneCostL1(segH, depth->getPlanes()[planeH]);
+    return self->smoothnessCoeff * conn * depthDiscontinuity / colorDiff;
 }
 
 void PlanarDepthSmoothingProblem::neighborhoodGenerator(
@@ -500,19 +500,8 @@ void PlanarDepthSmoothingProblem::neighborhoodGenerator(
 }
 
 void PlanarDepthSmoothingProblem::createModel() {
-    function<float(segmentH_t, segmentH_t, planeH_t, planeH_t)> bcost =
-        bind(&PlanarDepthSmoothingProblem::binaryCost,
-                this,
-                std::placeholders::_1,
-                std::placeholders::_2,
-                std::placeholders::_3,
-                std::placeholders::_4);
-
-    function<float(segmentH_t, planeH_t)> uCost =
-        bind(&PlanarDepthSmoothingProblem::unaryCost,
-                this,
-                std::placeholders::_1,
-                std::placeholders::_2);
+    UnaryCost uCost = {this};
+    BinaryCost bCost = {this};
 
     function<void(segmentH_t, vector<planeH_t>&)> neighborGen =
         bind(&PlanarDepthSmoothingProblem::neighborhoodGenerator,
@@ -521,9 +510,10 @@ void PlanarDepthSmoothingProblem::createModel() {
                 std::placeholders::_2);
 
     model = unique_ptr<Solver>(new Solver(
+                numSegmentsPerExpansion,
                 &(depth->getSegmentPlaneMap()),
-                bcost,
                 uCost,
+                bCost,
                 neighborGen));
 }
 
@@ -531,8 +521,6 @@ void PlanarDepthSmoothingProblem::solve() {
     set<segmentH_t> visited;
 
     queue<segmentH_t> toVisit;
-
-    const int numSegmentsPerExpansion = 20;
 
     set<segmentH_t> expandNodes;
 

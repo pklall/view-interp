@@ -10,25 +10,45 @@ using namespace std;
 
 /**
  * Performs iterated graph-cuts over subsets of a graph.
+ *
+ * Type parameters:
+ *  N - node type
+ *  L - label type
+ *  UC - Unary cost class with function: float operator()(node_t, node_t, label_t, label_t)
+ *  BC - Binary cost class with function: float operator()(node_t, label_t)
  */
-template<class N, class L>
+template<class N, class L, class UC, class BC>
 class LocalExpansion {
     private:
         typedef N node_t;
         typedef L label_t;
+        typedef UC unary_cost_t;
+        typedef BC binary_cost_t;
 
         typedef opengm::SimpleDiscreteSpace<size_t, size_t> Space;
         typedef opengm::ExplicitFunction<float, size_t, size_t> ExplicitFunction;
 
         typedef opengm::GraphicalModel<float, opengm::Adder, ExplicitFunction,
                 Space> GModel;
+
         typedef opengm::external::QPBO<GModel> QPBO;
+
+        size_t maxNodesPerExpansion;
 
         GModel model;
 
         unique_ptr<QPBO> qpbo;
 
         vector<label_t>* labeling;
+
+        /**
+         * float unaryCost(
+         *      node_t n,
+         *      label_t n_label)
+         *
+         * Computes the cost of assigning node n the label n_label.
+         */
+        unary_cost_t unaryCost;
 
         /**
          * float binaryCost(
@@ -40,30 +60,21 @@ class LocalExpansion {
          * Computes pair-wise cost between nodes a and b
          * when F_a = a_label and F_b = b_label for labeling F.
          */
-        function<float(node_t, node_t, label_t, label_t)> binaryCost;
+        binary_cost_t binaryCost;
 
         /**
-         * float unaryCost(
-         *      node_t n,
-         *      label_t n_label)
-         *
-         * Computes the cost of assigning node n the label n_label.
-         */
-        function<float(node_t, label_t)> unaryCost;
-
-        /**
-         * void neighborhoodGenerator(
+         * void neighborGenerator(
          *      node_t n,
          *      vector<node_t>& neighbors)
          *
          * Creates a list of neighbors for the given node.
          */
-        function<void(node_t, vector<node_t>&)> neighborhoodGenerator;
+        function<void(node_t, vector<node_t>&)> neighborGenerator;
 
         void createExpandModel(
                 const set<node_t>& nodes,
                 label_t label) {
-            Space space(nodes.size(), 2);
+            Space space(maxNodesPerExpansion, 2);
 
             model = GModel(space);
 
@@ -78,7 +89,9 @@ class LocalExpansion {
                 float costSame = unaryCost(node, (*labeling)[node]);
                 float costDiff = unaryCost(node, label);
 
-                neighborhoodGenerator(node, neighbors);
+                neighbors.clear();
+
+                neighborGenerator(node, neighbors);
 
                 for (const node_t& neighbor : neighbors) {
                     if (neighbor == node) {
@@ -148,14 +161,16 @@ class LocalExpansion {
 
     public:
         LocalExpansion(
+                size_t _maxNodesPerExpansion,
                 vector<label_t>* _labeling,
-                function<float(node_t, node_t, label_t, label_t)> _binaryCost,
-                function<float(node_t, node_t)> _unaryCost,
-                function<void(node_t, vector<node_t>&)> _neighborhoodGenerator) :
+                unary_cost_t _unaryCost,
+                binary_cost_t _binaryCost,
+                function<void(node_t, vector<node_t>&)> _neighborGenerator) :
+                    maxNodesPerExpansion(_maxNodesPerExpansion),
                     labeling(_labeling),
-                    binaryCost(_binaryCost),
                     unaryCost(_unaryCost),
-                    neighborhoodGenerator(_neighborhoodGenerator) {
+                    binaryCost(_binaryCost),
+                    neighborGenerator(_neighborGenerator) {
         }
 
         void tryExpand(
@@ -169,19 +184,15 @@ class LocalExpansion {
             vector<bool> optimalVariables;
             vector<size_t> labels;
 
-            float partialOpt = qpbo->partialOptimality(optimalVariables);
+            qpbo->partialOptimality(optimalVariables);
 
             qpbo->arg(labels);
             
-            int numChanged = 0;
-
             int nodeIndex = 0;
 
             for (const node_t& node : nodes) {
                 if (optimalVariables[nodeIndex] && labels[nodeIndex] == 1) {
                     (*labeling)[node] = label;
-
-                    numChanged++;
                 }
 
                 nodeIndex++;

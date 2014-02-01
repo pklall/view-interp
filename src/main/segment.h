@@ -99,8 +99,6 @@ class Connectivity {
                 segmentH_t a,
                 segmentH_t b) const;
 
-        
-
         inline void forEachNeighbor(
                 segmentH_t  s,
                 function<void(segmentH_t, int)> fun) const {
@@ -268,7 +266,42 @@ class PlanarDepth {
 
 class PlanarDepthSmoothingProblem {
     private:
-        typedef LocalExpansion<segmentH_t, planeH_t> Solver;
+        struct UnaryCost {
+            PlanarDepthSmoothingProblem* self;
+
+            float operator()(
+                segmentH_t n,
+                planeH_t n_label);
+        };
+
+        struct BinaryCost {
+            PlanarDepthSmoothingProblem* self;
+
+            float operator()(
+                segmentH_t a,
+                segmentH_t b,
+                planeH_t a_label,
+                planeH_t b_label);
+        };
+
+        typedef LocalExpansion<segmentH_t, planeH_t, UnaryCost, BinaryCost> Solver;
+
+        void neighborhoodGenerator(
+                segmentH_t s,
+                vector<segmentH_t>& neighborhood);
+
+        void createModel();
+
+    public:
+        PlanarDepthSmoothingProblem(
+                PlanarDepth* _depth,
+                const Segmentation* _segmentation,
+                const Connectivity* _connectivity);
+
+        void solve();
+
+    private:
+        const size_t numSegmentsPerExpansion = 20;
 
         PlanarDepth* depth;
 
@@ -278,30 +311,8 @@ class PlanarDepthSmoothingProblem {
 
         unique_ptr<Solver> model;
 
-        float binaryCost(
-                segmentH_t a,
-                segmentH_t b,
-                planeH_t a_label,
-                planeH_t b_label);
-
-        float unaryCost(
-                segmentH_t n,
-                planeH_t n_label);
-
-        void neighborhoodGenerator(
-                segmentH_t s,
-                vector<segmentH_t>& neighborhood);
-
-        void createModel();
-
     public:
         float smoothnessCoeff;
 
-        PlanarDepthSmoothingProblem(
-                PlanarDepth* _depth,
-                const Segmentation* _segmentation,
-                const Connectivity* _connectivity);
-
-        void solve();
 };
 
