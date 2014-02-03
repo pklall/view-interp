@@ -148,6 +148,10 @@ StereoProblem::StereoProblem(
     left(_left), right(_right),
     minDisp(_minDisp), maxDisp(_maxDisp),
     disp(_disp) {
+    assert(left.is_sameXYZC(right));
+    assert(disp.is_sameXY(left));
+    assert(disp.depth() == 1);
+    assert(disp.spectrum() == 1);
 }
 
 bool PlanarDepth::tabulateSlantSamples(

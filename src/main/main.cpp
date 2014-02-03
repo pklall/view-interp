@@ -7,6 +7,8 @@
 
 #include "adaptbp.h"
 
+#include "dpstereo.h"
+
 #include "cvutil/cvutil.h"
 
 #include "common.h"
@@ -91,19 +93,6 @@ void runInterpolation(
     int maxDisp = 256;
     int minDisp = -maxDisp;
 
-    printf("Computing stereo...\n");
-    CImg<float> dispLeft;
-
-    CVStereo stereo(fst, lst, true);
-
-    stereo.matchStereo(minDisp, maxDisp, 3, 1.0f);
-
-    stereo.getStereo(dispLeft);
-
-    printf("Done\n");
-
-    StereoProblem sp(fst, lst, minDisp, maxDisp, dispLeft);
-
     Segmentation segmentation;
 
     printf("Computing segmentation\n");
@@ -116,13 +105,37 @@ void runInterpolation(
     printf("Done\n");
 
     {
-        // Visualize segmentation
+        // Save a visualization of the segmentation
         CImg<float> vis;
 
         segmentation.renderVisualization(vis);
 
         vis.save("results/segmentation.png");
     }
+
+
+    {
+        // Use OpenCV's StereoSGBM algorithm
+        
+        printf("Computing stereo...\n");
+        CImg<float> dispLeft;
+
+        CVStereo stereo(fst, lst, true);
+
+        stereo.matchStereo(minDisp, maxDisp, 3, 1.0f);
+
+        stereo.getStereo(dispLeft);
+
+        printf("Done\n");
+
+        StereoProblem sp(fst, lst, minDisp, maxDisp, dispLeft);
+    }
+    
+    // StereoProblem sp(fst, lst, minDisp, maxDisp, CImg<float>(fst.width(), fst.height()));
+
+    // DPStereo stereo(&segmentation, 2, 8 * 3, 32 * 3);
+
+    // stereo.computeStereo(sp);
 
     printf("Computing connectivity\n");
 
@@ -164,8 +177,8 @@ void runInterpolation(
         pd.getDisparity(disp);
 
         string fname = "results/smoothness_" + to_string(smoothness) + ".pfm";
-        disp.display();
-        // (sp.disp, disp).display();
+        // disp.display();
+        (sp.disp, disp).display();
     }
 
     CImg<float> reconstruction;

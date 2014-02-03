@@ -107,16 +107,17 @@ class LocalExpansion {
 
                             ExplicitFunction func(begin(shape), end(shape));
 
-                            label_t nLabel = 
+                            label_t oldLabel = (*labeling)[node];
+                            label_t oldNLabel = (*labeling)[neighbor];
 
                             func(0, 0) = binaryCost(node, neighbor,
-                                    (*labeling)[node], (*labeling)[neighbor]);
+                                    oldLabel, oldNLabel);
 
                             func(0, 1) = binaryCost(node, neighbor,
-                                    (*labeling)[node], label);
+                                    oldLabel, label);
 
                             func(1, 0) = binaryCost(node, neighbor,
-                                    label, (*labeling)[neighbor]);
+                                    label, oldNLabel);
 
                             func(1, 1) = binaryCost(node, neighbor,
                                     label, label);
@@ -190,13 +191,19 @@ class LocalExpansion {
             
             int nodeIndex = 0;
 
+            int numChanged = 0;
+
             for (const node_t& node : nodes) {
                 if (optimalVariables[nodeIndex] && labels[nodeIndex] == 1) {
                     (*labeling)[node] = label;
+
+                    numChanged++;
                 }
 
                 nodeIndex++;
             }
+
+            printf("Num Changed = %d\n", numChanged);
         }
 };
 
