@@ -114,28 +114,26 @@ void runInterpolation(
     }
 
 
-    {
-        // Use OpenCV's StereoSGBM algorithm
-        
-        printf("Computing stereo...\n");
-        CImg<float> dispLeft;
+    // Use OpenCV's StereoSGBM algorithm
 
-        CVStereo stereo(fst, lst, true);
+    // printf("Computing stereo...\n");
+    // CImg<float> dispLeft;
 
-        stereo.matchStereo(minDisp, maxDisp, 3, 1.0f);
+    // CVStereo stereo(fst, lst, true);
 
-        stereo.getStereo(dispLeft);
+    // stereo.matchStereo(minDisp, maxDisp, 1, 1.0f);
 
-        printf("Done\n");
+    // stereo.getStereo(dispLeft);
 
-        StereoProblem sp(fst, lst, minDisp, maxDisp, dispLeft);
-    }
+    // printf("Done\n");
+
+    // StereoProblem sp(fst, lst, minDisp, maxDisp, dispLeft);
     
-    // StereoProblem sp(fst, lst, minDisp, maxDisp, CImg<float>(fst.width(), fst.height()));
+    StereoProblem sp(fst, lst, minDisp, maxDisp, CImg<float>(fst.width(), fst.height()));
 
-    // DPStereo stereo(&segmentation, 2, 8 * 3, 32 * 3);
+    DPStereo stereo(&segmentation, 2, 24 * 3, 48 * 3);
 
-    // stereo.computeStereo(sp);
+    stereo.computeStereoGreedy(sp);
 
     printf("Computing connectivity\n");
 
@@ -164,9 +162,10 @@ void runInterpolation(
     while (true) {
         int smoothness;
 
-        cout << endl << "Smoothness level?" << endl;
+        // cout << endl << "Smoothness level?" << endl;
 
-        cin >> smoothness;
+        // cin >> smoothness;
+        smoothness = 5;
 
         printf("Recomputing with smoothness = %d\n", smoothness);
 

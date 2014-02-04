@@ -211,6 +211,18 @@ struct StereoProblem {
 };
 
 class PlanarDepth {
+    public:
+        struct PlanarDepthStats {
+            Plane median;
+
+            Plane average;
+
+            Plane stDev;
+            
+            // Median absolute deviation from median
+            Plane mad;
+        };
+
     private:
         const StereoProblem* stereo;
         

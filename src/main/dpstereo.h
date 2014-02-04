@@ -21,6 +21,9 @@ class DPStereo {
                 float _costLargeDispSegEdge,
                 float _costLargeDisp);
 
+        void computeStereoGreedy(
+                StereoProblem& problem);
+
         void computeStereo(
                 StereoProblem& problem);
 };
