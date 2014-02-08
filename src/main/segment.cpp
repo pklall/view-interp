@@ -7,7 +7,7 @@
 #include <queue>
 #include <set>
 
-Segment::Segment() : totalLab{0.0f, 0.0f, 0.0f} {
+Segment::Segment() {
     minX = std::numeric_limits<imageI_t>::max();
     minY = std::numeric_limits<imageI_t>::max();
 
@@ -41,7 +41,8 @@ int Connectivity::getConnectivity(
 }
 
 void Segmentation::recomputeSegmentMap() {
-    for (segmentH_t superpixelI = 0; superpixelI < superpixels.size(); superpixelI++) {
+    for (segmentH_t superpixelI = 0; superpixelI < superpixels.size();
+            superpixelI++) {
         const auto& pixels = superpixels[superpixelI].getPixels();
 
         for (const auto& p : pixels) {
@@ -71,20 +72,14 @@ void Segmentation::createSlicSuperpixels(
 
     segmentH_t curHandle = 0;
 
-    float labTmp[3];
-
     cimg_forXY(segmentMap, x, y) {
-        cimg_forC(lab, c) {
-            labTmp[c] = lab(x, y, 0, c);
-        }
-
         if (validSegmentHandles.count(segmentMap(x, y)) == 0) {
             validSegmentHandles[segmentMap(x, y)] = curHandle;
 
             curHandle++;
         }
 
-        superpixels[validSegmentHandles[segmentMap(x, y)]].addPixel(x, y, labTmp);
+        superpixels[validSegmentHandles[segmentMap(x, y)]].addPixel(x, y);
     }
 
     superpixels.resize(curHandle);
@@ -95,8 +90,34 @@ void Segmentation::createSlicSuperpixels(
         s.compress();
     }
 
-    for (const Segment& s : superpixels) {
-        assert(s.size() > 0);
+    // Compute median Lab for each superpixel
+    medianLab = vector<array<float, 3>>(superpixels.size());
+
+    vector<float> l, a, b;
+    
+    for (segmentH_t segH = 0; segH < superpixels.size(); segH++) {
+        Segment& seg = superpixels[segH];
+
+        l.clear();
+        a.clear();
+        b.clear();
+
+        for (const auto& p : seg.getPixels()) {
+            size_t x = get<0>(p);
+            size_t y = get<1>(p);
+
+            l.push_back(lab(x, y, 0, 0));
+            a.push_back(lab(x, y, 0, 1));
+            b.push_back(lab(x, y, 0, 2));
+        }
+
+        nth_element(&(l[0]), &(l[l.size() / 2]), &(l[l.size()]));
+        nth_element(&(a[0]), &(a[a.size() / 2]), &(a[a.size()]));
+        nth_element(&(b[0]), &(b[b.size() / 2]), &(b[b.size()]));
+
+        medianLab[segH][0] = l[l.size() / 2];
+        medianLab[segH][1] = a[a.size() / 2];
+        medianLab[segH][2] = b[b.size() / 2];
     }
 }
 
@@ -104,10 +125,10 @@ void Segmentation::renderVisualization(
         CImg<float>& result) const {
     result.resize(segmentMap.width(), segmentMap.height(), 1, 3, -1);
 
-    for (const Segment& sp : superpixels) {
-        float lab[3];
+    for (segmentH_t segH = 0; segH < superpixels.size(); segH++) {
+        const Segment& sp = superpixels[segH];
 
-        sp.avgLab(lab);
+        const array<float, 3>& lab = medLab(segH);
 
         cimg_forC(result, c) {
             for (const auto& coord : sp.getPixels()) {
@@ -140,18 +161,18 @@ void Segmentation::getConnectivity(
 }
 
 StereoProblem::StereoProblem(
-        CImg<uint16_t> _left, 
-        CImg<uint16_t> _right, 
+        CImg<int16_t> _left, 
+        CImg<int16_t> _right, 
         int _minDisp,
-        int _maxDisp,
-        CImg<float> _disp) :
+        int _maxDisp) :
     left(_left), right(_right),
-    minDisp(_minDisp), maxDisp(_maxDisp),
-    disp(_disp) {
+    minDisp(_minDisp), maxDisp(_maxDisp) {
     assert(left.is_sameXYZC(right));
-    assert(disp.is_sameXY(left));
-    assert(disp.depth() == 1);
-    assert(disp.spectrum() == 1);
+
+    leftLab = left.get_RGBtoLab();
+    rightLab = right.get_RGBtoLab();
+
+    disp = CImg<float>(left.width(), left.height());
 }
 
 bool PlanarDepth::tabulateSlantSamples(
@@ -302,31 +323,48 @@ void PlanarDepth::fitPlanesMedian() {
     planes.shrink_to_fit();
 }
 
-float PlanarDepth::getPlaneCostL1(
+void PlanarDepth::getPlaneCostL1(
         segmentH_t segment,
-        const Plane& plane) const {
-    if (!plane.isValid()) {
-        return std::numeric_limits<float>::max();
+        const Plane& plane,
+        float& cost,
+        int& samples) const {
+    if (!isInBounds(segment, plane)) {
+        cost = std::numeric_limits<float>::max();
+
+        return;
     }
 
     const Segment& superpixel = (*segmentation)[segment];
 
-    float l1Dist = 0;
+    cost = 0.0f;
+
+    samples = 0;
 
     for (const auto& p : superpixel.getPixels()) {
-        imageI_t x = get<0>(p);
-        imageI_t y = get<1>(p);
+        int lx = get<0>(p);
+        int ly = get<1>(p);
 
-        if (stereo->isValidDisp(x, y)) {
-            float planeDisp = plane.dispAt((float) x, (float) y);
+        int rx = (int) (lx + plane.dispAt((float) lx, (float) ly) + 0.5f);
+        int ry = ly;
 
-            float dispSample = stereo->disp(x, y);
+        cimg_forC(stereo->right, c) {
+            float lVal = stereo->left(lx, ly, 0, c);
+            float rVal = stereo->right(rx, ry, 0, c);
 
-            l1Dist += fabs(planeDisp - dispSample);
+            cost += fabs(lVal - rVal);
         }
+
+        samples++;
+
+        // if (stereo->isValidDisp(x, y)) {
+            // float planeDisp = plane.dispAt((float) x, (float) y);
+            // float dispSample = stereo->disp(x, y);
+            // cost += fabs(planeDisp - dispSample);
+            // samples++;
+        // }
     }
 
-    return l1Dist;
+    cost /= samples;
 }
 
 PlanarDepth::PlanarDepth(
@@ -343,7 +381,9 @@ void PlanarDepth::getDisparity(
 
     disp = 0.0f;
 
-    for (segmentH_t superpixelI = 0; superpixelI < segmentation->size(); superpixelI++) {
+    for (segmentH_t superpixelI = 0;
+            superpixelI < segmentation->size();
+            superpixelI++) {
         const auto& superpixel = (*segmentation)[superpixelI];
 
         const Plane& plane = getPlane(superpixelI);
@@ -437,19 +477,39 @@ void PlanarDepth::renderInterpolated(
 
 PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
         PlanarDepth* _depth,
+        const StereoProblem* _stereo,
         const Segmentation* _segmentation,
         const Connectivity* _connectivity) :
     depth(_depth),
+    stereo(_stereo),
     segmentation(_segmentation),
-    connectivity(_connectivity)
-{
+    connectivity(_connectivity) {
+
     createModel();
+    
+    unaryInlierThresh = numeric_limits<float>::max();
+
+    binaryC0InlierThresh = numeric_limits<float>::max();
 }
 
 float PlanarDepthSmoothingProblem::UnaryCost::operator()(
         segmentH_t segH,
         planeH_t planeH) {
-    return self->depth->getPlaneCostL1(segH, self->depth->getPlanes()[planeH]);
+    const Plane& plane = self->depth->getPlanes()[planeH];
+
+    const Segment& seg = self->segmentation->getSegments()[segH];
+
+    int minDisp = self->stereo->minDisp;
+    int maxDisp = self->stereo->maxDisp;
+
+    float cost;
+    int samples;
+
+    self->depth->getPlaneCostL1(segH, plane, cost, samples);
+
+    // cost = fmin(cost, self->unaryInlierThresh);
+
+    return cost;
 }
 
 float PlanarDepthSmoothingProblem::BinaryCost::operator()(
@@ -457,41 +517,30 @@ float PlanarDepthSmoothingProblem::BinaryCost::operator()(
         segmentH_t segB,
         planeH_t planeA,
         planeH_t planeB) {
-    float labA[3];
-    float labB[3];
 
-    (*self->segmentation)[segA].avgLab(labA);
-    (*self->segmentation)[segB].avgLab(labB);
+    const array<float, 3>& labA = (*self->segmentation).medLab(segA);
+    const array<float, 3>& labB = (*self->segmentation).medLab(segB);
 
     float colorDiff = 0.0f;
 
-    colorDiff += fabs(labA[0] - labB[0]);
-    colorDiff += fabs(labA[1] - labB[1]);
-    colorDiff += fabs(labA[2] - labB[2]);
+    for (int c = 0; c < 3; c++) {
+        colorDiff += fabs(labA[c] - labB[c]);
+    }
 
-    int cX1, cY1;
-    int cX2, cY2;
+    if (colorDiff > medianColorDiff) {
+        return 0.0f;
+    } else {
+        colorDiff = 1.0f;
+    }
 
-    (*self->segmentation)[segA].getCenter(cX1, cY1);
-    (*self->segmentation)[segB].getCenter(cX2, cY2);
+    float depthDiscontinuity = self->pairwiseL1PlaneDist(segA, segB, planeA, planeB);
 
-    // Crude approximation of the point between segments
-    // segI and nI.  This enables approximation of the
-    // depth discontinuity between segments.
-    float middleX = (cX1 + cX2) / 2.0f;
-    float middleY = (cY1 + cY2) / 2.0f;
+    depthDiscontinuity = fmin(depthDiscontinuity, self->binaryC0InlierThresh * 3.0f);
 
-    const Plane& p1 = self->depth->getPlanes()[planeA];
-    const Plane& p2 = self->depth->getPlanes()[planeB];
+    // int conn = self->connectivity->getConnectivity(segA, segB);
 
-    float d1 = p1.dispAt(middleX, middleY);
-    float d2 = p2.dispAt(middleX, middleY);
-
-    float depthDiscontinuity = fabs(d1 - d2);
-
-    int conn = self->connectivity->getConnectivity(segA, segB);
-
-    return self->smoothnessCoeff * conn * depthDiscontinuity / colorDiff;
+    // FIXME this needs to be improved
+    return self->smoothnessCoeff * depthDiscontinuity * colorDiff;
 }
 
 void PlanarDepthSmoothingProblem::neighborhoodGenerator(
@@ -501,6 +550,75 @@ void PlanarDepthSmoothingProblem::neighborhoodGenerator(
             [&](segmentH_t segment, int conn) {
             neighborhood.push_back(segment);
             });
+}
+
+void PlanarDepthSmoothingProblem::computeUnaryCostStats() {
+    /*
+    int numSegs = segmentation->size();
+
+    float costs[numSegs];
+
+    int numValidSegs = 0;
+    
+    for (segmentH_t segH = 0; segH < segmentation->size(); segH++) {
+        float cost;
+        int samples;
+        
+        depth->getPlaneCostL1(segH, depth->getPlane(segH), cost, samples);
+        
+        // Only use valid planes and segments with at least 1 sample
+        if (samples > 0 && cost < std::numeric_limits<float>::max()) {
+            costs[numValidSegs] = cost;
+
+            numValidSegs++;
+        }
+    }
+
+    int medI = numValidSegs / 2;
+
+    std::nth_element(&(costs[0]), &(costs[medI]), &(costs[numValidSegs]));
+
+    // Estimate standard deviation via median absolute deviation
+    // then get 95% conf. interval.
+    unaryInlierThresh = costs[medI] * 10.0f;
+    */
+}
+
+void PlanarDepthSmoothingProblem::computePairwiseCostStats() {
+    vector<tuple<float, segmentH_t, int>> neighbors(8);
+
+    for (size_t segI = 0; segI < segmentation->size(); segI++) {
+        if (!depth->getPlane(segI).isValid()) {
+            continue;
+        }
+
+        neighbors.clear();
+
+        const array<float, 3>& lab = (*segmentation).medLab(segI);
+
+        connectivity->forEachNeighbor(segI,
+                [&](segmentH_t nI, int conn) {
+                    const array<float, 3>& labNeighbor = (*segmentation).medLab(nI);
+
+                    float dist = 0.0f;
+
+                    for (int c = 0; c < 3; c++) {
+                        dist += fabs(labNeighbor[c] - lab[c]);
+                    }
+
+                    if (dist < closestNeighborDist) {
+                        closestNeighborDist = dist;
+
+                        closestNeighbor = nI;
+
+                        closestNeighborConn = conn;
+                    }
+                });
+    }
+
+    int medI = numValidSegs / 2;
+
+    std::nth_element(&(c0Dist[0]), &(c0Dist[medI]), &(c0Dist[numValidSegs]));
 }
 
 void PlanarDepthSmoothingProblem::createModel() {
@@ -521,12 +639,20 @@ void PlanarDepthSmoothingProblem::createModel() {
                 neighborGen));
 }
 
+void PlanarDepthSmoothingProblem::computeInlierStats() {
+    computeUnaryCostStats();
+
+    computePairwiseCostStats();
+}
+
 void PlanarDepthSmoothingProblem::solve() {
     set<segmentH_t> visited;
 
     queue<segmentH_t> toVisit;
 
     set<segmentH_t> expandNodes;
+
+    int numFlips = 0;
 
     // Loop over all segments and try to expand the plane
     // at that segment to adjacent nodes (by breadth-first traversal)
@@ -552,7 +678,7 @@ void PlanarDepthSmoothingProblem::solve() {
             expandNodes.insert(curSeg);
 
             connectivity->forEachNeighbor(curSeg,
-                    [&](size_t nI, int conn) {
+                    [&](segmentH_t nI, int conn) {
                         if (visited.count(nI) == 0) {
                             visited.insert(nI);
 
@@ -561,7 +687,9 @@ void PlanarDepthSmoothingProblem::solve() {
                     });
         }
 
-        model->tryExpand(expandNodes, depth->getSegmentPlaneMap()[segI]);
+        numFlips += model->tryExpand(expandNodes, depth->getSegmentPlaneMap()[segI]);
     }
+
+    printf("Flips = %d\n", numFlips);
 }
 

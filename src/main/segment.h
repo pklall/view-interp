@@ -4,6 +4,8 @@
 
 #include "localexpansion.hpp"
 
+#include "cvutil/cvutil.h"
+
 class Segment;
 class Connectivity;
 class Segmentation;
@@ -25,34 +27,20 @@ class Segment {
 
         vector<tuple<imageI_t, imageI_t>> pixels;
 
-        float totalLab[3];
-
     public:
         Segment();
 
         inline void addPixel(
                 imageI_t x,
-                imageI_t y,
-                const float lab[3]) {
+                imageI_t y) {
             minX = min(minX, x);
             maxX = max(maxX, x);
             minY = min(minY, y);
             maxY = max(maxY, y);
 
-            for (int i = 0; i < 3; i++) {
-                totalLab[i] += lab[i];
-            }
-
             pixels.push_back(make_tuple(x, y));
         }
         
-        inline void avgLab(
-                float lab[3]) const {
-            for (int i = 0; i < 3; i++) {
-                lab[i] = totalLab[i] / size();
-            }
-        }
-
         inline void compress() {
             pixels.shrink_to_fit();
         }
@@ -120,6 +108,8 @@ class Segmentation {
 
         CImg<segmentH_t> segmentMap;
 
+        vector<array<float, 3>> medianLab;
+
     public:
         inline const vector<Segment>& getSegments() const {
             return superpixels;
@@ -133,16 +123,31 @@ class Segmentation {
             return superpixels.size();
         }
 
-        inline const Segment& operator[](segmentH_t index) const {
+        inline const Segment& operator[](
+                segmentH_t index) const {
             return superpixels[index];
         }
 
-        inline segmentH_t& operator()(imageI_t x, imageI_t y) {
+        inline segmentH_t& operator()(
+                imageI_t x,
+                imageI_t y) {
             return segmentMap(x, y);
         }
 
-        inline segmentH_t operator()(imageI_t x, imageI_t y) const {
+        inline segmentH_t operator()(
+                imageI_t x,
+                imageI_t y) const {
             return segmentMap(x, y);
+        }
+
+        inline array<float, 3>& medLab(
+                segmentH_t s) {
+            return medianLab[s];
+        }
+
+        inline const array<float, 3>& medLab(
+                segmentH_t s) const {
+            return medianLab[s];
         }
 
         void recomputeSegmentMap();
@@ -188,7 +193,8 @@ struct Plane {
 };
 
 struct StereoProblem {
-    CImg<uint16_t> left, right;
+    CImg<int16_t> left, right;
+    CImg<int16_t> leftLab, rightLab;
 
     int minDisp;
 
@@ -197,11 +203,10 @@ struct StereoProblem {
     CImg<float> disp;
 
     StereoProblem(
-            CImg<uint16_t> left, 
-            CImg<uint16_t> right, 
+            CImg<int16_t> left, 
+            CImg<int16_t> right, 
             int minDisp,
-            int maxDisp,
-            CImg<float> disp);
+            int maxDisp);
 
     inline bool isValidDisp(
             imageI_t x,
@@ -211,18 +216,6 @@ struct StereoProblem {
 };
 
 class PlanarDepth {
-    public:
-        struct PlanarDepthStats {
-            Plane median;
-
-            Plane average;
-
-            Plane stDev;
-            
-            // Median absolute deviation from median
-            Plane mad;
-        };
-
     private:
         const StereoProblem* stereo;
         
@@ -232,6 +225,7 @@ class PlanarDepth {
 
         vector<planeH_t> segmentPlaneMap;
 
+    private:
         bool tabulateSlantSamples(
                 const map<imageI_t, vector<tuple<imageI_t, float>>>& dSamples,
                 CImg<float>& dtSamples) const;
@@ -264,9 +258,11 @@ class PlanarDepth {
 
         void fitPlanesMedian();
 
-        float getPlaneCostL1(
+        void getPlaneCostL1(
                 segmentH_t segment,
-                const Plane& plane) const;
+                const Plane& plane,
+                float& cost,
+                int& samples) const;
 
         void getDisparity(
                 CImg<float>& disp) const;
@@ -274,6 +270,39 @@ class PlanarDepth {
         void renderInterpolated(
                 float t,
                 CImg<float>& result);
+
+        inline bool isInBounds(
+                segmentH_t segH,
+                const Plane& plane) const {
+            if (!plane.isValid()) {
+                return false;
+            }
+
+            int minX, minY, maxX, maxY;
+
+            int minDisp = stereo->minDisp;
+            int maxDisp = stereo->maxDisp;
+
+            (*segmentation)[segH].getBounds(minX, minY, maxX, maxY);
+
+            for (int i = 0; i < 4; i++) {
+                int x = ((i & 0x01) == 0) ? minX : maxX;
+                int y = ((i & 0x02) == 0) ? minY : maxY;
+
+                float disp = plane.dispAt(x, y);
+
+                int rx = x + disp;
+
+                if (disp > maxDisp ||
+                        disp < minDisp ||
+                        rx < 0 ||
+                        rx >= stereo->right.width()) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
 };
 
 class PlanarDepthSmoothingProblem {
@@ -298,33 +327,82 @@ class PlanarDepthSmoothingProblem {
 
         typedef LocalExpansion<segmentH_t, planeH_t, UnaryCost, BinaryCost> Solver;
 
-        void neighborhoodGenerator(
-                segmentH_t s,
-                vector<segmentH_t>& neighborhood);
-
-        void createModel();
-
-    public:
-        PlanarDepthSmoothingProblem(
-                PlanarDepth* _depth,
-                const Segmentation* _segmentation,
-                const Connectivity* _connectivity);
-
-        void solve();
+        typedef GMM<6> GMM6;
 
     private:
-        const size_t numSegmentsPerExpansion = 20;
+        const size_t numSegmentsPerExpansion = 50;
 
-        PlanarDepth* depth;
+        const StereoProblem* stereo;
 
         const Segmentation* segmentation;
 
         const Connectivity* connectivity;
 
+        PlanarDepth* depth;
+
+        // unique_ptr<GMM6> edgeModel;
+        
         unique_ptr<Solver> model;
 
-    public:
         float smoothnessCoeff;
 
+        float unaryInlierThresh;
+
+        float binaryC0InlierThresh;
+
+        vector<float> medianColorDiff;
+
+    private:
+        inline float pairwiseL1PlaneDist(
+                segmentH_t segA,
+                segmentH_t segB,
+                planeH_t planeA,
+                planeH_t planeB) {
+            int cX1, cY1;
+            int cX2, cY2;
+
+            (*segmentation)[segA].getCenter(cX1, cY1);
+            (*segmentation)[segB].getCenter(cX2, cY2);
+
+            // Crude approximation of the point between segments
+            // segI and nI.  This enables approximation of the
+            // depth discontinuity between segments.
+            float middleX = (cX1 + cX2) / 2.0f;
+            float middleY = (cY1 + cY2) / 2.0f;
+
+            const Plane& p1 = depth->getPlanes()[planeA];
+            const Plane& p2 = depth->getPlanes()[planeB];
+
+            float d1 = p1.dispAt(middleX, middleY);
+            float d2 = p2.dispAt(middleX, middleY);
+
+            return fabs(d1 - d2);
+        }
+
+        void neighborhoodGenerator(
+                segmentH_t s,
+                vector<segmentH_t>& neighborhood);
+
+        void computeUnaryCostStats();
+
+        void computePairwiseCostStats();
+
+        void createModel();
+
+    public:
+        inline void setSmoothness(
+                float s) {
+            smoothnessCoeff = s;
+        }
+
+        PlanarDepthSmoothingProblem(
+                PlanarDepth* _depth,
+                const StereoProblem* _stereo,
+                const Segmentation* _segmentation,
+                const Connectivity* _connectivity);
+
+        void computeInlierStats();
+
+        void solve();
 };
 

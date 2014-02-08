@@ -71,9 +71,13 @@ class LocalExpansion {
          */
         function<void(node_t, vector<node_t>&)> neighborGenerator;
 
+        /**
+         * CandidateLabelFunc = function<label_t(node_t)>
+         */
+        template<class CandidateLabelFunc>
         void createExpandModel(
                 const set<node_t>& nodes,
-                label_t label) {
+                const CandidateLabelFunc& labelFunc) {
             Space space(maxNodesPerExpansion, 2);
 
             model = GModel(space);
@@ -86,8 +90,10 @@ class LocalExpansion {
             for (const node_t& node : nodes) {
                 nodeMap[node] = nodeIndex;
 
+                label_t newLabel = labelFunc(node);
+
                 float costSame = unaryCost(node, (*labeling)[node]);
-                float costDiff = unaryCost(node, label);
+                float costDiff = unaryCost(node, newLabel);
 
                 neighbors.clear();
 
@@ -97,6 +103,8 @@ class LocalExpansion {
                     if (neighbor == node) {
                         continue;
                     }
+
+                    label_t newNLabel = labelFunc(neighbor);
 
                     // If this neighbor is in the sub-graph to be modified
                     if (nodes.count(neighbor) > 0) {
@@ -114,13 +122,13 @@ class LocalExpansion {
                                     oldLabel, oldNLabel);
 
                             func(0, 1) = binaryCost(node, neighbor,
-                                    oldLabel, label);
+                                    oldLabel, newNLabel);
 
                             func(1, 0) = binaryCost(node, neighbor,
-                                    label, oldNLabel);
+                                    newLabel, oldNLabel);
 
                             func(1, 1) = binaryCost(node, neighbor,
-                                    label, label);
+                                    newLabel, newNLabel);
 
                             GModel::FunctionIdentifier fid = model.addFunction(func);
 
@@ -135,11 +143,22 @@ class LocalExpansion {
                         // for the added cost resulting from the pairwise
                         // potential by adding it to the current node's
                         // unary term.
-                        costSame += binaryCost(node, neighbor,
+
+                        float sameLabelSameNeighborCost = binaryCost(node, neighbor,
                                 (*labeling)[node], (*labeling)[neighbor]);
 
-                        costDiff += binaryCost(node, neighbor,
-                                label, (*labeling)[neighbor]);
+                        float sameLabelDiffNeighborCost = binaryCost(node, neighbor,
+                                (*labeling)[node], newNLabel);
+
+                        costSame += sameLabelSameNeighborCost;// min(sameLabelSameNeighborCost, sameLabelDiffNeighborCost);
+
+                        float diffLabelSameNeighborCost = binaryCost(node, neighbor,
+                                newLabel, (*labeling)[neighbor]);
+
+                        float diffLabelDiffNeighborCost = binaryCost(node, neighbor,
+                                newLabel, newNLabel);
+
+                        costDiff += diffLabelSameNeighborCost; // min(diffLabelSameNeighborCost, diffLabelDiffNeighborCost);
                     }
                 }
 
@@ -174,10 +193,11 @@ class LocalExpansion {
                     neighborGenerator(_neighborGenerator) {
         }
 
-        void tryExpand(
+        template<class CandidateLabelFunc>
+        int tryExpand(
                 const set<node_t>& nodes,
-                label_t label) {
-            createExpandModel(nodes, label);
+                CandidateLabelFunc& candidateGenerator) {
+            createExpandModel(nodes, candidateGenerator);
 
             qpbo = unique_ptr<QPBO>(new QPBO(model));
             qpbo->infer();
@@ -195,7 +215,7 @@ class LocalExpansion {
 
             for (const node_t& node : nodes) {
                 if (optimalVariables[nodeIndex] && labels[nodeIndex] == 1) {
-                    (*labeling)[node] = label;
+                    (*labeling)[node] = candidateGenerator(node);
 
                     numChanged++;
                 }
@@ -203,7 +223,23 @@ class LocalExpansion {
                 nodeIndex++;
             }
 
-            printf("Num Changed = %d\n", numChanged);
+            return numChanged;
+        }
+
+        int tryExpand(
+                const set<node_t>& nodes,
+                label_t label) {
+            struct LabelFunc {
+                label_t label;
+
+                label_t operator()(node_t node) const {
+                    return this->label;
+                }
+            };
+
+            LabelFunc func = {label};
+
+            return tryExpand(nodes, func);
         }
 };
 

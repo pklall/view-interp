@@ -93,47 +93,37 @@ void runInterpolation(
     int maxDisp = 256;
     int minDisp = -maxDisp;
 
-    Segmentation segmentation;
+    StereoProblem sp(fst, lst, minDisp, maxDisp);
+
+    // Use OpenCV's StereoSGBM algorithm
+
+    printf("Computing stereo...\n");
+    CVStereo stereo(sp.leftLab, sp.rightLab, true);
+
+    stereo.matchStereo(minDisp, maxDisp, 1, 1.0f);
+
+    stereo.getStereo(sp.disp);
+
+    printf("Done\n");
+
 
     printf("Computing segmentation\n");
 
+    Segmentation segmentation;
+
     segmentation.createSlicSuperpixels(
-            fst.get_RGBtoLab(),
-            fst.width() * fst.height() / (8 * 8),
+            sp.leftLab,
+            sp.disp.width() * sp.disp.height() / (8 * 8),
             10);
 
     printf("Done\n");
 
-    {
-        // Save a visualization of the segmentation
-        CImg<float> vis;
+    // Save a visualization of the segmentation
+    CImg<float> segVis;
 
-        segmentation.renderVisualization(vis);
+    segmentation.renderVisualization(segVis);
 
-        vis.save("results/segmentation.png");
-    }
-
-
-    // Use OpenCV's StereoSGBM algorithm
-
-    // printf("Computing stereo...\n");
-    // CImg<float> dispLeft;
-
-    // CVStereo stereo(fst, lst, true);
-
-    // stereo.matchStereo(minDisp, maxDisp, 1, 1.0f);
-
-    // stereo.getStereo(dispLeft);
-
-    // printf("Done\n");
-
-    // StereoProblem sp(fst, lst, minDisp, maxDisp, dispLeft);
-    
-    StereoProblem sp(fst, lst, minDisp, maxDisp, CImg<float>(fst.width(), fst.height()));
-
-    DPStereo stereo(&segmentation, 2, 24 * 3, 48 * 3);
-
-    stereo.computeStereoGreedy(sp);
+    segVis.save("results/segmentation.png");
 
     printf("Computing connectivity\n");
 
@@ -143,41 +133,37 @@ void runInterpolation(
 
     printf("Done\n");
 
-    /*{
-        // Visualize the segmentation
-        CImg<float> vis;
-        segmentation.renderVisualization(vis);
-        (fst, vis).display();
-    }*/
-
     PlanarDepth pd = PlanarDepth(&sp, &segmentation);
 
-    pd.fitPlanesMedian();
+    PlanarDepthSmoothingProblem pdRefine(
+            &pd, &sp, &segmentation, &connectivity);
 
-    PlanarDepthSmoothingProblem pdRefine(&pd,
-            &segmentation, &connectivity);
+    pdRefine.computeInlierStats();
 
     CImg<float> disp;
 
-    while (true) {
-        int smoothness;
+    for (int iter = 0; iter < 10; iter++) {
+        int s;
+        cin >> s;
 
-        // cout << endl << "Smoothness level?" << endl;
+        float smoothness = s * 0.1f;
 
-        // cin >> smoothness;
-        smoothness = 5;
+        pd.fitPlanesMedian();
 
-        printf("Recomputing with smoothness = %d\n", smoothness);
+        printf("Recomputing with smoothness = %f\n", smoothness);
 
-        pdRefine.smoothnessCoeff = (float) smoothness;
+        pdRefine.setSmoothness((float) smoothness);
 
         pdRefine.solve();
 
         pd.getDisparity(disp);
 
-        string fname = "results/smoothness_" + to_string(smoothness) + ".pfm";
+        string fname = "results/iteration_" + to_string(iter) + ".png";
+
+        // disp.save(fname.c_str());
+
         // disp.display();
-        (sp.disp, disp).display();
+        (segVis, sp.disp, disp).display();
     }
 
     CImg<float> reconstruction;
