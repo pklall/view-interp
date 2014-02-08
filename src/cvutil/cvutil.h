@@ -2,6 +2,9 @@
 
 #include "common.h"
 
+#include <opencv/cv.h>
+#include <opencv/ml.h>
+
 void convertCImgToMat(
         const CImg<float>& in,
         cv::Mat& out);
@@ -57,3 +60,42 @@ class CVStereo {
         void getStereo(CImg<float>& out);
 };
 
+template<int DIM>
+class GMM {
+    private:
+        cv::EM em;
+
+    public:
+        GMM(
+                int numGaussians) {
+            em = cv::EM(numGaussians);
+        }
+
+        /**
+         * Trains the mixture model with the provided samples.
+         */
+        inline void train(
+                function<float(int, int)> samples,
+                int numSamples) {
+            cv::Mat sampleMat(numSamples, DIM, CV_64F);
+
+            for (int sI = 0; sI < numSamples; sI++) {
+                for (int d =0; d < DIM; d++) {
+                    sampleMat.at<double>(sI, d) = (double) samples(sI, d);
+                }
+            }
+
+            em.train(sampleMat);
+        }
+
+        inline float logLikelihood(
+                function<float(int)> sample) {
+            cv::Mat v(1, DIM, CV_64F);
+
+            for (int d = 0; d < DIM; d++) {
+                v.at<double>(0, d) = (double) sample(d);
+            }
+
+            return em.predict(v)[0];
+        }
+};
