@@ -328,43 +328,42 @@ void PlanarDepth::getPlaneCostL1(
         const Plane& plane,
         float& cost,
         int& samples) const {
+    samples = 0;
+
     if (!isInBounds(segment, plane)) {
         cost = std::numeric_limits<float>::max();
 
         return;
     }
 
-    const Segment& superpixel = (*segmentation)[segment];
-
     cost = 0.0f;
 
-    samples = 0;
+    const Segment& superpixel = (*segmentation)[segment];
 
     for (const auto& p : superpixel.getPixels()) {
         int lx = get<0>(p);
         int ly = get<1>(p);
 
-        int rx = (int) (lx + plane.dispAt((float) lx, (float) ly) + 0.5f);
+        int rx = (int) (lx - plane.dispAt((float) lx, (float) ly) + 0.5f);
         int ry = ly;
 
-        cimg_forC(stereo->right, c) {
-            float lVal = stereo->left(lx, ly, 0, c);
-            float rVal = stereo->right(rx, ry, 0, c);
+        if (rx < 0 || rx > stereo->rightLab.width() - 1) {
+            cost = std::numeric_limits<float>::max();
+
+            return;
+        }
+
+        for (int c = 0; c < 3; c++) {
+            float lVal = stereo->leftLab(lx, ly, 0, c);
+            float rVal = stereo->rightLab(rx, ry, 0, c);
 
             cost += fabs(lVal - rVal);
         }
-
-        samples++;
-
-        // if (stereo->isValidDisp(x, y)) {
-            // float planeDisp = plane.dispAt((float) x, (float) y);
-            // float dispSample = stereo->disp(x, y);
-            // cost += fabs(planeDisp - dispSample);
-            // samples++;
-        // }
     }
 
-    cost /= samples;
+    samples = superpixel.getPixels().size() * 3;
+
+    cost /= (float) samples;
 }
 
 PlanarDepth::PlanarDepth(
@@ -480,8 +479,8 @@ PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
         const StereoProblem* _stereo,
         const Segmentation* _segmentation,
         const Connectivity* _connectivity) :
-    depth(_depth),
     stereo(_stereo),
+    depth(_depth),
     segmentation(_segmentation),
     connectivity(_connectivity) {
 
@@ -490,6 +489,10 @@ PlanarDepthSmoothingProblem::PlanarDepthSmoothingProblem(
     unaryInlierThresh = numeric_limits<float>::max();
 
     binaryC0InlierThresh = numeric_limits<float>::max();
+
+    minDisp = std::numeric_limits<float>::min();
+
+    maxDisp = std::numeric_limits<float>::max();
 }
 
 float PlanarDepthSmoothingProblem::UnaryCost::operator()(
@@ -497,17 +500,34 @@ float PlanarDepthSmoothingProblem::UnaryCost::operator()(
         planeH_t planeH) {
     const Plane& plane = self->depth->getPlanes()[planeH];
 
-    const Segment& seg = self->segmentation->getSegments()[segH];
-
-    int minDisp = self->stereo->minDisp;
-    int maxDisp = self->stereo->maxDisp;
-
     float cost;
+
     int samples;
+
+    int cx, cy;
+
+    self->segmentation->getSegments()[segH].getCenter(cx, cy);
+
+    float centerDisp = plane.dispAt(cx, cy);
+
+    if (centerDisp < self->minDisp || centerDisp > self->maxDisp) {
+        return std::numeric_limits<float>::max();
+    }
+
+    float slope = plane.cx * plane.cx + plane.cy * plane.cy;
+
+    if (slope < self->meanSlope - self->sdSlope * 1.96f ||
+            slope > self->meanSlope + self->sdSlope * 1.96f) {
+        return std::numeric_limits<float>::max();
+    }
 
     self->depth->getPlaneCostL1(segH, plane, cost, samples);
 
-    // cost = fmin(cost, self->unaryInlierThresh);
+    if (cost > self->unaryInlierThresh) {
+        cost = self->unaryInlierThresh;
+    }
+
+    cost /= self->unaryInlierThresh;
 
     return cost;
 }
@@ -517,30 +537,18 @@ float PlanarDepthSmoothingProblem::BinaryCost::operator()(
         segmentH_t segB,
         planeH_t planeA,
         planeH_t planeB) {
-
-    const array<float, 3>& labA = (*self->segmentation).medLab(segA);
-    const array<float, 3>& labB = (*self->segmentation).medLab(segB);
-
-    float colorDiff = 0.0f;
-
-    for (int c = 0; c < 3; c++) {
-        colorDiff += fabs(labA[c] - labB[c]);
-    }
-
-    if (colorDiff > medianColorDiff) {
-        return 0.0f;
-    } else {
-        colorDiff = 1.0f;
+    if (!self->colorConnected(segA, segB)) {
+        return 0;
     }
 
     float depthDiscontinuity = self->pairwiseL1PlaneDist(segA, segB, planeA, planeB);
 
-    depthDiscontinuity = fmin(depthDiscontinuity, self->binaryC0InlierThresh * 3.0f);
+    // depthDiscontinuity = fmin(depthDiscontinuity, self->binaryC0InlierThresh * 3.0f);
 
     // int conn = self->connectivity->getConnectivity(segA, segB);
 
     // FIXME this needs to be improved
-    return self->smoothnessCoeff * depthDiscontinuity * colorDiff;
+    return self->smoothnessCoeff * depthDiscontinuity;
 }
 
 void PlanarDepthSmoothingProblem::neighborhoodGenerator(
@@ -553,22 +561,32 @@ void PlanarDepthSmoothingProblem::neighborhoodGenerator(
 }
 
 void PlanarDepthSmoothingProblem::computeUnaryCostStats() {
-    /*
     int numSegs = segmentation->size();
 
     float costs[numSegs];
+    float centerDepth[numSegs];
+    float slope[numSegs];
 
     int numValidSegs = 0;
     
     for (segmentH_t segH = 0; segH < segmentation->size(); segH++) {
         float cost;
         int samples;
+
+        const Plane& plane = depth->getPlane(segH);
         
-        depth->getPlaneCostL1(segH, depth->getPlane(segH), cost, samples);
+        depth->getPlaneCostL1(segH, plane, cost, samples);
         
         // Only use valid planes and segments with at least 1 sample
         if (samples > 0 && cost < std::numeric_limits<float>::max()) {
             costs[numValidSegs] = cost;
+
+            int cx, cy;
+            (*segmentation)[segH].getCenter(cx, cy);
+
+            centerDepth[numValidSegs] = plane.dispAt(cx, cy);
+
+            slope[numValidSegs] = plane.cx * plane.cx + plane.cy * plane.cy;
 
             numValidSegs++;
         }
@@ -576,16 +594,29 @@ void PlanarDepthSmoothingProblem::computeUnaryCostStats() {
 
     int medI = numValidSegs / 2;
 
-    std::nth_element(&(costs[0]), &(costs[medI]), &(costs[numValidSegs]));
+    nth_element(&(costs[0]), &(costs[medI]), &(costs[numValidSegs]));
 
-    // Estimate standard deviation via median absolute deviation
-    // then get 95% conf. interval.
-    unaryInlierThresh = costs[medI] * 10.0f;
-    */
+    unaryInlierThresh = costs[medI] * 2.0f;
+
+    CImg<float> slopes = CImg<float>(slope,
+            numValidSegs, 1, 1, 1, true);
+
+    sdSlope = sqrt(slopes.variance_mean(1, meanSlope));
+
+    CImg<float> depths = CImg<float>(centerDepth,
+            numValidSegs, 1, 1, 1, true);
+
+    float meanDisp;
+    float sdDisp = sqrt(depths.variance_mean(1, meanDisp));
+
+    minDisp = meanDisp - sdDisp * 3.0f;
+    maxDisp = meanDisp + sdDisp * 3.0f;
 }
 
 void PlanarDepthSmoothingProblem::computePairwiseCostStats() {
     vector<tuple<float, segmentH_t, int>> neighbors(8);
+
+    medianColorDiff = vector<float>(segmentation->size());
 
     for (size_t segI = 0; segI < segmentation->size(); segI++) {
         if (!depth->getPlane(segI).isValid()) {
@@ -594,31 +625,22 @@ void PlanarDepthSmoothingProblem::computePairwiseCostStats() {
 
         neighbors.clear();
 
-        const array<float, 3>& lab = (*segmentation).medLab(segI);
-
         connectivity->forEachNeighbor(segI,
                 [&](segmentH_t nI, int conn) {
-                    const array<float, 3>& labNeighbor = (*segmentation).medLab(nI);
+                    float dist = pairwiseColorDist(segI, nI);
 
-                    float dist = 0.0f;
-
-                    for (int c = 0; c < 3; c++) {
-                        dist += fabs(labNeighbor[c] - lab[c]);
-                    }
-
-                    if (dist < closestNeighborDist) {
-                        closestNeighborDist = dist;
-
-                        closestNeighbor = nI;
-
-                        closestNeighborConn = conn;
-                    }
+                    neighbors.push_back(make_tuple(dist, nI, conn));
                 });
+
+        if (neighbors.size() > 0) {
+            int medI = neighbors.size() / 3;
+
+            std::nth_element(&(neighbors[0]), &(neighbors[medI]),
+                    &(neighbors[neighbors.size()]));
+
+            medianColorDiff[segI] = get<0>(neighbors[medI]);
+        }
     }
-
-    int medI = numValidSegs / 2;
-
-    std::nth_element(&(c0Dist[0]), &(c0Dist[medI]), &(c0Dist[numValidSegs]));
 }
 
 void PlanarDepthSmoothingProblem::createModel() {
@@ -693,3 +715,24 @@ void PlanarDepthSmoothingProblem::solve() {
     printf("Flips = %d\n", numFlips);
 }
 
+void PlanarDepthSmoothingProblem::visualizeUnaryCost(
+        CImg<float>& vis) {
+    vis = CImg<float>(stereo->disp.width(), stereo->disp.height());
+
+    UnaryCost costFunc = {this};
+    
+    for (segmentH_t segH = 0; segH < segmentation->size(); segH++) {
+        float cost = costFunc(segH, depth->getSegmentPlaneMap()[segH]);
+
+        if (cost >= std::numeric_limits<float>::max()) {
+            cost = -1.0f;
+        }
+
+        for (const auto& pixel : (*segmentation)[segH].getPixels()) {
+            int x = get<0>(pixel);
+            int y = get<1>(pixel);
+
+            vis(x, y) = cost;
+        }
+    }
+}

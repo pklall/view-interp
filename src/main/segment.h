@@ -291,12 +291,12 @@ class PlanarDepth {
 
                 float disp = plane.dispAt(x, y);
 
-                int rx = x + disp;
+                int rx = (int) (x - disp + 0.5f);
 
                 if (disp > maxDisp ||
                         disp < minDisp ||
-                        rx < 0 ||
-                        rx >= stereo->right.width()) {
+                        rx <= 0 ||
+                        rx >= stereo->right.width() - 1) {
                     return false;
                 }
             }
@@ -327,10 +327,10 @@ class PlanarDepthSmoothingProblem {
 
         typedef LocalExpansion<segmentH_t, planeH_t, UnaryCost, BinaryCost> Solver;
 
-        typedef GMM<6> GMM6;
+        // typedef GMM<6> GMM6;
 
     private:
-        const size_t numSegmentsPerExpansion = 50;
+        const size_t numSegmentsPerExpansion = 30;
 
         const StereoProblem* stereo;
 
@@ -349,6 +349,14 @@ class PlanarDepthSmoothingProblem {
         float unaryInlierThresh;
 
         float binaryC0InlierThresh;
+
+        float minDisp;
+
+        float maxDisp;
+
+        float meanSlope;
+
+        float sdSlope;
 
         vector<float> medianColorDiff;
 
@@ -379,6 +387,33 @@ class PlanarDepthSmoothingProblem {
             return fabs(d1 - d2);
         }
 
+        inline float pairwiseColorDist(
+                segmentH_t segA,
+                segmentH_t segB) {
+            const array<float, 3>& labA = (*segmentation).medLab(segA);
+            const array<float, 3>& labB = (*segmentation).medLab(segB);
+
+            float dist = 0.0f;
+
+            for (int c = 0; c < 3; c++) {
+                dist += fabs(labA[c] - labB[c]);
+            }
+
+            return dist;
+        }
+
+        inline bool colorConnected(
+                segmentH_t segA,
+                segmentH_t segB) {
+            float colorDiff = pairwiseColorDist(segA, segB);
+
+            if (colorDiff < max(medianColorDiff[segA], medianColorDiff[segB])) {
+                return true;
+            } else {
+                return false;
+            }
+        }
+
         void neighborhoodGenerator(
                 segmentH_t s,
                 vector<segmentH_t>& neighborhood);
@@ -404,5 +439,8 @@ class PlanarDepthSmoothingProblem {
         void computeInlierStats();
 
         void solve();
+
+        void visualizeUnaryCost(
+                CImg<float>& vis);
 };
 

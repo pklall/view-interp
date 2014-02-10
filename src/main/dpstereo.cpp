@@ -11,67 +11,6 @@ DPStereo::DPStereo(
     costLargeDisp(_costLargeDisp) {
 }
 
-void DPStereo::computeStereoGreedy(
-        StereoProblem& problem) {
-    const CImg<uint16_t>& left = problem.left;
-    const CImg<uint16_t>& right = problem.right;
-    CImg<float>& disp = problem.disp;
-
-    int minX = max(0, 0 - problem.minDisp);
-    int maxX = min(left.width() - 1, left.width() - 1 - problem.maxDisp);
-
-    int numX = maxX - minX + 1;
-
-    int minDisp = problem.minDisp;
-    int numD = problem.maxDisp - problem.minDisp + 1;
-
-    CImg<int16_t> costVol(numD, numX);
-
-    CImg<int16_t> dCostVol(numD, numX);
-
-    for (int y = 0; y < disp.height(); y++) {
-        printf("processing y = %d\n", y);
-        int optimalDI;
-        // TODO cache block and vectorize
-        for (int xI = 0; xI < numX; xI++) {
-            int x = xI + minX;
-
-            for (int dI = 0; dI < numD; dI++) {
-                int d = dI + minDisp;
-
-                costVol(dI, xI) = 0;
-
-                cimg_forC(left, c) {
-                    costVol(dI, xI) += abs(
-                            (int16_t) left(x, y, c) -
-                            (int16_t) right(x + d, y, c));
-                }
-
-                if (dI == 0) {
-                    dCostVol(dI, xI) = 0;
-                } else {
-                    dCostVol(dI, xI) = costVol(dI, xI) - costVol(dI - 1, xI);
-                }
-
-                if (dI > 1) {
-                    costVolZC(dI, xI) = (dCostVol(dI, xI) <= 0) ^ (dCostVol(dI - 1, xI) > 0);
-                } else {
-                    costVolZC(dI, xI) = 0;
-                }
-            }
-        }
-
-        (costVol, dCostVol, costVolZC).display();
-
-        segmentH_t curSegment = (*segmentation)(0, y);
-        for (int xI = 0; xI < numX; xI++) {
-            
-        }
-    }
-
-    disp.display();
-}
-
 void DPStereo::computeStereo(
         StereoProblem& problem) {
     const CImg<uint16_t>& left = problem.left;

@@ -135,12 +135,19 @@ void runInterpolation(
 
     PlanarDepth pd = PlanarDepth(&sp, &segmentation);
 
+    pd.fitPlanesMedian();
+
     PlanarDepthSmoothingProblem pdRefine(
             &pd, &sp, &segmentation, &connectivity);
 
     pdRefine.computeInlierStats();
 
     CImg<float> disp;
+
+    // Visualize unary cost:
+    pd.fitPlanesMedian();
+    pdRefine.visualizeUnaryCost(disp);
+    disp.display();
 
     for (int iter = 0; iter < 10; iter++) {
         int s;
@@ -154,7 +161,9 @@ void runInterpolation(
 
         pdRefine.setSmoothness((float) smoothness);
 
-        pdRefine.solve();
+        for (int i = 0; i < 3; i++) {
+            pdRefine.solve();
+        }
 
         pd.getDisparity(disp);
 
