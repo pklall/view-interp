@@ -137,9 +137,34 @@ void ChainReconstruction::visualizeFeatureMatches(
 void ChainReconstruction::solve() {
     cameras.resize(matches.size());
 
+    // Set initial camera values
+    int camI = 0;
+    for (CameraParam& cam : cameras) {
+        cam[0] = 0;
+        cam[1] = 0;
+        cam[2] = 0;
+        cam[3] = 1;
+        cam[4] = (double) rand() / RAND_MAX;
+        cam[5] = (double) rand() / RAND_MAX;
+        cam[6] = (double) rand() / RAND_MAX;
+        cam[7] = 1.0;
+        cam[8] = 0.0;
+        cam[9] = 0.0;
+
+        camI++;
+    }
+
     points.resize(numPoints);
 
+    for (Point3d& p : points) {
+        p[0] = (double) rand() / RAND_MAX;
+        p[1] = (double) rand() / RAND_MAX;
+        p[2] = (double) rand() / RAND_MAX;
+    }
+
     ceres::Problem problem;
+
+    ceres::LossFunction* lossFunc = new ceres::HuberLoss(1.0);
 
     for (int camI = 0; camI < matches.size(); camI++) {
         const vector<tuple<int, float, float>>& camMatches = matches[camI];
@@ -153,11 +178,20 @@ void ChainReconstruction::solve() {
                             (double) get<2>(match)));
             problem.AddResidualBlock(
                     costFunction,
-                    NULL, // Squared loss
+                    lossFunc, // Squared loss
                     cameras[camI].data(),
                     cameras[camI].data() + 4,
                     points[get<0>(match)].data());
         }
     }
+
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+    options.max_num_iterations = 1000;
+    options.minimizer_progress_to_stdout = true;
+
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, &problem, &summary);
+    cout << summary.FullReport() << endl;
 }
 
