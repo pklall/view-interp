@@ -20,12 +20,7 @@ void slicSuperpixels(
         CImg<uint16_t>& result);
 
 class CVFeatureMatcher {
-    public:
-        typedef size_t ID;
-
     private:
-        ID id;
-
         vector<cv::KeyPoint> keypoints;
 
         std::vector<cv::DMatch> cvMatchList;
@@ -46,7 +41,6 @@ class CVFeatureMatcher {
         }
 
         CVFeatureMatcher(
-                ID _id,
                 int _maxPoints);
 
         void detectFeatures(
@@ -54,7 +48,11 @@ class CVFeatureMatcher {
 
         void match(
                 const CVFeatureMatcher& other,
-                vector<tuple<ID, int, ID, int>>& matchList);
+                vector<tuple<int, int>>& matchList);
+
+        void match(
+                const CVFeatureMatcher& other,
+                vector<tuple<float, float, float, float>>& matchedPoints);
 };
 
 class CVStereo {
@@ -137,3 +135,4 @@ class GMM {
     private:
         cv::EM em;
 };
+

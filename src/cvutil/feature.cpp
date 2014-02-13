@@ -1,9 +1,7 @@
 #include "cvutil.h"
 
 CVFeatureMatcher::CVFeatureMatcher(
-        ID _id,
         int _maxPoints) :
-    id(_id),
     keypoints(vector<cv::KeyPoint>(_maxPoints)) {
     descriptors = cv::Mat();
 
@@ -40,7 +38,7 @@ void CVFeatureMatcher::detectFeatures(
 
 void CVFeatureMatcher::match(
         const CVFeatureMatcher& other,
-        vector<tuple<ID, int, ID, int>>& matchList) {
+        vector<tuple<int, int>>& matchList) {
     cvMatchList.clear();
 
     cv::BFMatcher matcher(normType, true);
@@ -49,7 +47,28 @@ void CVFeatureMatcher::match(
 
     for (const cv::DMatch& match : cvMatchList) {
         matchList.push_back(make_tuple(
-                    id, match.trainIdx,
-                    other.id, match.queryIdx));
+                    match.trainIdx, match.queryIdx));
     }
 }
+
+void CVFeatureMatcher::match(
+        const CVFeatureMatcher& other,
+        vector<tuple<float, float, float, float>>& matchedPoints) {
+    cvMatchList.clear();
+
+    cv::BFMatcher matcher(normType, true);
+
+    matcher.match(descriptors, other.descriptors, cvMatchList);
+
+    for (const cv::DMatch& match : cvMatchList) {
+        int aIdx = match.trainIdx;
+        int bIdx = match.queryIdx;
+
+        matchedPoints.push_back(make_tuple(
+                    keypoints[aIdx].pt.x,
+                    keypoints[aIdx].pt.y,
+                    other.keypoints[bIdx].pt.x,
+                    other.keypoints[bIdx].pt.y));
+    }
+}
+
