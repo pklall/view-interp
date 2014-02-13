@@ -21,6 +21,7 @@ class ChainReconstruction {
         void processNext(
                 const CImg<uint8_t>& gray);
 
-        void visualizeMatches() const;
+        void visualizeMatches(
+                function<const CImg<uint8_t>&(int)> imgLoader) const;
 };
 

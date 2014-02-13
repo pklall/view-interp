@@ -15,6 +15,8 @@
 
 #include "time.h"
 
+#include "reconstruct.h"
+
 using namespace std;
 
 using namespace cimg_library;
@@ -26,6 +28,9 @@ using ceres::Solver;
 using ceres::Solve;
 
 #define dbgOut std::cout
+
+void runMultiview(
+        const CImgList<uint8_t>& imgs);
 
 void naiveStereoReconstruct(
         const CImg<float>& original,
@@ -46,7 +51,7 @@ void runCVStereo(CImg<float>& fst, CImg<float>& lst);
 void runPMStereo(CImg<float>& fst, CImg<float>& lst);
 
 int main(int argc, char** argv) {
-    if (argc != 4) {
+    if (argc < 4) {
         printf("Usage: %s <operation> left.png right.png\n", argv[0]);
         exit(1);
     }
@@ -82,9 +87,45 @@ int main(int argc, char** argv) {
 
         printf("Running interpolation\n");
         runInterpolation(fst, lst);
+    } else if (op == "multiview") {
+        CImgList<uint8_t> imgs(argc - 2);
+
+        for (int i = 2; i < argc; i++) {
+            imgs(i - 2).load(argv[i]);
+        }
+
+        runMultiview(imgs);
     }
 
     return 0;
+}
+
+void runMultiview(
+        const CImgList<uint8_t>& imgs) {
+    imgs.display();
+
+    ChainReconstruction recon;
+    
+    for (int i = 0; i < imgs.size(); i++) {
+        printf("Processing image %d\n", i);
+
+        CImg<float> gray = imgs(i);
+
+        if (gray.spectrum() > 1) {
+            gray.RGBtoLab();
+            gray.channel(0);
+        }
+
+        CImg<uint8_t> gray8 = gray;
+
+        gray8.display();
+        
+        recon.processNext(gray8);
+    }
+
+    recon.visualizeMatches([imgs](int i) -> const CImg<uint8_t>& {
+            return imgs(i);
+            });
 }
 
 void runInterpolation(

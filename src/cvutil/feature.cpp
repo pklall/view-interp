@@ -47,7 +47,7 @@ void CVFeatureMatcher::match(
 
     for (const cv::DMatch& match : cvMatchList) {
         matchList.push_back(make_tuple(
-                    match.trainIdx, match.queryIdx));
+                    match.queryIdx, match.trainIdx));
     }
 }
 
@@ -60,9 +60,11 @@ void CVFeatureMatcher::match(
 
     matcher.match(descriptors, other.descriptors, cvMatchList);
 
+    std::sort(cvMatchList.begin(), cvMatchList.end());
+
     for (const cv::DMatch& match : cvMatchList) {
-        int aIdx = match.trainIdx;
-        int bIdx = match.queryIdx;
+        int aIdx = match.queryIdx;
+        int bIdx = match.trainIdx;
 
         matchedPoints.push_back(make_tuple(
                     keypoints[aIdx].pt.x,
