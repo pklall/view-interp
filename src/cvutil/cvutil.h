@@ -19,28 +19,45 @@ void slicSuperpixels(
         int nc,
         CImg<uint16_t>& result);
 
-class CVStereo {
+class CVFeatureMatcher {
+    public:
+        typedef size_t ID;
+
     private:
-        cv::Mat original[2];
+        ID id;
 
-        cv::Mat rectTransforms[2];
+        vector<cv::KeyPoint> keypoints;
 
-        cv::Mat rectified[2];
+        std::vector<cv::DMatch> cvMatchList;
 
-        cv::Mat rectifiedMasks[2];
+        cv::Mat descriptors;
 
-        int minDisparity;
+        unique_ptr<cv::ORB> orb;
 
-        int numDisparities;
+        int normType;
+        
+    public:
+        inline void getKeypoint(
+                int index,
+                float& x,
+                float& y) const {
+            x = keypoints[index].pt.x;
+            y = keypoints[index].pt.y;
+        }
 
-        cv::Mat stereoDisparity;
+        CVFeatureMatcher(
+                ID _id,
+                int _maxPoints);
 
-        void warp(std::vector<cv::Point2f> points[2]);
+        void detectFeatures(
+                const CImg<uint8_t>& grayImg);
 
-        void rectify();
+        void match(
+                const CVFeatureMatcher& other,
+                vector<tuple<ID, int, ID, int>>& matchList);
+};
 
-        void processPrerectified();
-
+class CVStereo {
     public:
         CVStereo(
                 const CImg<float>& left,
@@ -58,13 +75,31 @@ class CVStereo {
                 float smoothnessScale = 1.0f);
 
         void getStereo(CImg<float>& out);
+
+    private:
+        void warp(std::vector<cv::Point2f> points[2]);
+
+        void rectify();
+
+        void processPrerectified();
+
+        cv::Mat original[2];
+
+        cv::Mat rectTransforms[2];
+
+        cv::Mat rectified[2];
+
+        cv::Mat rectifiedMasks[2];
+
+        int minDisparity;
+
+        int numDisparities;
+
+        cv::Mat stereoDisparity;
 };
 
 template<int DIM>
 class GMM {
-    private:
-        cv::EM em;
-
     public:
         GMM(
                 int numGaussians) {
@@ -98,4 +133,7 @@ class GMM {
 
             return em.predict(v)[0];
         }
+
+    private:
+        cv::EM em;
 };

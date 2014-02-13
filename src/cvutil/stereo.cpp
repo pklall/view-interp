@@ -58,7 +58,7 @@ void CVStereo::rectify() {
 
     std::vector<cv::Point2f> points[2] {
         std::vector<cv::Point2f>(numPoints),
-            std::vector<cv::Point2f>(numPoints)
+        std::vector<cv::Point2f>(numPoints)
     };
 
     for (int pt = 0; pt < numPoints; pt++) {
