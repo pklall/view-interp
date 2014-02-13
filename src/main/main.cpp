@@ -102,8 +102,6 @@ int main(int argc, char** argv) {
 
 void runMultiview(
         const CImgList<uint8_t>& imgs) {
-    imgs.display();
-
     ChainReconstruction recon;
     
     for (int i = 0; i < imgs.size(); i++) {
@@ -118,12 +116,10 @@ void runMultiview(
 
         CImg<uint8_t> gray8 = gray;
 
-        gray8.display();
-        
         recon.processNext(gray8);
     }
 
-    recon.visualizeMatches([imgs](int i) -> const CImg<uint8_t>& {
+    recon.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& {
             return imgs(i);
             });
 }

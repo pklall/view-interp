@@ -38,14 +38,19 @@ void CVFeatureMatcher::detectFeatures(
 
 void CVFeatureMatcher::match(
         const CVFeatureMatcher& other,
-        vector<tuple<int, int>>& matchList) {
+        vector<tuple<int, int>>& matchList,
+        int maxMatches) {
     cvMatchList.clear();
 
     cv::BFMatcher matcher(normType, true);
 
     matcher.match(descriptors, other.descriptors, cvMatchList);
 
-    for (const cv::DMatch& match : cvMatchList) {
+    std::sort(cvMatchList.begin(), cvMatchList.end());
+
+    for (int i = 0; i < min((int) cvMatchList.size(), maxMatches); i++) {
+        const cv::DMatch& match = cvMatchList[i];
+
         matchList.push_back(make_tuple(
                     match.queryIdx, match.trainIdx));
     }

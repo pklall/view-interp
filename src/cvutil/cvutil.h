@@ -48,7 +48,8 @@ class CVFeatureMatcher {
 
         void match(
                 const CVFeatureMatcher& other,
-                vector<tuple<int, int>>& matchList);
+                vector<tuple<int, int>>& matchList,
+                int maxMatches);
 
         void match(
                 const CVFeatureMatcher& other,

@@ -1,32 +1,79 @@
 #include "reconstruct.h"
 
+ChainReconstruction::ChainReconstruction() :
+    numPoints(0) {
+    prevPtGlobalPt = unique_ptr<map<int, int>>(new map<int, int>());
+    curPtGlobalPt = unique_ptr<map<int, int>>(new map<int, int>());
+}
+
 void ChainReconstruction::processNext(
         const CImg<uint8_t>& gray) {
     if (!curMatcher) {
-        curMatcher = unique_ptr<CVFeatureMatcher>(new CVFeatureMatcher(1024));
+        curMatcher = unique_ptr<CVFeatureMatcher>(new CVFeatureMatcher(maxFeatureCount));
     }
 
     curMatcher->detectFeatures(gray);
 
+    curPtGlobalPt->clear();
+
+    vector<tuple<int, int>> matchBuf;
+
     if (prevMatcher) {
-        matches.push_back(vector<tuple<float, float, float, float>>());
+        prevMatcher->match(*curMatcher, matchBuf, maxMatchCount);
 
-        vector<tuple<float, float, float, float>>& match = matches[matches.size() - 1];
+        if (matches.size() == 0) {
+            matches.push_back(vector<tuple<int, float, float>>());
+        }
 
-        prevMatcher->match(*curMatcher, match);
+        matches.push_back(vector<tuple<int, float, float>>());
+
+        vector<tuple<int, float, float>>& prevMatches = matches[matches.size() - 2];
+        vector<tuple<int, float, float>>& curMatches = matches[matches.size() - 1];
+
+        for (const tuple<int, int>& match : matchBuf) {
+            int prevPtIndex = get<0>(match);
+            int curPtIndex = get<1>(match);
+
+            int globalPtIndex;
+            
+            bool isNewPoint = (prevPtGlobalPt->count(prevPtIndex) == 0);
+
+            if (isNewPoint) {
+                globalPtIndex = numPoints;
+
+                numPoints++;
+            } else {
+                globalPtIndex = (*prevPtGlobalPt)[prevPtIndex];
+            }
+
+            (*prevPtGlobalPt)[prevPtIndex] = globalPtIndex;
+            (*curPtGlobalPt)[curPtIndex] = globalPtIndex;
+
+            float x, y;
+
+            if (isNewPoint) {
+                prevMatcher->getKeypoint(prevPtIndex, x, y);
+
+                prevMatches.push_back(make_tuple(globalPtIndex, x, y));
+            }
+
+            curMatcher->getKeypoint(curPtIndex, x, y);
+            curMatches.push_back(make_tuple(globalPtIndex, x, y));
+        }
     }
 
     swap(curMatcher, prevMatcher);
+    swap(curPtGlobalPt, prevPtGlobalPt);
 }
 
-void ChainReconstruction::visualizeMatches(
+void ChainReconstruction::visualizeFeatureMatches(
         function<const CImg<uint8_t>&(int)> imgLoader) const {
     const CImg<uint8_t>* prevImg = NULL;
     const CImg<uint8_t>* curImg = NULL;
 
     prevImg = &imgLoader(0);
 
-    for (int i = 0; i < matches.size(); i++) {
+    for (int i = 0; i < matches.size() - 1; i++) {
         curImg = &imgLoader(i + 1);
         
         assert(prevImg != NULL);
@@ -45,38 +92,72 @@ void ChainReconstruction::visualizeMatches(
 
         CImg<uint8_t> col = CImg<uint8_t>::lines_LUT256();
 
-        int matchI = 0;
+        map<int, tuple<float, float>> prevMatchMap;
+
         for (const auto& match : matches[i]) {
-            // Only draw the best 64 matches
-            if (matchI > 64) {
-                break;
+            prevMatchMap[get<0>(match)] = make_tuple(get<1>(match), get<2>(match));
+        }
+
+        int matchI = 0;
+        for (const auto& match : matches[i + 1]) {
+            int pt = get<0>(match);
+
+            float curX = get<1>(match);
+            float curY = get<2>(match);
+
+            if (prevMatchMap.count(pt) > 0) {
+                uint8_t color[3];
+
+                for (int c = 0; c < 3; c++) {
+                    color[c] = col(matchI % 256, c);
+                }
+
+                const auto& prevXY = prevMatchMap[pt];
+
+                float prevX = get<0>(prevXY);
+                float prevY = get<1>(prevXY);
+
+                annotation.draw_line(
+                        (int) (prevX + 0.5f),
+                        (int) (prevY + 0.5f),
+                        (int) (curX + 0.5f) + prevImg->width(),
+                        (int) (curY + 0.5f),
+                        color);
+
+                matchI++;
             }
-
-            float prevX = get<0>(match);
-            float prevY = get<1>(match);
-
-            float curX = get<2>(match);
-            float curY = get<3>(match);
-
-            uint8_t color[3];
-
-            for (int c = 0; c < 3; c++) {
-                color[c] = col(matchI % 256, c);
-            }
-
-            annotation.draw_line(
-                    (int) (prevX + 0.5f),
-                    (int) (prevY + 0.5f),
-                    (int) (curX + 0.5f) + prevImg->width(),
-                    (int) (curY + 0.5f),
-                    color);
-
-            matchI++;
         }
 
         annotation.display();
         
         swap(prevImg, curImg);
+    }
+}
+
+void ChainReconstruction::solve() {
+    cameras.resize(matches.size());
+
+    points.resize(numPoints);
+
+    ceres::Problem problem;
+
+    for (int camI = 0; camI < matches.size(); camI++) {
+        const vector<tuple<int, float, float>>& camMatches = matches[camI];
+
+        for (const tuple<int, float, float>& match : camMatches) {
+            ceres::CostFunction* costFunction = 
+                new ceres::AutoDiffCostFunction<
+                ceres::examples::SnavelyReprojectionErrorWithQuaternions, 2, 4, 6, 3>(
+                        new ceres::examples::SnavelyReprojectionErrorWithQuaternions(
+                            (double) get<1>(match),
+                            (double) get<2>(match)));
+            problem.AddResidualBlock(
+                    costFunction,
+                    NULL, // Squared loss
+                    cameras[camI].data(),
+                    cameras[camI].data() + 4,
+                    points[get<0>(match)].data());
+        }
     }
 }
 
