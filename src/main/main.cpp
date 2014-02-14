@@ -120,9 +120,7 @@ void runMultiview(
         recon.processNext(gray8);
     }
 
-    recon.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& {
-            return imgs(i);
-            });
+    // recon.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
 
     recon.solve();
 

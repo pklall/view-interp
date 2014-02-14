@@ -6,14 +6,14 @@ CVFeatureMatcher::CVFeatureMatcher(
     descriptors = cv::Mat();
 
     // Parameters for ORB features
-    int nfeatures=500;
+    int nfeatures=_maxPoints;
     float scaleFactor=1.2f;
     int nlevels=8;
     int edgeThreshold=31;
     int firstLevel=0;
     int WTA_K=2;
     int scoreType=cv::ORB::HARRIS_SCORE;
-    int patchSize=129;
+    int patchSize=31;
 
     normType = cv::NORM_HAMMING;
 
