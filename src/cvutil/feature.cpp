@@ -13,7 +13,7 @@ CVFeatureMatcher::CVFeatureMatcher(
     int firstLevel=0;
     int WTA_K=2;
     int scoreType=cv::ORB::HARRIS_SCORE;
-    int patchSize=31;
+    int patchSize=129;
 
     normType = cv::NORM_HAMMING;
 
@@ -25,7 +25,7 @@ CVFeatureMatcher::CVFeatureMatcher(
                 edgeThreshold, firstLevel, WTA_K, scoreType, patchSize));
 }
 
-void CVFeatureMatcher::detectFeatures(
+int CVFeatureMatcher::detectFeatures(
         const CImg<uint8_t>& grayImg) {
     keypoints.clear();
 
@@ -34,9 +34,10 @@ void CVFeatureMatcher::detectFeatures(
 
     (*orb)(img, cv::Mat(), keypoints, descriptors);
 
+    return keypoints.size();
 }
 
-void CVFeatureMatcher::match(
+int CVFeatureMatcher::match(
         const CVFeatureMatcher& other,
         vector<tuple<int, int>>& matchList,
         int maxMatches) {
@@ -54,9 +55,11 @@ void CVFeatureMatcher::match(
         matchList.push_back(make_tuple(
                     match.queryIdx, match.trainIdx));
     }
+
+    return cvMatchList.size();
 }
 
-void CVFeatureMatcher::match(
+int CVFeatureMatcher::match(
         const CVFeatureMatcher& other,
         vector<tuple<float, float, float, float>>& matchedPoints) {
     cvMatchList.clear();
@@ -77,5 +80,7 @@ void CVFeatureMatcher::match(
                     other.keypoints[bIdx].pt.x,
                     other.keypoints[bIdx].pt.y));
     }
+
+    return cvMatchList.size();
 }
 

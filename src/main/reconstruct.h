@@ -29,8 +29,8 @@ class ChainReconstruction {
         typedef array<double, 10> CameraParam;
         typedef array<double, 3> Point3d;
 
-        float maxFeatureCount = 1024;
-        float maxMatchCount = 64;
+        float maxFeatureCount = 4096;
+        float maxMatchCount = 1024;
 
         unique_ptr<CVFeatureMatcher> prevMatcher;
         unique_ptr<CVFeatureMatcher> curMatcher;
@@ -61,5 +61,8 @@ class ChainReconstruction {
                 function<const CImg<uint8_t>&(int)> imgLoader) const;
 
         void solve();
+
+        void exportPython(
+                ostream& result);
 };
 

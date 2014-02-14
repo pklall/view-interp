@@ -12,7 +12,9 @@ void ChainReconstruction::processNext(
         curMatcher = unique_ptr<CVFeatureMatcher>(new CVFeatureMatcher(maxFeatureCount));
     }
 
-    curMatcher->detectFeatures(gray);
+    int numFeatures = curMatcher->detectFeatures(gray);
+
+    printf("numFeatures = %d\n", numFeatures);
 
     curPtGlobalPt->clear();
 
@@ -187,11 +189,35 @@ void ChainReconstruction::solve() {
 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
-    options.max_num_iterations = 1000;
+    options.max_num_iterations = 10000;
     options.minimizer_progress_to_stdout = true;
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
     cout << summary.FullReport() << endl;
+}
+
+void ChainReconstruction::exportPython(
+    ostream& result) {
+
+    result << "points = [\n";
+
+    for (const Point3d& p : points) {
+        result << "("
+            << p[0] << ", " << p[1] << ", " << p[2]
+            << "),\n";
+    }
+
+    result << "]\n";
+
+    result << "cameras = [\n";
+
+    for (const CameraParam& c : cameras) {
+        result << "("
+            << c[0] << ", " << c[1] << ", " << c[2]
+            << "),\n";
+    }
+
+    result << "]\n";
 }
 

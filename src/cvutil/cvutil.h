@@ -43,15 +43,15 @@ class CVFeatureMatcher {
         CVFeatureMatcher(
                 int _maxPoints);
 
-        void detectFeatures(
+        int detectFeatures(
                 const CImg<uint8_t>& grayImg);
 
-        void match(
+        int match(
                 const CVFeatureMatcher& other,
                 vector<tuple<int, int>>& matchList,
                 int maxMatches);
 
-        void match(
+        int match(
                 const CVFeatureMatcher& other,
                 vector<tuple<float, float, float, float>>& matchedPoints);
 };

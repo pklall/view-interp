@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <fstream>
 
 #include "ceres/ceres.h"
 #include "glog/logging.h"
@@ -119,13 +120,15 @@ void runMultiview(
         recon.processNext(gray8);
     }
 
-    /*
     recon.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& {
             return imgs(i);
             });
-    */
 
     recon.solve();
+
+    ofstream fout("results/reconstruction.py");
+
+    recon.exportPython(fout);
 }
 
 void runInterpolation(
