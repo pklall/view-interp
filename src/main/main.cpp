@@ -103,7 +103,7 @@ int main(int argc, char** argv) {
 
 void runMultiview(
         const CImgList<uint8_t>& imgs) {
-    ChainReconstruction recon;
+    ChainFeatureMatcher features;
     
     for (int i = 0; i < imgs.size(); i++) {
         printf("Processing image %d\n", i);
@@ -117,16 +117,11 @@ void runMultiview(
 
         CImg<uint8_t> gray8 = gray;
 
-        recon.processNext(gray8);
+        features.processNext(gray8);
     }
 
-    // recon.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
+    features.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
 
-    recon.solve();
-
-    ofstream fout("results/reconstruction.py");
-
-    recon.exportPython(fout);
 }
 
 void runInterpolation(

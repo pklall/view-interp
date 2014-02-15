@@ -1,12 +1,12 @@
 #include "reconstruct.h"
 
-ChainReconstruction::ChainReconstruction() :
+ChainFeatureMatcher::ChainFeatureMatcher() :
     numPoints(0) {
     prevPtGlobalPt = unique_ptr<map<int, int>>(new map<int, int>());
     curPtGlobalPt = unique_ptr<map<int, int>>(new map<int, int>());
 }
 
-void ChainReconstruction::processNext(
+void ChainFeatureMatcher::processNext(
         const CImg<uint8_t>& gray) {
     if (!curMatcher) {
         curMatcher = unique_ptr<CVFeatureMatcher>(new CVFeatureMatcher(maxFeatureCount));
@@ -68,7 +68,7 @@ void ChainReconstruction::processNext(
     swap(curPtGlobalPt, prevPtGlobalPt);
 }
 
-void ChainReconstruction::visualizeFeatureMatches(
+void ChainFeatureMatcher::visualizeFeatureMatches(
         function<const CImg<uint8_t>&(int)> imgLoader) const {
     const CImg<uint8_t>* prevImg = NULL;
     const CImg<uint8_t>* curImg = NULL;
@@ -136,19 +136,28 @@ void ChainReconstruction::visualizeFeatureMatches(
     }
 }
 
+ChainReconstruction::ChainReconstruction(
+        const ChainFeatureMatcher* _features) :
+        features(_features) {
+}
+
 void ChainReconstruction::solve() {
+    const auto& matches = features->getObservations();
+
+    int numPoints = features->getNumPoints();
+
     cameras.resize(matches.size());
 
     // Set initial camera values
     int camI = 0;
     for (CameraParam& cam : cameras) {
-        cam[0] = 0;
+        cam[0] = 1;
         cam[1] = 0;
         cam[2] = 0;
-        cam[3] = 1;
-        cam[4] = (double) rand() / RAND_MAX;
-        cam[5] = (double) rand() / RAND_MAX;
-        cam[6] = (double) rand() / RAND_MAX;
+        cam[3] = 0;
+        cam[4] = (((double) rand()) / RAND_MAX) + (camI * 3);
+        cam[5] = ((double) rand()) / RAND_MAX;
+        cam[6] = ((double) rand()) / RAND_MAX;
         cam[7] = 1.0;
         cam[8] = 0.0;
         cam[9] = 0.0;
@@ -161,12 +170,12 @@ void ChainReconstruction::solve() {
     for (Point3d& p : points) {
         p[0] = (double) rand() / RAND_MAX;
         p[1] = (double) rand() / RAND_MAX;
-        p[2] = (double) rand() / RAND_MAX;
+        p[2] = (double) rand() / RAND_MAX - 10;
     }
 
     ceres::Problem problem;
 
-    ceres::LossFunction* lossFunc = new ceres::HuberLoss(1.0);
+    ceres::LossFunction* lossFunc = NULL; // new ceres::HuberLoss(25.0);
 
     for (int camI = 0; camI < matches.size(); camI++) {
         const vector<tuple<int, float, float>>& camMatches = matches[camI];
@@ -198,7 +207,9 @@ void ChainReconstruction::solve() {
 }
 
 void ChainReconstruction::exportPython(
-    ostream& result) {
+    ostream& result) const {
+
+    // Points
 
     result << "points = [\n";
 
@@ -209,13 +220,63 @@ void ChainReconstruction::exportPython(
     }
 
     result << "]\n";
+    
+    // Camera Translation
 
-    result << "cameras = [\n";
+    result << "cameras_trans = [\n";
 
     for (const CameraParam& c : cameras) {
         result << "("
-            << c[0] << ", " << c[1] << ", " << c[2]
+            << c[4] << ", " << c[5] << ", " << c[6]
             << "),\n";
+    }
+
+    result << "]\n";
+
+    // Camera Rotation
+    
+    result << "cameras_rot = [\n";
+
+    double mat[9];
+
+    for (const CameraParam& c : cameras) {
+        ceres::QuaternionToRotation(c.data(), mat);
+
+        result << "(";
+
+        for (int i = 0; i < 9; i++) {
+            result << mat[i] << ", ";
+        }
+
+        result << "),\n";
+    }
+
+    result << "]\n";
+
+    // Camera Intrinsics
+
+    result << "cameras_intrin = [\n";
+
+    for (const CameraParam& c : cameras) {
+        result << "("
+            << c[7] << ", " << c[8] << ", " << c[9]
+            << "),\n";
+    }
+
+    result << "]\n";
+
+    // Raw camera parameters
+
+    result << "camera_raw = [\n";
+
+    for (const CameraParam& c : cameras) {
+        result << "(";
+
+        for (auto p : c) {
+            result << p << ", ";
+        }
+
+        result << "),\n";
     }
 
     result << "]\n";

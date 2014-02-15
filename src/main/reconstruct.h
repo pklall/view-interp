@@ -14,21 +14,8 @@
  * Reconstructs 3D geometry from a sequence (chain) of images by matching
  * features in each new image to the image before it.
  */
-class ChainReconstruction {
+class ChainFeatureMatcher {
     private:
-        /**
-         * A camera is parameterized by the following (in this order):
-         *  - Rotation quaternion (4 parameters)
-         *  - Translation (3 parameters)
-         *  - Focal length (1 parameter)
-         *  - Radial distortion (2 parameters)
-         *
-         * Note that this parameter ordering is compatible with
-         * ceres-solver's SnavelyReprojectionErrorWithQuaternions.
-         */
-        typedef array<double, 10> CameraParam;
-        typedef array<double, 3> Point3d;
-
         float maxFeatureCount = 4096;
         float maxMatchCount = 1024;
 
@@ -47,22 +34,51 @@ class ChainReconstruction {
         // point p appears at (x, y) in image i.
         vector<vector<tuple<int, float, float>>> matches;
 
-        vector<CameraParam> cameras;
-
-        vector<Point3d> points;
-
     public:
-        ChainReconstruction();
+        inline int getNumPoints() const {
+            return numPoints;
+        }
+
+        inline const vector<vector<tuple<int, float, float>>>& getObservations() const {
+            return matches;
+        }
+
+        ChainFeatureMatcher();
 
         void processNext(
                 const CImg<uint8_t>& gray);
 
         void visualizeFeatureMatches(
                 function<const CImg<uint8_t>&(int)> imgLoader) const;
+};
+
+class ChainReconstruction {
+    private:
+        /**
+         * A camera is parameterized by the following (in this order):
+         *  - Rotation quaternion (4 parameters)
+         *  - Translation (3 parameters)
+         *  - Focal length (1 parameter)
+         *  - Radial distortion (2 parameters)
+         *
+         * Note that this parameter ordering is compatible with
+         * ceres-solver's SnavelyReprojectionErrorWithQuaternions.
+         */
+        typedef array<double, 10> CameraParam;
+        typedef array<double, 3> Point3d;
+
+        const ChainFeatureMatcher* features;
+
+        vector<CameraParam> cameras;
+
+        vector<Point3d> points;
+
+    public:
+        ChainReconstruction(
+                const ChainFeatureMatcher* features);
 
         void solve();
 
         void exportPython(
-                ostream& result);
+                ostream& result) const;
 };
-
