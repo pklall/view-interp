@@ -56,25 +56,11 @@ void ChainFeatureMatcher::processNext(
             if (isNewPoint) {
                 prevMatcher->getKeypoint(prevPtIndex, x, y);
 
-                // Transform the keypoint to image space
-                x *= 2.0f / prevWidth;
-                y *= 2.0f / prevHeight;
-
-                x -= 1.0f;
-                y -= 1.0f;
-                
                 prevMatches.push_back(make_tuple(globalPtIndex, x, y));
             }
 
             curMatcher->getKeypoint(curPtIndex, x, y);
             
-            // Transform the keypoint to image space
-            x *= 2.0f / gray.width();
-            y *= 2.0f / gray.height();
-
-            x -= 1.0f;
-            y -= 1.0f;
-
             curMatches.push_back(make_tuple(globalPtIndex, x, y));
         }
     }
@@ -125,9 +111,6 @@ void ChainFeatureMatcher::visualizeFeatureMatches(
             float curX = get<1>(match);
             float curY = get<2>(match);
 
-            curX = (curX + 1.0f) / 2.0f * curImg->width();
-            curY = (curY + 1.0f) / 2.0f * curImg->height();
-
             if (prevMatchMap.count(pt) > 0) {
                 uint8_t color[3];
 
@@ -139,9 +122,6 @@ void ChainFeatureMatcher::visualizeFeatureMatches(
 
                 float prevX = get<0>(prevXY);
                 float prevY = get<1>(prevXY);
-
-                prevX = (prevX + 1.0f) / 2.0f * prevImg->width();
-                prevY = (prevY + 1.0f) / 2.0f * prevImg->height();
 
                 annotation.draw_line(
                         (int) (prevX + 0.5f),
