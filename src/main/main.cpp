@@ -127,6 +127,14 @@ void runMultiview(
     ChainRectification<3> cr(&features);
 
     cr.solve();
+
+    cr.print(cout);
+
+    CImg<uint8_t> warped;
+
+    cr.warp(0, imgs(0), warped);
+
+    warped.display();
 }
 
 void runInterpolation(

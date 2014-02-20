@@ -53,6 +53,9 @@ class ChainRectification {
             T pointUX = T(original[0]) - T(original[0]) * numCoeff / denom;
             T pointUY = T(original[1]) - T(original[1]) * numCoeff / denom;
 
+            // T pointUX = T(original[0]);
+            // T pointUY = T(original[1]);
+
             Vector3T o(pointUX, pointUY, T(1));
 
             Vector3T result = trans * o;
@@ -75,7 +78,7 @@ class ChainRectification {
                 typedef Eigen::Matrix<T, 2, 1> Vector2T;
 
                 array<Vector2T, NCameras> transformed;
-                T totalY;
+                T totalY = T(0.0f);
 
                 int numPoints = 0;
 
@@ -116,8 +119,10 @@ class ChainRectification {
         };
 
         /**
-         * Enforces unit determinant of a 3x3 matrix with a single residual.
+         * Enforces unit determinant of a sequence of 3x3 matrices, each with
+         * its own residual.
          */
+        template<int NumMatrices>
         struct UnitDetPrior {
             template<typename T>
             bool operator()(
@@ -125,33 +130,39 @@ class ChainRectification {
                     T* residual) const {
                 typedef Eigen::Map<const Eigen::Matrix<T, 3, 3>> Matrix3TConst;
 
-                Matrix3TConst t(transform);
+                for (int i = 0; i < NumMatrices; i++) {
+                    Matrix3TConst t(transform + 9 * i);
 
-                residual[0] = t.determinant() - T(1);
+                    residual[i] = t.determinant() - T(1);
+                }
 
                 return true;
             }
         };
 
         /**
-         * Creates a single residual based on the given parameter.
+         * Creates a residual based on the given parameter.
          */
+        template<int size>
         struct SmallPrior {
             template<typename T>
             bool operator()(
                     const T* const param,
                     T* residual) const {
-                residual[0] = param;
+                for (int i = 0; i < size; i++) {
+                    residual[i] = param[i];
+                }
 
                 return true;
             }
         };
 
         /**
-         * Enforces the width of the transformed unit-square to be unit using 2
-         * residuals.
+         * Enforces the transformed unit-square to be "sane" using 6 residuals
+         * per matrix.
          */
-        struct TransformUnitWidthPrior {
+        template<int NumMatrices>
+        struct TransformPrior {
             template<typename T>
             bool operator()(
                     const T* const transform,
@@ -159,22 +170,28 @@ class ChainRectification {
                 typedef Eigen::Map<const Eigen::Matrix<T, 3, 3>> Matrix3TConst;
                 typedef Eigen::Matrix<T, 3, 1> Vector3T;
 
-                Matrix3TConst t(transform);
+                for (int i = 0; i < NumMatrices; i++) {
+                    Matrix3TConst t(&(transform[9 * i]));
 
-                Vector3T topLeft(T(0), T(0), T(1));
-                Vector3T topRight(T(1), T(0), T(1));
+                    Vector3T topLeft(T(0), T(0), T(1));
+                    Vector3T topRight(T(1), T(0), T(1));
 
-                Vector3T botLeft(T(0), T(1), T(1));
-                Vector3T botRight(T(1), T(1), T(1));
+                    Vector3T botLeft(T(0), T(1), T(1));
+                    Vector3T botRight(T(1), T(1), T(1));
 
-                topLeft = t * topLeft;
-                topRight = t * topRight;
+                    topLeft = t * topLeft;
+                    topRight = t * topRight;
 
-                botLeft = t * botLeft;
-                botRight = t * botRight;
-                
-                residual[0] = (topRight[0] - topLeft[0]) - T(1.0f);
-                residual[1] = (botRight[0] - botLeft[0]) - T(1.0f);
+                    botLeft = t * botLeft;
+                    botRight = t * botRight;
+
+                    residual[6 * i + 0] = (topRight[0] - topLeft[0]) - T(1.0f);
+                    residual[6 * i + 1] = (botRight[0] - botLeft[0]) - T(1.0f);
+                    residual[6 * i + 2] = (topRight[1] - botRight[1]) - T(1.0f);
+                    residual[6 * i + 3] = (topLeft[1] - botLeft[1]) - T(1.0f);
+
+                    residual[6 * i + 4] = topLeft[0];
+                }
 
                 return true;
             }
@@ -195,8 +212,6 @@ class ChainRectification {
         void solve() {
             const auto& matches = features->getObservations();
 
-            int numPoints = features->getNumPoints();
-
             // Set initial transform values
             distortion.fill(0.0f);
 
@@ -208,9 +223,7 @@ class ChainRectification {
 
             ceres::Problem problem;
 
-            ceres::LossFunction* squareLoss = NULL;
-
-            ceres::LossFunction* robustLoss = new ceres::HuberLoss(3.0);
+            ceres::LossFunction* robustLoss = NULL;//new ceres::HuberLoss(3.0);
 
             // Allocate an error function for each point
             vector<TransformErrorFunction*> errorFuncs(features->getNumPoints());
@@ -248,8 +261,30 @@ class ChainRectification {
                         transforms.data());
             }
 
+            /*
+            problem.AddResidualBlock(
+                    new ceres::AutoDiffCostFunction<UnitDetPrior<NCameras>, NCameras,
+                        NCameras * 9>(
+                            new UnitDetPrior<NCameras>()),
+                    NULL,
+                    transforms.data());
+            */
+
+            problem.AddResidualBlock(
+                    new ceres::AutoDiffCostFunction<TransformPrior<NCameras>,
+                        NCameras * 6,
+                        NCameras * 9>(
+                            new TransformPrior<NCameras>()),
+                    NULL,
+                    transforms.data());
+
+            problem.AddResidualBlock(
+                    new ceres::AutoDiffCostFunction<SmallPrior<6>, 6, 6>(
+                        new SmallPrior<6>()),
+                    NULL,
+                    distortion.data());
+
             ceres::Solver::Options options;
-            // options.linear_solver_type = ceres::LE
             options.max_num_iterations = 10000;
             options.minimizer_progress_to_stdout = true;
 
@@ -258,4 +293,59 @@ class ChainRectification {
             cout << summary.FullReport() << endl;
         }
 
+        void print(
+                ostream& result) const {
+            result << "Distortion:" << endl;
+            
+            for (const double& d : distortion) {
+                result << "\t" << d << endl;
+            }
+
+            result << endl;
+
+            result << "Matrices:" << endl;
+
+            for (int i = 0; i < NCameras; i++) {
+                typedef Eigen::Map<const Eigen::Matrix3d> Matrix3DMap;
+
+                Matrix3DMap t(&(transforms[i * 9]));
+
+                for (int y = 0; y < 3; y++) {
+                    for (int x = 0; x < 3; x++) {
+                        result << t(x, y) << " ";
+                    }
+
+                    result << endl;
+                }
+
+                result << endl;
+            }
+        }
+
+        template<class T>
+        void warp(
+                int camera,
+                const CImg<T>& original,
+                CImg<T>& warped) {
+            CImg<double> warp(original.width(), original.height(), 2);
+
+            Eigen::Vector2d pre;
+            Eigen::Vector2d post;
+
+            cimg_forXY(warp, x, y) {
+                pre[0] = (((double) x) / warp.width()) * 2.0f - 1.0f;
+                pre[1] = (((double) y) / warp.height()) * 2.0f - 1.0f;
+
+                transformPoint(
+                        distortion.data(),
+                        &(transforms[camera * 9]),
+                        pre.data(),
+                        post.data());
+
+                warp(x, y, 0) = (post[0] + 1.0f) / 2.0f * warp.width();
+                warp(x, y, 1) = (post[1] + 1.0f) / 2.0f * warp.height();
+            }
+
+            warped = original.get_warp(warp, false, 2, 0);
+        }
 };
