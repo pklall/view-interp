@@ -107,7 +107,7 @@ void runMultiview(
         const CImgList<uint8_t>& imgs) {
     ChainFeatureMatcher features;
     
-    for (int i = 0; i < min((int) imgs.size(), 3); i++) {
+    for (int i = 0; i < min((int) imgs.size(), 2); i++) {
         printf("Processing image %d\n", i);
 
         CImg<float> gray = imgs(i);
@@ -124,7 +124,7 @@ void runMultiview(
 
     features.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
 
-    ChainRectification<3> cr(&features);
+    ChainRectification<2> cr(&features);
 
     cr.solve();
 

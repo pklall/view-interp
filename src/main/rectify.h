@@ -53,9 +53,6 @@ class ChainRectification {
             T pointUX = T(original[0]) - T(original[0]) * numCoeff / denom;
             T pointUY = T(original[1]) - T(original[1]) * numCoeff / denom;
 
-            // T pointUX = T(original[0]);
-            // T pointUY = T(original[1]);
-
             Vector3T o(pointUX, pointUY, T(1));
 
             Vector3T result = trans * o;
@@ -191,6 +188,7 @@ class ChainRectification {
                     residual[6 * i + 3] = (topLeft[1] - botLeft[1]) - T(1.0f);
 
                     residual[6 * i + 4] = topLeft[0];
+                    residual[6 * i + 5] = topLeft[1];
                 }
 
                 return true;
