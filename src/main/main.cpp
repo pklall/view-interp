@@ -18,6 +18,8 @@
 
 #include "reconstruct.h"
 
+#include "rectify.h"
+
 using namespace std;
 
 using namespace cimg_library;
@@ -105,7 +107,7 @@ void runMultiview(
         const CImgList<uint8_t>& imgs) {
     ChainFeatureMatcher features;
     
-    for (int i = 0; i < imgs.size(); i++) {
+    for (int i = 0; i < min((int) imgs.size(), 3); i++) {
         printf("Processing image %d\n", i);
 
         CImg<float> gray = imgs(i);
@@ -122,6 +124,9 @@ void runMultiview(
 
     features.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
 
+    ChainRectification<3> cr(&features);
+
+    cr.solve();
 }
 
 void runInterpolation(

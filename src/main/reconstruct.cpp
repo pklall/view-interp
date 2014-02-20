@@ -160,8 +160,6 @@ void ChainFeatureMatcher::visualizeFeatureMatches(
     }
 }
 
-
-
 ChainReconstruction::ChainReconstruction(
         const ChainFeatureMatcher* _features) :
         features(_features) {
