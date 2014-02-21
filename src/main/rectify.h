@@ -12,10 +12,13 @@
 #include "reconstruct.h"
 
 /**
- * Stereo rectification based on
- * "Quasi-Euclidean Uncalibrated Epipolar Rectification" by Fusiello and Isara (2008).
+ * Stereo rectification based on "Quasi-Euclidean Uncalibrated Epipolar
+ * Rectification" by Fusiello and Isara (2008).
  */
 class Rectification {
+    public:
+        typedef Eigen::Matrix<double, 6, 1> TransformParams;
+
     private:
         struct TransformErrorFunction {
             Eigen::Vector2f left, right;
@@ -94,94 +97,21 @@ class Rectification {
             }
         };
 
-        struct Prior {
-            template<typename T>
-            bool operator()(
-                    const T* const transform,
-                    T* residual) const {
-                residual[0] = T(0);
-                return true;
-            }
-        };
-
-        const ChainFeatureMatcher* features;
-
-        array<double, 6> transformParams;
-
-        Eigen::Vector2i imageSize;
-
     public:
         Rectification(
                 const ChainFeatureMatcher* _features,
-                Eigen::Vector2i _imageSize) :
-                features(_features), 
-                imageSize(_imageSize) {
-        }
-
-        void solve() {
-            const auto& matches = features->getObservations();
-
-            // Set initial transform values
-            transformParams.fill(0.0f);
-
-            ceres::Problem problem;
-
-            // FIXME
-            ceres::LossFunction* robustLoss = NULL;//new ceres::HuberLoss(3.0);
-
-            // Allocate an error function for each matched point
-            vector<TransformErrorFunction*> errorFuncs(matches[0].size());
-
-            for (TransformErrorFunction*& func : errorFuncs) {
-                func = new TransformErrorFunction();
-                func->width = imageSize[0];
-                func->height = imageSize[1];
-            }
-
-            for (const auto& match : matches[0]) {
-                errorFuncs[get<0>(match)]->left = get<1>(match);
-            }
-
-            for (const auto& match : matches[1]) {
-                int ptIndex = get<0>(match);
-
-                if (ptIndex >= errorFuncs.size()) {
-                    continue;
-                } else {
-                    errorFuncs[ptIndex]->right = get<1>(match);
-
-                    typedef ceres::AutoDiffCostFunction<
-                        TransformErrorFunction, 1, 6>
-                        AutoDiffErrorFunc;
-
-                    ceres::CostFunction* costFunction =
-                        new AutoDiffErrorFunc(errorFuncs[ptIndex]);
-
-                    problem.AddResidualBlock(
-                            costFunction,
-                            robustLoss,
-                            transformParams.data());
-                }
-            }
-
-            ceres::Solver::Options options;
-            options.max_num_iterations = 10000;
-            options.minimizer_progress_to_stdout = true;
-
-            ceres::Solver::Summary summary;
-            ceres::Solve(options, &problem, &summary);
-            cout << summary.FullReport() << endl;
-        }
+                Eigen::Vector2i _imageSize);
 
         void print(
-                ostream& result) const {
-            // FIXME
-        }
+                ostream& result) const;
+
+        void solve(
+                int numRestarts);
 
         template<class T>
         void warp(
                 const CImg<T>& original,
-                CImg<T>& warped) {
+                CImg<T>& warped) const {
             CImg<double> warp(original.width(), original.height(), 2);
 
             Eigen::Vector2d pre;
@@ -206,4 +136,24 @@ class Rectification {
             warped = original.get_warp(warp, false, 2, 0);
             */
         }
+
+    private:
+        void paramsToMat(
+                const TransformParams& params,
+                Eigen::Matrix3f& ml,
+                Eigen::Matrix3f& mr) const;
+
+        unique_ptr<ceres::Problem> createProblem(
+                function<void(int, Eigen::Vector2f&, Eigen::Vector2f&)> pairGen,
+                int numPairs,
+                float robustThresh,
+                TransformParams& params) const;
+
+        const ChainFeatureMatcher* features;
+
+        Eigen::Vector2i imageSize;
+
+        double residual;
+
+        TransformParams transform;
 };

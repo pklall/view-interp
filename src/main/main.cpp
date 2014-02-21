@@ -114,7 +114,7 @@ void runMultiview(
 
     Rectification cr(&features, Eigen::Vector2i(imgs(0).width(), imgs(0).height()));
 
-    cr.solve();
+    cr.solve(50);
 
     cr.print(cout);
 
