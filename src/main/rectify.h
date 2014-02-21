@@ -53,15 +53,15 @@ class Rectification {
 
                 Matrix3T Rl;
                 Rl =
-                    Eigen::AngleAxis<T>(yl, Vector3T::UnitY()) *
-                    Eigen::AngleAxis<T>(zl, Vector3T::UnitZ()) *
-                    Eigen::AngleAxis<T>(T(0), Vector3T::UnitX());
+                    Eigen::AngleAxis<T>(T(0), Vector3T::UnitX()) *
+                    Eigen::AngleAxis<T>(zl,   Vector3T::UnitZ()) *
+                    Eigen::AngleAxis<T>(yl,   Vector3T::UnitY());
 
                 Matrix3T Rr;
                 Rr =
-                    Eigen::AngleAxis<T>(yr, Vector3T::UnitY()) *
+                    Eigen::AngleAxis<T>(xr, Vector3T::UnitX()) *
                     Eigen::AngleAxis<T>(zr, Vector3T::UnitZ()) *
-                    Eigen::AngleAxis<T>(xr, Vector3T::UnitX());
+                    Eigen::AngleAxis<T>(yr, Vector3T::UnitY());
 
                 Matrix3T hat;
                 hat <<
@@ -82,6 +82,22 @@ class Rectification {
                 Vector3T m2;
                 m2 << T(right[0]), T(right[1]), T(1);
 
+                Matrix3T star3;
+                star3 <<
+                    T(0), T(-1), T(0),
+                    T(1), T(0),  T(0),
+                    T(0), T(1),  T(0);
+
+                Vector3T ufm1 = star3 * F * m1;
+                Vector3T m2fu = m2.transpose() * F * star3;
+
+                T num = m2.transpose() * F * m1;
+                T denom = ufm1.transpose() * ufm1;
+                denom += m2fu.transpose() * m2fu;
+
+                residual[0] = sqrt(num * num / denom);
+
+                /*
                 T m2t_F_m1 = m2.transpose() * F * m1;
 
                 Vector3T F_m1 = F * m1;
@@ -92,6 +108,7 @@ class Rectification {
                         F_m1[1] * F_m1[1] +
                         Ft_m2[0] * Ft_m2[0] +
                         Ft_m2[1] * Ft_m2[1]);
+                */
 
                 return true;
             }
@@ -110,9 +127,16 @@ class Rectification {
 
         template<class T>
         void warp(
-                const CImg<T>& original,
-                CImg<T>& warped) const {
-            CImg<double> warp(original.width(), original.height(), 2);
+                const CImg<T>& left,
+                const CImg<T>& right,
+                CImg<T>& warpedLeft,
+                CImg<T>& warpedRight) const {
+            Eigen::Matrix3f ml, mr;
+
+            paramsToMat(transform, ml, mr);
+
+            CImg<double> warpLeft(left.width(), left.height(), 2);
+            CImg<double> warpRight(right.width(), right.height(), 2);
 
             Eigen::Vector2d pre;
             Eigen::Vector2d post;
@@ -146,7 +170,7 @@ class Rectification {
         unique_ptr<ceres::Problem> createProblem(
                 function<void(int, Eigen::Vector2f&, Eigen::Vector2f&)> pairGen,
                 int numPairs,
-                float robustThresh,
+                bool robustify,
                 TransformParams& params) const;
 
         const ChainFeatureMatcher* features;

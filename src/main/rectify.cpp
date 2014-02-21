@@ -13,14 +13,22 @@ void Rectification::print(
 
     paramsToMat(transform, ml, mr);
 
+    result << "Raw = [";
+
+    for (int i = 0; i < 6; i++) {
+        result << transform[i] << ", \t";
+    }
+
+    result << "]" << endl;
+
     result << "M_left = [" << endl;
 
     for (int y = 0; y < 3; y++) {
         for (int x = 0; x < 3; x++) {
-            result << ml(x, y) << "\t";
+            result << ml(y, x) << ", \t";
         }
 
-        result << endl;
+        result << ";" << endl;
     }
 
     result << "]" << endl;
@@ -29,10 +37,10 @@ void Rectification::print(
 
     for (int y = 0; y < 3; y++) {
         for (int x = 0; x < 3; x++) {
-            result << mr(x, y) << "\t";
+            result << mr(y, x) << ", \t";
         }
 
-        result << endl;
+        result << ";" << endl;
     }
 
     result << "]" << endl;
@@ -82,7 +90,7 @@ void Rectification::solve(
     TransformParams curTransform;
 
     unique_ptr<ceres::Problem> globalProblem =
-        createProblem(pairGenAll, matches.size(), 3.0f, curTransform);
+        createProblem(pairGenAll, matches.size(), true, curTransform);
 
     ceres::Solver::Options options;
     options.max_num_iterations = 1000;
@@ -117,7 +125,7 @@ void Rectification::solve(
                 };
 
         unique_ptr<ceres::Problem> localProblem =
-            createProblem(pairGen, matchesPerRestart, -1.0f, curTransform);
+            createProblem(pairGen, matchesPerRestart, false, curTransform);
 
         ceres::Solve(options, localProblem.get(), &summary);
 
@@ -125,7 +133,7 @@ void Rectification::solve(
 
         curResidual = summary.final_cost;
         
-        if (curResidual < residual) {
+        if (curResidual >= 0 && curResidual < residual) {
             residual = curResidual;
 
             transform = curTransform;
@@ -158,15 +166,15 @@ void Rectification::paramsToMat(
 
     Eigen::Matrix3f Rl;
     Rl =
-        Eigen::AngleAxisf(yl, Eigen::Vector3f::UnitY()) *
+        Eigen::AngleAxisf(0,  Eigen::Vector3f::UnitX()) *
         Eigen::AngleAxisf(zl, Eigen::Vector3f::UnitZ()) *
-        Eigen::AngleAxisf(0, Eigen::Vector3f::UnitX());
+        Eigen::AngleAxisf(yl, Eigen::Vector3f::UnitY());
 
     Eigen::Matrix3f Rr;
     Rr =
-        Eigen::AngleAxisf(yr, Eigen::Vector3f::UnitY()) *
+        Eigen::AngleAxisf(xr, Eigen::Vector3f::UnitX()) *
         Eigen::AngleAxisf(zr, Eigen::Vector3f::UnitZ()) *
-        Eigen::AngleAxisf(xr, Eigen::Vector3f::UnitX());
+        Eigen::AngleAxisf(yr, Eigen::Vector3f::UnitY());
 
     auto Kinverse = K.inverse();
 
@@ -177,14 +185,14 @@ void Rectification::paramsToMat(
 unique_ptr<ceres::Problem> Rectification::createProblem(
         function<void(int, Eigen::Vector2f&, Eigen::Vector2f&)> pairGen,
         int numPairs,
-        float robustThresh,
+        bool robustify,
         TransformParams& params) const {
     unique_ptr<ceres::Problem> problem(new ceres::Problem());
 
     ceres::LossFunction* robustLoss = NULL;
 
-    if (robustThresh > 0.0f) {
-        robustLoss = new ceres::HuberLoss(robustThresh);
+    if (robustify) {
+        robustLoss = new ceres::CauchyLoss(1.0);
     }
 
     for (int i = 0; i < numPairs; i++) {
