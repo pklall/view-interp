@@ -14,8 +14,6 @@ void ChainFeatureMatcher::processNext(
 
     int numFeatures = curMatcher->detectFeatures(gray);
 
-    printf("numFeatures = %d\n", numFeatures);
-
     curPtGlobalPt->clear();
 
     vector<tuple<int, int>> matchBuf;
@@ -24,13 +22,13 @@ void ChainFeatureMatcher::processNext(
         prevMatcher->match(*curMatcher, matchBuf, maxMatchCount);
 
         if (matches.size() == 0) {
-            matches.push_back(vector<tuple<int, float, float>>());
+            matches.push_back(vector<tuple<int, Eigen::Vector2f>>());
         }
 
-        matches.push_back(vector<tuple<int, float, float>>());
+        matches.push_back(vector<tuple<int, Eigen::Vector2f>>());
 
-        vector<tuple<int, float, float>>& prevMatches = matches[matches.size() - 2];
-        vector<tuple<int, float, float>>& curMatches = matches[matches.size() - 1];
+        vector<tuple<int, Eigen::Vector2f>>& prevMatches = matches[matches.size() - 2];
+        vector<tuple<int, Eigen::Vector2f>>& curMatches = matches[matches.size() - 1];
 
         for (const tuple<int, int>& match : matchBuf) {
             int prevPtIndex = get<0>(match);
@@ -51,25 +49,22 @@ void ChainFeatureMatcher::processNext(
             (*prevPtGlobalPt)[prevPtIndex] = globalPtIndex;
             (*curPtGlobalPt)[curPtIndex] = globalPtIndex;
 
-            float x, y;
+            Eigen::Vector2f point;
 
             if (isNewPoint) {
-                prevMatcher->getKeypoint(prevPtIndex, x, y);
+                prevMatcher->getKeypoint(prevPtIndex, point[0], point[1]);
 
-                prevMatches.push_back(make_tuple(globalPtIndex, x, y));
+                prevMatches.push_back(make_tuple(globalPtIndex, point));
             }
 
-            curMatcher->getKeypoint(curPtIndex, x, y);
+            curMatcher->getKeypoint(curPtIndex, point[0], point[1]);
             
-            curMatches.push_back(make_tuple(globalPtIndex, x, y));
+            curMatches.push_back(make_tuple(globalPtIndex, point));
         }
     }
 
     swap(curMatcher, prevMatcher);
     swap(curPtGlobalPt, prevPtGlobalPt);
-
-    prevWidth = gray.width();
-    prevHeight = gray.height();
 }
 
 void ChainFeatureMatcher::visualizeFeatureMatches(
@@ -98,18 +93,17 @@ void ChainFeatureMatcher::visualizeFeatureMatches(
 
         CImg<uint8_t> col = CImg<uint8_t>::lines_LUT256();
 
-        map<int, tuple<float, float>> prevMatchMap;
+        map<int, Eigen::Vector2f> prevMatchMap;
 
         for (const auto& match : matches[i]) {
-            prevMatchMap[get<0>(match)] = make_tuple(get<1>(match), get<2>(match));
+            prevMatchMap[get<0>(match)] = get<1>(match);
         }
 
         int matchI = 0;
         for (const auto& match : matches[i + 1]) {
             int pt = get<0>(match);
 
-            float curX = get<1>(match);
-            float curY = get<2>(match);
+            const auto& curXY = get<1>(match);
 
             if (prevMatchMap.count(pt) > 0) {
                 uint8_t color[3];
@@ -120,14 +114,11 @@ void ChainFeatureMatcher::visualizeFeatureMatches(
 
                 const auto& prevXY = prevMatchMap[pt];
 
-                float prevX = get<0>(prevXY);
-                float prevY = get<1>(prevXY);
-
                 annotation.draw_line(
-                        (int) (prevX + 0.5f),
-                        (int) (prevY + 0.5f),
-                        (int) (curX + 0.5f) + prevImg->width(),
-                        (int) (curY + 0.5f),
+                        (int) (prevXY[0] + 0.5f),
+                        (int) (prevXY[1] + 0.5f),
+                        (int) (curXY[0] + 0.5f) + prevImg->width(),
+                        (int) (curXY[1] + 0.5f),
                         color);
 
                 matchI++;
@@ -182,15 +173,15 @@ void ChainReconstruction::solve() {
     ceres::LossFunction* lossFunc = NULL; // new ceres::HuberLoss(25.0);
 
     for (int camI = 0; camI < matches.size(); camI++) {
-        const vector<tuple<int, float, float>>& camMatches = matches[camI];
+        const vector<tuple<int, Eigen::Vector2f>>& camMatches = matches[camI];
 
-        for (const tuple<int, float, float>& match : camMatches) {
+        for (const tuple<int, Eigen::Vector2f>& match : camMatches) {
             ceres::CostFunction* costFunction = 
                 new ceres::AutoDiffCostFunction<
                 ceres::examples::SnavelyReprojectionErrorWithQuaternions, 2, 4, 6, 3>(
                         new ceres::examples::SnavelyReprojectionErrorWithQuaternions(
-                            (double) get<1>(match),
-                            (double) get<2>(match)));
+                            (double) get<1>(match)[0],
+                            (double) get<1>(match)[1]));
             problem.AddResidualBlock(
                     costFunction,
                     lossFunc, // Squared loss

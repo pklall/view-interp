@@ -31,22 +31,19 @@ class ChainFeatureMatcher {
         unique_ptr<map<int, int>> prevPtGlobalPt;
         unique_ptr<map<int, int>> curPtGlobalPt;
 
-        int prevWidth;
-        int prevHeight;
-
         // The total number of points with at least 2 matches
         int numPoints;
 
         // matches[i] contains the set of matches (p, x, y) such that
         // point p appears at (x, y) in image i.
-        vector<vector<tuple<int, float, float>>> matches;
+        vector<vector<tuple<int, Eigen::Vector2f>>> matches;
 
     public:
         inline int getNumPoints() const {
             return numPoints;
         }
 
-        inline const vector<vector<tuple<int, float, float>>>& getObservations() const {
+        inline const vector<vector<tuple<int, Eigen::Vector2f>>>& getObservations() const {
             return matches;
         }
 

@@ -11,276 +11,158 @@
 
 #include "reconstruct.h"
 
-template<int NCameras>
-class ChainRectification {
+/**
+ * Stereo rectification based on
+ * "Quasi-Euclidean Uncalibrated Epipolar Rectification" by Fusiello and Isara (2008).
+ */
+class Rectification {
     private:
-        /**
-         * Transforms 2D-point `original` by first performing inverse radial
-         * distortion via the method of Mallon & Whelan (2004) with 6 parameters
-         * from `distortion` followed by multiplication by the 3x3 matrix
-         * `transform`.
-         */
-        template<typename T, typename T2>
-        static inline void transformPoint(
-                const T* const distortion,
-                const T* const transform,
-                const T2* const original,
-                T* transformed) {
-            typedef Eigen::Matrix<T, 3, 1> Vector3T;
-            typedef Eigen::Map<const Eigen::Matrix<T, 3, 3>> Matrix3TConst;
-
-            Matrix3TConst trans(transform);
-
-            // See Eq. 5 of Precise Radial Un-distortion of Images, Mallon &
-            // Whelan, 2004.
-            T rd2 =
-                T(original[0]) * T(original[0]) +
-                T(original[1]) * T(original[1]);
-            T rd4 = rd2 * rd2;
-            T rd6 = rd4 * rd2;
-            T rd8 = rd6 * rd2;
-
-            T numCoeff = 
-                T(distortion[0]) * rd2 +
-                T(distortion[1]) * rd4 +
-                T(distortion[2]) * rd6 +
-                T(distortion[3]) * rd8;
-
-            T denom = T(1) +
-                T(4) * T(distortion[4]) * rd2 +
-                T(6) * T(distortion[5]) * rd4;
-
-            T pointUX = T(original[0]) - T(original[0]) * numCoeff / denom;
-            T pointUY = T(original[1]) - T(original[1]) * numCoeff / denom;
-
-            Vector3T o(pointUX, pointUY, T(1));
-
-            Vector3T result = trans * o;
-
-            transformed[0] = result[0] / result[2];
-            transformed[1] = result[1] / result[2];
-        }
-
         struct TransformErrorFunction {
-            /**
-             * The set of observations of the form: (camera index, point)
-             */
-            array<tuple<bool, Eigen::Vector2f>, NCameras> points;
+            Eigen::Vector2f left, right;
+
+            int width, height;
 
             template <typename T>
             bool operator()(
-                    const T* const distortion,
-                    const T* const transforms,
-                    T* residuals) const {
+                    const T* const params,
+                    T* residual) const {
                 typedef Eigen::Matrix<T, 2, 1> Vector2T;
-
-                array<Vector2T, NCameras> transformed;
-                T totalY = T(0.0f);
-
-                int numPoints = 0;
-
-                for (int i = 0; i < NCameras; i++) {
-                    if (get<0>(points[i])) {
-                        const Eigen::Vector2f& observation = get<1>(points[i]);
-
-                        transformPoint(
-                                distortion,
-                                &(transforms[9 * i]),
-                                observation.data(),
-                                transformed[i].data());
-
-                        totalY += transformed[i][1];
-
-                        numPoints++;
-                    }
-                }
-
-                if (numPoints == 0) {
-                    for (int i = 0; i < NCameras; i++) {
-                        residuals[i] = T(0);
-                    }
-                }
-
-                totalY /= T(numPoints);
-                
-                for (int i = 0; i < NCameras; i++) {
-                    if (get<0>(points[i])) {
-                        residuals[i] = transformed[i][1] - totalY;
-                    } else {
-                        residuals[i] = T(0);
-                    }
-                }
-
-                return true;
-            }
-        };
-
-        /**
-         * Enforces unit determinant of a sequence of 3x3 matrices, each with
-         * its own residual.
-         */
-        template<int NumMatrices>
-        struct UnitDetPrior {
-            template<typename T>
-            bool operator()(
-                    const T* const transform,
-                    T* residual) const {
-                typedef Eigen::Map<const Eigen::Matrix<T, 3, 3>> Matrix3TConst;
-
-                for (int i = 0; i < NumMatrices; i++) {
-                    Matrix3TConst t(transform + 9 * i);
-
-                    residual[i] = t.determinant() - T(1);
-                }
-
-                return true;
-            }
-        };
-
-        /**
-         * Creates a residual based on the given parameter.
-         */
-        template<int size>
-        struct SmallPrior {
-            template<typename T>
-            bool operator()(
-                    const T* const param,
-                    T* residual) const {
-                for (int i = 0; i < size; i++) {
-                    residual[i] = param[i];
-                }
-
-                return true;
-            }
-        };
-
-        /**
-         * Enforces the transformed unit-square to be "sane" using 6 residuals
-         * per matrix.
-         */
-        template<int NumMatrices>
-        struct TransformPrior {
-            template<typename T>
-            bool operator()(
-                    const T* const transform,
-                    T* residual) const {
-                typedef Eigen::Map<const Eigen::Matrix<T, 3, 3>> Matrix3TConst;
                 typedef Eigen::Matrix<T, 3, 1> Vector3T;
+                typedef Eigen::Matrix<T, 3, 3> Matrix3T;
 
-                for (int i = 0; i < NumMatrices; i++) {
-                    Matrix3TConst t(&(transform[9 * i]));
+                T yl = params[0];
+                T zl = params[1];
 
-                    Vector3T topLeft(T(0), T(0), T(1));
-                    Vector3T topRight(T(1), T(0), T(1));
+                T xr = params[2];
+                T yr = params[3];
+                T zr = params[4];
 
-                    Vector3T botLeft(T(0), T(1), T(1));
-                    Vector3T botRight(T(1), T(1), T(1));
+                // 3^a(6)*(w + h)
+                T f = exp(T(log(3.0)) * params[5]) * T(width + height);
 
-                    topLeft = t * topLeft;
-                    topRight = t * topRight;
+                Matrix3T Kol;
+                Kol <<
+                    f,    T(0), T(width / 2.0f),
+                    T(0), f,    T(height/ 2.0f),
+                    T(0), T(0), T(1);
 
-                    botLeft = t * botLeft;
-                    botRight = t * botRight;
+                Matrix3T Kor = Kol;
 
-                    residual[6 * i + 0] = (topRight[0] - topLeft[0]) - T(1.0f);
-                    residual[6 * i + 1] = (botRight[0] - botLeft[0]) - T(1.0f);
-                    residual[6 * i + 2] = (topRight[1] - botRight[1]) - T(1.0f);
-                    residual[6 * i + 3] = (topLeft[1] - botLeft[1]) - T(1.0f);
+                Matrix3T Rl;
+                Rl =
+                    Eigen::AngleAxis<T>(yl, Vector3T::UnitY()) *
+                    Eigen::AngleAxis<T>(zl, Vector3T::UnitZ()) *
+                    Eigen::AngleAxis<T>(T(0), Vector3T::UnitX());
 
-                    residual[6 * i + 4] = topLeft[0];
-                    residual[6 * i + 5] = topLeft[1];
-                }
+                Matrix3T Rr;
+                Rr =
+                    Eigen::AngleAxis<T>(yr, Vector3T::UnitY()) *
+                    Eigen::AngleAxis<T>(zr, Vector3T::UnitZ()) *
+                    Eigen::AngleAxis<T>(xr, Vector3T::UnitX());
 
+                Matrix3T hat;
+                hat <<
+                    T(0), T(0), T(0),
+                    T(0), T(0), T(-1),
+                    T(0), T(1), T(0);
+
+                Matrix3T F =
+                    Kor.inverse().transpose() * Rr.transpose() *
+                    hat *
+                    Rl * Kol.inverse();
+
+                // Compute Sampson residual
+
+                Vector3T m1;
+                m1 << T(left[0]), T(left[1]), T(1);
+
+                Vector3T m2;
+                m2 << T(right[0]), T(right[1]), T(1);
+
+                T m2t_F_m1 = m2.transpose() * F * m1;
+
+                Vector3T F_m1 = F * m1;
+                Vector3T Ft_m2 = F.transpose() * m2;
+
+                residual[0]  = m2t_F_m1 * m2t_F_m1 / (
+                        F_m1[0] * F_m1[0] +
+                        F_m1[1] * F_m1[1] +
+                        Ft_m2[0] * Ft_m2[0] +
+                        Ft_m2[1] * Ft_m2[1]);
+
+                return true;
+            }
+        };
+
+        struct Prior {
+            template<typename T>
+            bool operator()(
+                    const T* const transform,
+                    T* residual) const {
+                residual[0] = T(0);
                 return true;
             }
         };
 
         const ChainFeatureMatcher* features;
 
-        array<double, 9> distortion;
-        array<double, NCameras * 9> transforms;
+        array<double, 6> transformParams;
+
+        Eigen::Vector2i imageSize;
 
     public:
-        ChainRectification(
-                const ChainFeatureMatcher* _features) :
-                features(_features) {
-            assert(features->getObservations().size() == NCameras);
+        Rectification(
+                const ChainFeatureMatcher* _features,
+                Eigen::Vector2i _imageSize) :
+                features(_features), 
+                imageSize(_imageSize) {
         }
 
         void solve() {
             const auto& matches = features->getObservations();
 
             // Set initial transform values
-            distortion.fill(0.0f);
-
-            for (int i = 0; i < NCameras; i++) {
-                typedef Eigen::Map<Eigen::Matrix3d> Matrix3DMap;
-                Matrix3DMap t(&(transforms[i * 9]));
-                t = Eigen::Matrix3d::Identity();
-            }
+            transformParams.fill(0.0f);
 
             ceres::Problem problem;
 
+            // FIXME
             ceres::LossFunction* robustLoss = NULL;//new ceres::HuberLoss(3.0);
 
-            // Allocate an error function for each point
-            vector<TransformErrorFunction*> errorFuncs(features->getNumPoints());
+            // Allocate an error function for each matched point
+            vector<TransformErrorFunction*> errorFuncs(matches[0].size());
 
             for (TransformErrorFunction*& func : errorFuncs) {
                 func = new TransformErrorFunction();
-
-                func->points.fill(make_tuple(false, Eigen::Vector2f::Zero()));
+                func->width = imageSize[0];
+                func->height = imageSize[1];
             }
 
-            for (int camI = 0; camI < matches.size(); camI++) {
-                const vector<tuple<int, float, float>>& camMatches = matches[camI];
+            for (const auto& match : matches[0]) {
+                errorFuncs[get<0>(match)]->left = get<1>(match);
+            }
 
-                for (const auto& match : camMatches) {
-                    int ptIndex = get<0>(match);
-                    float x = get<1>(match);
-                    float y = get<2>(match);
+            for (const auto& match : matches[1]) {
+                int ptIndex = get<0>(match);
 
-                    errorFuncs[ptIndex]->points[camI] = 
-                            make_tuple(true, Eigen::Vector2f(x, y));
+                if (ptIndex >= errorFuncs.size()) {
+                    continue;
+                } else {
+                    errorFuncs[ptIndex]->right = get<1>(match);
+
+                    typedef ceres::AutoDiffCostFunction<
+                        TransformErrorFunction, 1, 6>
+                        AutoDiffErrorFunc;
+
+                    ceres::CostFunction* costFunction =
+                        new AutoDiffErrorFunc(errorFuncs[ptIndex]);
+
+                    problem.AddResidualBlock(
+                            costFunction,
+                            robustLoss,
+                            transformParams.data());
                 }
             }
-
-            for (const auto& func : errorFuncs) {
-                typedef ceres::AutoDiffCostFunction<
-                    TransformErrorFunction, NCameras, 6, NCameras * 9>
-                    AutoDiffErrorFunc;
-
-                ceres::CostFunction* costFunction = new AutoDiffErrorFunc(func);
-
-                problem.AddResidualBlock(
-                        costFunction,
-                        robustLoss,
-                        distortion.data(),
-                        transforms.data());
-            }
-
-            /*
-            problem.AddResidualBlock(
-                    new ceres::AutoDiffCostFunction<UnitDetPrior<NCameras>, NCameras,
-                        NCameras * 9>(
-                            new UnitDetPrior<NCameras>()),
-                    NULL,
-                    transforms.data());
-            */
-
-            problem.AddResidualBlock(
-                    new ceres::AutoDiffCostFunction<TransformPrior<NCameras>,
-                        NCameras * 6,
-                        NCameras * 9>(
-                            new TransformPrior<NCameras>()),
-                    NULL,
-                    transforms.data());
-
-            problem.AddResidualBlock(
-                    new ceres::AutoDiffCostFunction<SmallPrior<6>, 6, 6>(
-                        new SmallPrior<6>()),
-                    NULL,
-                    distortion.data());
 
             ceres::Solver::Options options;
             options.max_num_iterations = 10000;
@@ -293,36 +175,11 @@ class ChainRectification {
 
         void print(
                 ostream& result) const {
-            result << "Distortion:" << endl;
-            
-            for (const double& d : distortion) {
-                result << "\t" << d << endl;
-            }
-
-            result << endl;
-
-            result << "Matrices:" << endl;
-
-            for (int i = 0; i < NCameras; i++) {
-                typedef Eigen::Map<const Eigen::Matrix3d> Matrix3DMap;
-
-                Matrix3DMap t(&(transforms[i * 9]));
-
-                for (int y = 0; y < 3; y++) {
-                    for (int x = 0; x < 3; x++) {
-                        result << t(x, y) << " ";
-                    }
-
-                    result << endl;
-                }
-
-                result << endl;
-            }
+            // FIXME
         }
 
         template<class T>
         void warp(
-                int camera,
                 const CImg<T>& original,
                 CImg<T>& warped) {
             CImg<double> warp(original.width(), original.height(), 2);
@@ -330,6 +187,8 @@ class ChainRectification {
             Eigen::Vector2d pre;
             Eigen::Vector2d post;
 
+            /*
+            // FIXME
             cimg_forXY(warp, x, y) {
                 pre[0] = (((double) x) / warp.width()) * 2.0f - 1.0f;
                 pre[1] = (((double) y) / warp.height()) * 2.0f - 1.0f;
@@ -345,5 +204,6 @@ class ChainRectification {
             }
 
             warped = original.get_warp(warp, false, 2, 0);
+            */
         }
 };
