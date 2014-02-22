@@ -168,7 +168,7 @@ unique_ptr<ceres::Problem> Rectification::createProblem(
     ceres::LossFunction* robustLoss = NULL;
 
     if (robustify) {
-        robustLoss = new ceres::CauchyLoss(1.0);
+        robustLoss = new ceres::CauchyLoss(0.01);
     }
 
     for (int i = 0; i < numPairs; i++) {

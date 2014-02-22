@@ -96,20 +96,6 @@ class Rectification {
                 denom += m2fu.transpose() * m2fu;
 
                 residual[0] = sqrt(num * num / denom);
-                // residual[0] = num * num / denom;
-
-                /*
-                T m2t_F_m1 = m2.transpose() * F * m1;
-
-                Vector3T F_m1 = F * m1;
-                Vector3T Ft_m2 = F.transpose() * m2;
-
-                residual[0]  = m2t_F_m1 * m2t_F_m1 / (
-                        F_m1[0] * F_m1[0] +
-                        F_m1[1] * F_m1[1] +
-                        Ft_m2[0] * Ft_m2[0] +
-                        Ft_m2[1] * Ft_m2[1]);
-                */
 
                 return true;
             }
