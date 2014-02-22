@@ -20,10 +20,10 @@ class Rectification {
         typedef Eigen::Matrix<double, 6, 1> TransformParams;
 
     private:
-        struct TransformErrorFunction {
-            Eigen::Vector2f left, right;
+        struct TransformCostFunction {
+            Rectification* self;
 
-            int width, height;
+            int matchIndex;
 
             template <typename T>
             bool operator()(
@@ -32,6 +32,12 @@ class Rectification {
                 typedef Eigen::Matrix<T, 2, 1> Vector2T;
                 typedef Eigen::Matrix<T, 3, 1> Vector3T;
                 typedef Eigen::Matrix<T, 3, 3> Matrix3T;
+
+                int width = self->imageSize[0];
+                int height = self->imageSize[1];
+
+                const Eigen::Vector2f& left = get<0>(self->matches[matchIndex]);
+                const Eigen::Vector2f& right = get<1>(self->matches[matchIndex]);
 
                 T yl = params[0];
                 T zl = params[1];
@@ -101,10 +107,13 @@ class Rectification {
             }
         };
 
+        typedef ceres::AutoDiffCostFunction<TransformCostFunction, 1, 6>
+            ADTransformCostFunc;
+
     public:
-        Rectification(
-                const ChainFeatureMatcher* _features,
-                Eigen::Vector2i _imageSize);
+        void init(
+                Eigen::Vector2i _imageSize,
+                const ChainFeatureMatcher* _features);
 
         void print(
                 ostream& result) const;
@@ -155,14 +164,19 @@ class Rectification {
                     cornersRight.row(0).maxCoeff(),
                     cornersRight.row(1).maxCoeff());
 
-            float minY = min(minLeft[1], minRight[1]);
-            float maxY = min(maxLeft[1], maxRight[1]);
+            // There's no reason to include parts of the left or right image
+            // which are entirely above or below the other when transformed
+            // since depth cannot be computed.
+            // So, the following give a bound on the relevant vertical range
+            // of the transformed images.
+            float maxminY = max(minLeft[1], minRight[1]);
+            float minmaxY = min(maxLeft[1], maxRight[1]);
 
             float targetHeight = min(warpedLeft.height(), warpedRight.height());
 
             auto verticalTransform =
-                Eigen::AlignedScaling2f(1.0, targetHeight / (maxY - minY)) *
-                Eigen::Translation2f(0, -minLeft[1]);
+                Eigen::AlignedScaling2f(1.0, targetHeight / (minmaxY - maxminY)) *
+                Eigen::Translation2f(0, -maxminY);
 
             ml = verticalTransform *
                 Eigen::AlignedScaling2f(warpedLeft.width() / (maxLeft[0] - minLeft[0]), 1.0) *
@@ -213,17 +227,19 @@ class Rectification {
                 Eigen::Matrix3f& ml,
                 Eigen::Matrix3f& mr) const;
 
-        unique_ptr<ceres::Problem> createProblem(
-                function<void(int, Eigen::Vector2f&, Eigen::Vector2f&)> pairGen,
-                int numPairs,
-                bool robustify,
-                TransformParams& params) const;
-
-        const ChainFeatureMatcher* features;
+        void initErrorTerms();
 
         Eigen::Vector2i imageSize;
 
+        vector<tuple<Eigen::Vector2f, Eigen::Vector2f>> matches;
+
+        // Contains pointers to each error term in the current problem
+        vector<unique_ptr<ADTransformCostFunc>> errorTerms;
+
+        // The residual associated with the best transform found so far
         double residual;
 
+        // The best transform found so far
         TransformParams transform;
 };
+

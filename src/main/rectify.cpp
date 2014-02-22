@@ -1,10 +1,36 @@
 #include "rectify.h"
 
-Rectification::Rectification(
-        const ChainFeatureMatcher* _features,
-        Eigen::Vector2i _imageSize) :
-    features(_features), 
-    imageSize(_imageSize) {
+void Rectification::init(
+        Eigen::Vector2i _imageSize,
+        const ChainFeatureMatcher* features) {
+    imageSize = _imageSize;
+
+    const vector<vector<tuple<int, Eigen::Vector2f>>>& observations =
+        features->getObservations();
+
+    matches.clear();
+
+    matches.resize(observations[0].size());
+
+    for (const auto& obs : observations[0]) {
+        get<0>(matches[get<0>(obs)]) = get<1>(obs);
+    }
+
+    // TODO Handle case in which not all matches from image 0's match list
+    //      have a corresponding element for image 1.
+    for (const auto& obs : observations[1]) {
+        int ptIndex = get<0>(obs);
+
+        if (ptIndex < matches.size()) {
+            get<1>(matches[get<0>(obs)]) = get<1>(obs);
+        }
+    }
+
+    initErrorTerms();
+
+    residual = std::numeric_limits<double>::max();
+
+    transform.fill(0.0);
 }
 
 void Rectification::print(
@@ -26,45 +52,7 @@ void Rectification::solve(
 
     const int matchesPerRestart = 10;
 
-    const vector<vector<tuple<int, Eigen::Vector2f>>>& observations =
-        features->getObservations();
-
-    vector<tuple<Eigen::Vector2f, Eigen::Vector2f>> matches(observations[0].size());
-
-    for (const auto& obs : observations[0]) {
-        matches[get<0>(obs)] = make_tuple(
-                get<1>(obs),
-                Eigen::Vector2f::Zero());
-    }
-
-    // TODO Handle case in which not all matches from image 0's match list
-    //      have a corresponding element for image 1.
-    for (const auto& obs : observations[1]) {
-        int ptIndex = get<0>(obs);
-
-        if (ptIndex < matches.size()) {
-            get<1>(matches[get<0>(obs)]) = get<1>(obs);
-        }
-    }
-
-    // std::random_shuffle(matches.begin(), matches.end());
-
-    function<void(int, Eigen::Vector2f&, Eigen::Vector2f&)> pairGenAll =
-        [&matches](
-                int sample,
-                Eigen::Vector2f& left,
-                Eigen::Vector2f& right) {
-
-            const auto& m = matches[sample];
-
-            left = get<0>(m);
-            right = get<1>(m);
-        };
-
-    TransformParams curTransform;
-
-    unique_ptr<ceres::Problem> globalProblem =
-        createProblem(pairGenAll, matches.size(), true, curTransform);
+    initErrorTerms();
 
     ceres::Solver::Options options;
     options.max_num_iterations = 1000;
@@ -72,41 +60,70 @@ void Rectification::solve(
 
     ceres::Solver::Summary summary;
 
+    ceres::HuberLoss* robustLoss = new ceres::HuberLoss(0.01);
+
+    ceres::Problem::Options pOptions;
+    pOptions.cost_function_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
+    pOptions.loss_function_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
+
+    // Store a map from cost to index of error term with that cost
+    vector<tuple<double, int>> costs(errorTerms.size());
+
+    // Use the top 25% as inliers
+    int inlierCount = (costs.size()) * 0.25f;
+
+    double curResidual;
+    TransformParams curTransform;
+
     for (int i = 0; i < numRestarts; i++) {
-        // Randomly shuffle if we've exhausted the already-shuffled list
-        if (((i + 1) * matchesPerRestart) % matches.size() <
-                matchesPerRestart) {
-            std::random_shuffle(matches.begin(), matches.end());
-        }
+        ceres::Problem localProblem(pOptions);
 
         // Clear the initial parameters
         curTransform.fill(0.0);
-        
-        double curResidual;
 
-        // Fit an initial transform to a selected few points
-        function<void(int, Eigen::Vector2f&, Eigen::Vector2f&)> pairGen =
-            [&matches, i, matchesPerRestart](
-                    int sample,
-                    Eigen::Vector2f& left,
-                    Eigen::Vector2f& right) {
+        // Fit an initial transform to a selected few points with least-squares
+        for (int m = 0; m < matchesPerRestart; m++) {
+            int residualIndex = (i * matchesPerRestart + m) % errorTerms.size();
 
-                    const auto& m = matches[
-                        (i * matchesPerRestart + sample) % matches.size()];
+            localProblem.AddResidualBlock(
+                    errorTerms[residualIndex].get(),
+                    nullptr,
+                    curTransform.data());
+        }
 
-                    left = get<0>(m);
-                    right = get<1>(m);
-                };
+        ceres::Solve(options, &localProblem, &summary);
 
-        unique_ptr<ceres::Problem> localProblem =
-            createProblem(pairGen, matchesPerRestart, false, curTransform);
+        // Evaluate the current model against all error terms to detect
+        // outliers
+        for (int t = 0; t < errorTerms.size(); t++) {
+            get<1>(costs[t]) = t;
 
-        ceres::Solve(options, localProblem.get(), &summary);
+            double *const paramBlock[1] = {curTransform.data()};
 
-        ceres::Solve(options, globalProblem.get(), &summary);
+            errorTerms[t]->Evaluate(
+                    paramBlock,
+                    &get<0>(costs[t]),
+                    nullptr);
+        }
+
+        std::partial_sort(
+                &(costs[0]),
+                &(costs[inlierCount]),
+                &(costs[costs.size()]));
+
+        ceres::Problem globalProblem(pOptions);
+
+        for (int t = 0; t < inlierCount; t++) {
+            globalProblem.AddResidualBlock(
+                    errorTerms[get<1>(costs[t])].get(),
+                    robustLoss,
+                    curTransform.data());
+        }
+
+        ceres::Solve(options, &globalProblem, &summary);
 
         curResidual = summary.final_cost;
-        
+
         if (curResidual >= 0 && curResidual < residual) {
             residual = curResidual;
 
@@ -158,37 +175,19 @@ void Rectification::paramsToMat(
     mr = K * Rr * Kinverse;
 }
 
-unique_ptr<ceres::Problem> Rectification::createProblem(
-        function<void(int, Eigen::Vector2f&, Eigen::Vector2f&)> pairGen,
-        int numPairs,
-        bool robustify,
-        TransformParams& params) const {
-    unique_ptr<ceres::Problem> problem(new ceres::Problem());
+void Rectification::initErrorTerms() {
+    errorTerms.clear();
 
-    ceres::LossFunction* robustLoss = NULL;
+    errorTerms.reserve(matches.size());
 
-    if (robustify) {
-        robustLoss = new ceres::CauchyLoss(0.01);
+    for (int i = 0; i < matches.size(); i++) {
+        TransformCostFunction* func = new TransformCostFunction();
+
+        func->self = this;
+        func->matchIndex = i;
+
+        errorTerms.push_back(
+                unique_ptr<ADTransformCostFunc>(
+                    new ADTransformCostFunc(func)));
     }
-
-    for (int i = 0; i < numPairs; i++) {
-        TransformErrorFunction* func = new TransformErrorFunction();
-
-        func->width = imageSize[0];
-        func->height = imageSize[1];
-
-        pairGen(i, func->left, func->right);
-
-        typedef ceres::AutoDiffCostFunction<TransformErrorFunction, 1, 6>
-            AutoDiffErrorFunc;
-
-        ceres::CostFunction* costFunction = new AutoDiffErrorFunc(func);
-
-        problem->AddResidualBlock(
-                costFunction,
-                robustLoss,
-                params.data());
-    }
-
-    return problem;
 }

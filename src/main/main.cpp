@@ -112,7 +112,9 @@ void runMultiview(
 
     features.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
 
-    Rectification cr(&features, Eigen::Vector2i(imgs(0).width(), imgs(0).height()));
+    Rectification cr;
+
+    cr.init(Eigen::Vector2i(imgs(0).width(), imgs(0).height()), &features);
 
     cr.solve(20);
 
