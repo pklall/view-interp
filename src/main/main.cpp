@@ -114,15 +114,16 @@ void runMultiview(
 
     Rectification cr(&features, Eigen::Vector2i(imgs(0).width(), imgs(0).height()));
 
-    cr.solve(50);
+    cr.solve(20);
 
     cr.print(cout);
 
-    CImg<uint8_t> warped;
+    CImg<uint8_t> warpedL(imgs(0).width(), imgs(0).height(), 1, imgs(0).spectrum());
+    CImg<uint8_t> warpedR(imgs(0).width(), imgs(0).height(), 1, imgs(0).spectrum());
 
-    cr.warp(imgs(0), warped);
+    cr.warp(imgs(0), imgs(1), warpedL, warpedR);
 
-    warped.display();
+    (warpedL, warpedR).display();
 }
 
 void runInterpolation(

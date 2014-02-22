@@ -13,37 +13,11 @@ void Rectification::print(
 
     paramsToMat(transform, ml, mr);
 
-    result << "Raw = [";
+    result << "Raw = " << endl << transform << endl;
 
-    for (int i = 0; i < 6; i++) {
-        result << transform[i] << ", \t";
-    }
+    result << "M_left = " << endl << ml << endl;
 
-    result << "]" << endl;
-
-    result << "M_left = [" << endl;
-
-    for (int y = 0; y < 3; y++) {
-        for (int x = 0; x < 3; x++) {
-            result << ml(y, x) << ", \t";
-        }
-
-        result << ";" << endl;
-    }
-
-    result << "]" << endl;
-
-    result << "M_right = [" << endl;
-
-    for (int y = 0; y < 3; y++) {
-        for (int x = 0; x < 3; x++) {
-            result << mr(y, x) << ", \t";
-        }
-
-        result << ";" << endl;
-    }
-
-    result << "]" << endl;
+    result << "M_right = " << endl << mr << endl;
 }
 
 void Rectification::solve(
@@ -139,6 +113,8 @@ void Rectification::solve(
             transform = curTransform;
 
             printf("Found improved transform with residual: %f\n", curResidual);
+
+            print(std::cout);
         } else {
             printf("Found inferior transform with residual: %f\n", curResidual);
         }

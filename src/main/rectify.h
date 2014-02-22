@@ -43,17 +43,17 @@ class Rectification {
                 // 3^a(6)*(w + h)
                 T f = exp(T(log(3.0)) * params[5]) * T(width + height);
 
-                Matrix3T Kol;
-                Kol <<
+                Matrix3T K;
+                K <<
                     f,    T(0), T(width / 2.0f),
                     T(0), f,    T(height/ 2.0f),
                     T(0), T(0), T(1);
 
-                Matrix3T Kor = Kol;
+                Matrix3T Kinv = K.inverse();
 
                 Matrix3T Rl;
                 Rl =
-                    Eigen::AngleAxis<T>(T(0), Vector3T::UnitX()) *
+                    // Eigen::AngleAxis<T>(T(0), Vector3T::UnitX()) *
                     Eigen::AngleAxis<T>(zl,   Vector3T::UnitZ()) *
                     Eigen::AngleAxis<T>(yl,   Vector3T::UnitY());
 
@@ -70,9 +70,9 @@ class Rectification {
                     T(0), T(1), T(0);
 
                 Matrix3T F =
-                    Kor.inverse().transpose() * Rr.transpose() *
+                    Kinv.transpose() * Rr.transpose() *
                     hat *
-                    Rl * Kol.inverse();
+                    Rl * Kinv;
 
                 // Compute Sampson residual
 
@@ -89,13 +89,14 @@ class Rectification {
                     T(0), T(1),  T(0);
 
                 Vector3T ufm1 = star3 * F * m1;
-                Vector3T m2fu = m2.transpose() * F * star3;
+                Vector3T m2fu = (m2.transpose() * F * star3).transpose();
 
                 T num = m2.transpose() * F * m1;
                 T denom = ufm1.transpose() * ufm1;
                 denom += m2fu.transpose() * m2fu;
 
-                residual[0] = sqrt(num * num / denom);
+                // residual[0] = sqrt(num * num / denom);
+                residual[0] = num * num / denom;
 
                 /*
                 T m2t_F_m1 = m2.transpose() * F * m1;
@@ -135,30 +136,89 @@ class Rectification {
 
             paramsToMat(transform, ml, mr);
 
-            CImg<double> warpLeft(left.width(), left.height(), 2);
-            CImg<double> warpRight(right.width(), right.height(), 2);
+            Eigen::Matrix<float, 3, 4> cornersLeft;
+            cornersLeft <<
+                0.0, 0.0           , left.width() , left.width(),
+                0.0, left.height() , left.height(), 0.0,
+                1.0, 1.0           , 1.0          , 1.0;
 
-            Eigen::Vector2d pre;
-            Eigen::Vector2d post;
+            Eigen::Matrix<float, 3, 4> cornersRight;
+            cornersRight <<
+                0.0, 0.0           , right.width() , right.width(),
+                0.0, right.height(), right.height(), 0.0,
+                1.0, 1.0           , 1.0           , 1.0;
 
-            /*
-            // FIXME
-            cimg_forXY(warp, x, y) {
-                pre[0] = (((double) x) / warp.width()) * 2.0f - 1.0f;
-                pre[1] = (((double) y) / warp.height()) * 2.0f - 1.0f;
+            cornersLeft = ml * cornersLeft;
+            cornersRight = mr * cornersRight;
 
-                transformPoint(
-                        distortion.data(),
-                        &(transforms[camera * 9]),
-                        pre.data(),
-                        post.data());
+            cornersLeft.row(0) = cornersLeft.row(0).cwiseQuotient(cornersLeft.row(2));
+            cornersLeft.row(1) = cornersLeft.row(1).cwiseQuotient(cornersLeft.row(2));
+            cornersRight.row(0) = cornersRight.row(0).cwiseQuotient(cornersRight.row(2));
+            cornersRight.row(1) = cornersRight.row(1).cwiseQuotient(cornersRight.row(2));
 
-                warp(x, y, 0) = (post[0] + 1.0f) / 2.0f * warp.width();
-                warp(x, y, 1) = (post[1] + 1.0f) / 2.0f * warp.height();
+            Eigen::Vector2f minLeft(
+                    cornersLeft.row(0).minCoeff(),
+                    cornersLeft.row(1).minCoeff());
+            Eigen::Vector2f maxLeft(
+                    cornersLeft.row(0).maxCoeff(),
+                    cornersLeft.row(1).maxCoeff());
+            Eigen::Vector2f minRight(
+                    cornersRight.row(0).minCoeff(),
+                    cornersRight.row(1).minCoeff());
+            Eigen::Vector2f maxRight(
+                    cornersRight.row(0).maxCoeff(),
+                    cornersRight.row(1).maxCoeff());
+
+            float minY = min(minLeft[1], minRight[1]);
+            float maxY = min(maxLeft[1], maxRight[1]);
+
+            float targetHeight = min(warpedLeft.height(), warpedRight.height());
+
+            auto verticalTransform =
+                Eigen::AlignedScaling2f(1.0, targetHeight / (maxY - minY)) *
+                Eigen::Translation2f(0, -minLeft[1]);
+
+            ml = verticalTransform *
+                Eigen::AlignedScaling2f(warpedLeft.width() / (maxLeft[0] - minLeft[0]), 1.0) *
+                Eigen::Translation2f(-minLeft[0], 0) *
+                ml;
+
+            mr = verticalTransform *
+                Eigen::AlignedScaling2f(warpedRight.width() / (maxRight[0] - minRight[0]), 1.0) *
+                Eigen::Translation2f(-minRight[0], 0) *
+                mr;
+
+            Eigen::Matrix3f mlInv = ml.inverse();
+
+            Eigen::Matrix3f mrInv = mr.inverse();
+
+            Eigen::Vector3f v;
+
+            cimg_forXY(warpedLeft, x, y) {
+                v[0] = x;
+                v[1] = y;
+                v[2] = 1.0f;
+
+                v = mlInv * v;
+
+                cimg_forC(warpedLeft, c) {
+                    warpedLeft(x, y, 0, c) = left.linear_atXY(
+                            v[0] / v[2], v[1] / v[2], 0, c, T(0));
+                }
             }
 
-            warped = original.get_warp(warp, false, 2, 0);
-            */
+            cimg_forXY(warpedRight, x, y) {
+                v[0] = x;
+                v[1] = y;
+                v[2] = 1.0f;
+
+                v = mrInv * v;
+
+                cimg_forC(warpedRight, c) {
+                    warpedRight(x, y, 0, c) = right.linear_atXY(
+                            v[0] / v[2], v[1] / v[2], 0, c, T(0));
+                }
+            }
         }
 
     private:
