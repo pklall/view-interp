@@ -95,8 +95,8 @@ class Rectification {
                 T denom = ufm1.transpose() * ufm1;
                 denom += m2fu.transpose() * m2fu;
 
-                // residual[0] = sqrt(num * num / denom);
-                residual[0] = num * num / denom;
+                residual[0] = sqrt(num * num / denom);
+                // residual[0] = num * num / denom;
 
                 /*
                 T m2t_F_m1 = m2.transpose() * F * m1;
