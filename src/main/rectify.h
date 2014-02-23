@@ -11,12 +11,45 @@
 
 #include "reconstruct.h"
 
+template<typename T>
+inline void radialUndistort(
+        const Eigen::Matrix<T, 2, 1>& original,
+        const T* distortion,
+        Eigen::Matrix<T, 2, 1>& result) {
+    // See Eq. 5 of Precise Radial Un-distortion of Images, Mallon &
+    // Whelan, 2004.
+    T rd2 =
+        T(original[0]) * T(original[0]) +
+        T(original[1]) * T(original[1]);
+    T rd4 = rd2 * rd2;
+    T rd6 = rd4 * rd2;
+    T rd8 = rd6 * rd2;
+
+    T numCoeff = 
+        T(distortion[0]) * rd2 +
+        T(distortion[1]) * rd4 +
+        T(distortion[2]) * rd6 +
+        T(distortion[3]) * rd8;
+
+    T denom = T(1.0) +
+        T(4.0) * T(distortion[4]) * rd2 +
+        T(6.0) * T(distortion[5]) * rd4;
+
+    result[0] = T(original[0]) - T(original[0]) * numCoeff / denom;
+    result[1] = T(original[1]) - T(original[1]) * numCoeff / denom;
+}
+
 /**
  * Stereo rectification based on "Quasi-Euclidean Uncalibrated Epipolar
  * Rectification" by Fusiello and Isara (2008).
  */
 class Rectification {
     public:
+        /**
+         * Intrinsics include the focal length term of Fusiello and Isara
+         * followed by 6 parameters for the radial distortion model
+         * of Mallon & Whelan.
+         */
         typedef Eigen::Matrix<double, 6, 1> TransformParams;
 
     private:
@@ -27,7 +60,7 @@ class Rectification {
 
             template <typename T>
             bool operator()(
-                    const T* const params,
+                    const T* const transform,
                     T* residual) const {
                 typedef Eigen::Matrix<T, 2, 1> Vector2T;
                 typedef Eigen::Matrix<T, 3, 1> Vector3T;
@@ -39,15 +72,15 @@ class Rectification {
                 const Eigen::Vector2f& left = get<0>(self->matches[matchIndex]);
                 const Eigen::Vector2f& right = get<1>(self->matches[matchIndex]);
 
-                T yl = params[0];
-                T zl = params[1];
+                T yl = transform[0];
+                T zl = transform[1];
 
-                T xr = params[2];
-                T yr = params[3];
-                T zr = params[4];
+                T xr = transform[2];
+                T yr = transform[3];
+                T zr = transform[4];
 
                 // 3^a(6)*(w + h)
-                T f = exp(T(log(3.0)) * params[5]) * T(width + height);
+                T f = exp(T(log(3.0)) * transform[5]) * T(width + height);
 
                 Matrix3T K;
                 K <<
@@ -80,13 +113,31 @@ class Rectification {
                     hat *
                     Rl * Kinv;
 
-                // Compute Sampson residual
+                // Invert radial distortion
+                Vector2T leftU;
+                Vector2T rightU;
 
+                /*
+                radialUndistort(
+                        Vector2T(T(left[0]), T(left[1])),
+                        &(transform[6]),
+                        leftU);
+
+                radialUndistort(
+                        Vector2T(T(right[0]), T(right[1])),
+                        &(transform[6]),
+                        rightU);
+                */
+                
+                leftU = Vector2T(T(left[0]), T(left[1]));
+                rightU = Vector2T(T(right[0]), T(right[1]));
+
+                // Compute Sampson residual
                 Vector3T m1;
-                m1 << T(left[0]), T(left[1]), T(1);
+                m1 << leftU[0], leftU[1], T(1);
 
                 Vector3T m2;
-                m2 << T(right[0]), T(right[1]), T(1);
+                m2 << rightU[0], rightU[1], T(1);
 
                 Matrix3T star3;
                 star3 <<
