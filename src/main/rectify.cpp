@@ -69,8 +69,8 @@ void Rectification::solve(
     // Store a map from cost to index of error term with that cost
     vector<tuple<double, int>> costs(errorTerms.size());
 
-    // Use the top 25% as inliers
-    int inlierCount = (costs.size()) * 0.25f;
+    // Use the top 50% as inliers
+    int inlierCount = (costs.size()) * 0.75;
 
     double curResidual;
     TransformParams curTransform;
@@ -95,16 +95,7 @@ void Rectification::solve(
 
         // Evaluate the current model against all error terms to detect
         // outliers
-        for (int t = 0; t < errorTerms.size(); t++) {
-            get<1>(costs[t]) = t;
-
-            double *const paramBlock[1] = {curTransform.data()};
-
-            errorTerms[t]->Evaluate(
-                    paramBlock,
-                    &get<0>(costs[t]),
-                    nullptr);
-        }
+        computeCosts(curTransform, costs);
 
         std::partial_sort(
                 &(costs[0]),
@@ -135,6 +126,45 @@ void Rectification::solve(
         } else {
             printf("Found inferior transform with residual: %f\n", curResidual);
         }
+    }
+}
+
+void Rectification::estimateDisparityRange(
+        int inputWidth,
+        int inputHeight,
+        int outputWidth,
+        int outputHeight,
+        float& minDisp,
+        float& maxDisp) const {
+    Eigen::Matrix3f ml, mr;
+
+    paramsToMat(transform,
+            inputWidth, inputHeight,
+            outputWidth, outputHeight,
+            ml, mr);
+
+    vector<tuple<double, int>> costs(errorTerms.size());
+    
+    computeCosts(transform, costs);
+
+    int inlierCount = (costs.size()) * 0.75;
+
+    std::partial_sort(
+            &(costs[0]),
+            &(costs[inlierCount]),
+            &(costs[costs.size()]));
+
+    // Only consider inliers
+    for (const auto& inlier : costs) {
+        const auto& match = matches[get<1>(inlier)];
+
+        const Eigen::Vector2f& left = get<0>(match);
+        const Eigen::Vector2f& right = get<1>(match);
+
+        Eigen::Vector3f leftR = ml * Eigen::Vector3f(left[0], left[1], 1.0);
+        Eigen::Vector3f rightR = mr * Eigen::Vector3f(right[0], right[1], 1.0);
+
+        float disp = rightR[0] / rightR[2] - leftR[0] / leftR[2];
     }
 }
 
@@ -173,6 +203,95 @@ void Rectification::paramsToMat(
 
     ml = K * Rl * Kinverse;
     mr = K * Rr * Kinverse;
+}
+
+void Rectification::paramsToMat(
+        const TransformParams& params,
+        int inputWidth,
+        int inputHeight,
+        int outputWidth,
+        int outputHeight,
+        Eigen::Matrix3f& ml,
+        Eigen::Matrix3f& mr) const {
+    paramsToMat(transform, ml, mr);
+
+    Eigen::Matrix<float, 3, 4> cornersLeft;
+    cornersLeft <<
+        0.0, 0.0        , inputWidth , inputWidth,
+        0.0, inputHeight, inputHeight, 0.0,
+        1.0, 1.0        , 1.0        , 1.0;
+
+    Eigen::Matrix<float, 3, 4> cornersRight;
+    cornersRight <<
+        0.0, 0.0        , inputWidth , inputWidth,
+        0.0, inputHeight, inputHeight, 0.0,
+        1.0, 1.0        , 1.0        , 1.0;
+
+    cornersLeft = ml * cornersLeft;
+    cornersRight = mr * cornersRight;
+
+    cornersLeft.row(0) = cornersLeft.row(0).cwiseQuotient(cornersLeft.row(2));
+    cornersLeft.row(1) = cornersLeft.row(1).cwiseQuotient(cornersLeft.row(2));
+    cornersRight.row(0) = cornersRight.row(0).cwiseQuotient(cornersRight.row(2));
+    cornersRight.row(1) = cornersRight.row(1).cwiseQuotient(cornersRight.row(2));
+
+    Eigen::Vector2f minLeft(
+            cornersLeft.row(0).minCoeff(),
+            cornersLeft.row(1).minCoeff());
+    Eigen::Vector2f maxLeft(
+            cornersLeft.row(0).maxCoeff(),
+            cornersLeft.row(1).maxCoeff());
+    Eigen::Vector2f minRight(
+            cornersRight.row(0).minCoeff(),
+            cornersRight.row(1).minCoeff());
+    Eigen::Vector2f maxRight(
+            cornersRight.row(0).maxCoeff(),
+            cornersRight.row(1).maxCoeff());
+
+    // There's no reason to include parts of the left or right image
+    // which are entirely above or below the other when transformed
+    // since depth cannot be computed.
+    // So, the following give a bound on the relevant vertical range
+    // of the transformed images.
+    float maxminY = max(minLeft[1], minRight[1]);
+    float minmaxY = min(maxLeft[1], maxRight[1]);
+
+    float targetHeight = outputHeight;
+
+    auto verticalTransform =
+        Eigen::AlignedScaling2f(1.0, targetHeight / (minmaxY - maxminY)) *
+        Eigen::Translation2f(0, -maxminY);
+
+    ml = verticalTransform *
+        Eigen::AlignedScaling2f(
+                outputWidth / (maxLeft[0] - minLeft[0]),
+                1.0) *
+        Eigen::Translation2f(-minLeft[0], 0) *
+        ml;
+
+    mr = verticalTransform *
+        Eigen::AlignedScaling2f(
+                outputHeight / (maxRight[0] - minRight[0]),
+                1.0) *
+        Eigen::Translation2f(-minRight[0], 0) *
+        mr;
+}
+
+void Rectification::computeCosts(
+        const TransformParams& transform,
+        vector<tuple<double, int>>& costs) const {
+    costs.resize(errorTerms.size());
+
+    for (int t = 0; t < errorTerms.size(); t++) {
+        get<1>(costs[t]) = t;
+
+        double const * const paramBlock[1] = {transform.data()};
+
+        errorTerms[t]->Evaluate(
+                paramBlock,
+                &get<0>(costs[t]),
+                nullptr);
+    }
 }
 
 void Rectification::initErrorTerms() {

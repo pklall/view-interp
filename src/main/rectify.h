@@ -172,6 +172,14 @@ class Rectification {
         void solve(
                 int numRestarts);
 
+        void estimateDisparityRange(
+                int inputWidth,
+                int inputHeight,
+                int outputWidth,
+                int outputHeight,
+                float& minDisp,
+                float& maxDisp) const;
+
         template<class T>
         void warp(
                 const CImg<T>& left,
@@ -180,64 +188,13 @@ class Rectification {
                 CImg<T>& warpedRight) const {
             Eigen::Matrix3f ml, mr;
 
-            paramsToMat(transform, ml, mr);
+            int width = min(warpedLeft.width(), warpedRight.width());
+            int height = min(warpedLeft.height(), warpedRight.height());
 
-            Eigen::Matrix<float, 3, 4> cornersLeft;
-            cornersLeft <<
-                0.0, 0.0           , left.width() , left.width(),
-                0.0, left.height() , left.height(), 0.0,
-                1.0, 1.0           , 1.0          , 1.0;
-
-            Eigen::Matrix<float, 3, 4> cornersRight;
-            cornersRight <<
-                0.0, 0.0           , right.width() , right.width(),
-                0.0, right.height(), right.height(), 0.0,
-                1.0, 1.0           , 1.0           , 1.0;
-
-            cornersLeft = ml * cornersLeft;
-            cornersRight = mr * cornersRight;
-
-            cornersLeft.row(0) = cornersLeft.row(0).cwiseQuotient(cornersLeft.row(2));
-            cornersLeft.row(1) = cornersLeft.row(1).cwiseQuotient(cornersLeft.row(2));
-            cornersRight.row(0) = cornersRight.row(0).cwiseQuotient(cornersRight.row(2));
-            cornersRight.row(1) = cornersRight.row(1).cwiseQuotient(cornersRight.row(2));
-
-            Eigen::Vector2f minLeft(
-                    cornersLeft.row(0).minCoeff(),
-                    cornersLeft.row(1).minCoeff());
-            Eigen::Vector2f maxLeft(
-                    cornersLeft.row(0).maxCoeff(),
-                    cornersLeft.row(1).maxCoeff());
-            Eigen::Vector2f minRight(
-                    cornersRight.row(0).minCoeff(),
-                    cornersRight.row(1).minCoeff());
-            Eigen::Vector2f maxRight(
-                    cornersRight.row(0).maxCoeff(),
-                    cornersRight.row(1).maxCoeff());
-
-            // There's no reason to include parts of the left or right image
-            // which are entirely above or below the other when transformed
-            // since depth cannot be computed.
-            // So, the following give a bound on the relevant vertical range
-            // of the transformed images.
-            float maxminY = max(minLeft[1], minRight[1]);
-            float minmaxY = min(maxLeft[1], maxRight[1]);
-
-            float targetHeight = min(warpedLeft.height(), warpedRight.height());
-
-            auto verticalTransform =
-                Eigen::AlignedScaling2f(1.0, targetHeight / (minmaxY - maxminY)) *
-                Eigen::Translation2f(0, -maxminY);
-
-            ml = verticalTransform *
-                Eigen::AlignedScaling2f(warpedLeft.width() / (maxLeft[0] - minLeft[0]), 1.0) *
-                Eigen::Translation2f(-minLeft[0], 0) *
-                ml;
-
-            mr = verticalTransform *
-                Eigen::AlignedScaling2f(warpedRight.width() / (maxRight[0] - minRight[0]), 1.0) *
-                Eigen::Translation2f(-minRight[0], 0) *
-                mr;
+            paramsToMat(transform,
+                    max(left.width(), right.width()),
+                    max(left.height(), right.height()),
+                    width, height, ml, mr);
 
             Eigen::Matrix3f mlInv = ml.inverse();
 
@@ -277,6 +234,19 @@ class Rectification {
                 const TransformParams& params,
                 Eigen::Matrix3f& ml,
                 Eigen::Matrix3f& mr) const;
+
+        void paramsToMat(
+                const TransformParams& params,
+                int inputWidth,
+                int inputHeight,
+                int outputWidth,
+                int outputHeight,
+                Eigen::Matrix3f& ml,
+                Eigen::Matrix3f& mr) const;
+
+        void computeCosts(
+                const TransformParams& transform,
+                vector<tuple<double, int>>& costs) const;
 
         void initErrorTerms();
 

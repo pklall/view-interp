@@ -125,7 +125,15 @@ void runMultiview(
 
     cr.warp(imgs(0), imgs(1), warpedL, warpedR);
 
+    warpedL.save("results/warped_left.png");
+    warpedR.save("results/warped_right.png");
+
     (warpedL, warpedR).display();
+
+    CImg<float> left = warpedL;
+    CImg<float> right = warpedR;
+
+    runInterpolation(left, right);
 }
 
 void runInterpolation(
@@ -141,12 +149,13 @@ void runInterpolation(
     printf("Computing stereo...\n");
     CVStereo stereo(sp.leftLab, sp.rightLab, true);
 
-    stereo.matchStereo(minDisp, maxDisp, 1, 1.0f);
+    stereo.matchStereo(minDisp, maxDisp, 10, 1.0f);
 
     stereo.getStereo(sp.disp);
 
     printf("Done\n");
 
+    sp.disp.display();
 
     printf("Computing segmentation\n");
 
@@ -154,7 +163,7 @@ void runInterpolation(
 
     segmentation.createSlicSuperpixels(
             sp.leftLab,
-            sp.disp.width() * sp.disp.height() / (8 * 8),
+            128 * 128,
             10);
 
     printf("Done\n");
@@ -187,8 +196,8 @@ void runInterpolation(
 
     // Visualize unary cost:
     pd.fitPlanesMedian();
-    pdRefine.visualizeUnaryCost(disp);
-    disp.display();
+    // pdRefine.visualizeUnaryCost(disp);
+    // disp.display();
 
     for (int iter = 0; iter < 10; iter++) {
         int s;
