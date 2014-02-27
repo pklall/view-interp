@@ -132,9 +132,9 @@ class Rectification {
                         &(transform[6]),
                         rightU);
                 */
-                
                 leftU = Vector2T(T(left[0]), T(left[1]));
                 rightU = Vector2T(T(right[0]), T(right[1]));
+
 
                 // Compute Sampson residual
                 Vector3T m1;
@@ -280,5 +280,7 @@ class Rectification {
 
         // The best transform found so far
         TransformParams transform;
+
+        int numInliers;
 };
 

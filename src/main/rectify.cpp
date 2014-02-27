@@ -49,6 +49,7 @@ void Rectification::print(
 void Rectification::solve(
         int numRestarts) {
     residual = std::numeric_limits<double>::max();
+    numInliers = 0;
 
     const int matchesPerRestart = 10;
 
@@ -71,6 +72,7 @@ void Rectification::solve(
 
     double curResidual;
     TransformParams curTransform;
+    int curNumInliers;
 
     for (int i = 0; i < numRestarts; i++) {
         // Clear the initial parameters;
@@ -82,25 +84,34 @@ void Rectification::solve(
         ceres::Problem localProblem(pOptions);
 
         for (int m = 0; m < matchesPerRestart; m++) {
-            int residualIndex = (i * (matchesPerRestart / 2) + m) % errorTerms.size();
+            int residualIndex = (i * (matchesPerRestart) + m) % errorTerms.size();
 
             localProblem.AddResidualBlock(
                     errorTerms[residualIndex].get(),
-                    nullptr,
+                    NULL,
                     curTransform.data());
         }
 
         ceres::Solve(options, &localProblem, &summary);
 
+        // Find inliers
         computeEpipolarCosts(curTransform, costs);
 
         std::sort(costs.begin(), costs.end());
 
-        // Use the top 50% as inliers, unless there are so few matched points
-        // that we should use them all.
-        int numInliers = max((int) (costs.size() * 0.50), 30);
+        curNumInliers = 0;
 
-        // Solve the global problem using a robustified loss function
+        for (const auto& cost : costs) {
+            if (get<0>(cost) > 0.01) {
+                break;
+            }
+
+            curNumInliers++;
+        }
+
+        curNumInliers = max(30, curNumInliers);
+
+        // Refine using inliers and a robustified cost function
         
         ceres::Problem globalProblem(pOptions);
 
@@ -115,9 +126,25 @@ void Rectification::solve(
 
         curResidual = summary.final_cost;
 
-        if (curResidual < residual) {
+        // Recount inliers from the refined model
+        {
+            computeEpipolarCosts(curTransform, costs);
+
+            curNumInliers = 0;
+
+            for (const auto& cost : costs) {
+                if (get<0>(cost) <= 0.01) {
+                    curNumInliers++;
+                }
+            }
+        }
+
+        if (curNumInliers > numInliers ||
+                (curNumInliers == numInliers &&
+                 curResidual < residual)) {
             residual = curResidual;
             transform = curTransform;
+            numInliers = curNumInliers;
         }
     }
 }
