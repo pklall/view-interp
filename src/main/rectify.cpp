@@ -35,7 +35,7 @@ void Rectification::init(
 
 void Rectification::print(
         ostream& result) const {
-    Eigen::Matrix3f ml, mr;
+    Eigen::Matrix3d ml, mr;
 
     paramsToMat(transform, ml, mr);
 
@@ -69,11 +69,10 @@ void Rectification::solve(
     // Store a map from cost to index of error term with that cost
     vector<tuple<double, int>> costs(errorTerms.size());
 
-    // Use the top 50% as inliers
-    int inlierCount = (costs.size()) * 0.75;
-
     double curResidual;
     TransformParams curTransform;
+
+    int bestNumInliers = 0;
 
     for (int i = 0; i < numRestarts; i++) {
         ceres::Problem localProblem(pOptions);
@@ -83,7 +82,7 @@ void Rectification::solve(
 
         // Fit an initial transform to a selected few points with least-squares
         for (int m = 0; m < matchesPerRestart; m++) {
-            int residualIndex = (i * matchesPerRestart + m) % errorTerms.size();
+            int residualIndex = (i * (matchesPerRestart / 5) + m) % errorTerms.size();
 
             localProblem.AddResidualBlock(
                     errorTerms[residualIndex].get(),
@@ -95,51 +94,61 @@ void Rectification::solve(
 
         // Evaluate the current model against all error terms to detect
         // outliers
-        computeCosts(curTransform, costs);
+        computeEpipolarCosts(curTransform, costs);
 
-        std::partial_sort(
-                &(costs[0]),
-                &(costs[inlierCount]),
-                &(costs[costs.size()]));
+        std::sort(costs.begin(), costs.end());
 
         ceres::Problem globalProblem(pOptions);
 
-        for (int t = 0; t < inlierCount; t++) {
+        int numInliers = 0;
+
+        const double inlierThresh = 0.05;
+
+        for (int t = 0; t < costs.size(); t++) {
+            if (get<0>(costs[t]) > inlierThresh && t > 30) {
+                break;
+            }
+
             globalProblem.AddResidualBlock(
                     errorTerms[get<1>(costs[t])].get(),
                     robustLoss,
                     curTransform.data());
+
+            numInliers++;
         }
 
         ceres::Solve(options, &globalProblem, &summary);
 
+        // Compute the number of inliers after refinement
+        computeEpipolarCosts(curTransform, costs);
+
+        numInliers = 0;
+        for (const auto& cost : costs) {
+            if (get<0>(cost) <= inlierThresh) {
+                numInliers++;
+            }
+        }
+
         curResidual = summary.final_cost;
 
-        if (curResidual >= 0 && curResidual < residual) {
+        if (bestNumInliers < numInliers ||
+                (bestNumInliers == numInliers &&
+                 curResidual < residual)) {
             residual = curResidual;
-
             transform = curTransform;
-
-            printf("Found improved transform with residual: %f\n", curResidual);
-
-            print(std::cout);
-        } else {
-            printf("Found inferior transform with residual: %f\n", curResidual);
+            bestNumInliers = numInliers;
         }
     }
 }
 
 void Rectification::estimateDisparityRange(
-        int inputWidth,
-        int inputHeight,
         int outputWidth,
         int outputHeight,
         float& minDisp,
         float& maxDisp) const {
-    Eigen::Matrix3f ml, mr;
+    Eigen::Matrix3d ml, mr;
 
     paramsToMat(transform,
-            inputWidth, inputHeight,
             outputWidth, outputHeight,
             ml, mr);
 
@@ -154,6 +163,9 @@ void Rectification::estimateDisparityRange(
             &(costs[inlierCount]),
             &(costs[costs.size()]));
 
+    minDisp = std::numeric_limits<float>::max();
+    maxDisp = std::numeric_limits<float>::min();
+
     // Only consider inliers
     for (const auto& inlier : costs) {
         const auto& match = matches[get<1>(inlier)];
@@ -161,17 +173,20 @@ void Rectification::estimateDisparityRange(
         const Eigen::Vector2f& left = get<0>(match);
         const Eigen::Vector2f& right = get<1>(match);
 
-        Eigen::Vector3f leftR = ml * Eigen::Vector3f(left[0], left[1], 1.0);
-        Eigen::Vector3f rightR = mr * Eigen::Vector3f(right[0], right[1], 1.0);
+        Eigen::Vector3d leftR = ml * Eigen::Vector3d(left[0], left[1], 1.0);
+        Eigen::Vector3d rightR = mr * Eigen::Vector3d(right[0], right[1], 1.0);
 
-        float disp = rightR[0] / rightR[2] - leftR[0] / leftR[2];
+        double disp = rightR[0] / rightR[2] - leftR[0] / leftR[2];
+        
+        minDisp = min((double) minDisp, disp);
+        maxDisp = max((double) maxDisp, disp);
     }
 }
 
 void Rectification::paramsToMat(
         const TransformParams& params,
-        Eigen::Matrix3f& ml,
-        Eigen::Matrix3f& mr) const {
+        Eigen::Matrix3d& ml,
+        Eigen::Matrix3d& mr) const {
     float yl = params[0];
     float zl = params[1];
 
@@ -181,23 +196,23 @@ void Rectification::paramsToMat(
 
     float f = exp(log(3.0) * params[5]) * (imageSize[0] + imageSize[1]);
 
-    Eigen::Matrix3f K;
+    Eigen::Matrix3d K;
     K <<
         f, 0, imageSize[0] / 2.0f,
         0, f, imageSize[1] / 2.0f,
         0, 0, 1;
 
-    Eigen::Matrix3f Rl;
+    Eigen::Matrix3d Rl;
     Rl =
-        Eigen::AngleAxisf(0,  Eigen::Vector3f::UnitX()) *
-        Eigen::AngleAxisf(zl, Eigen::Vector3f::UnitZ()) *
-        Eigen::AngleAxisf(yl, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisd(0,  Eigen::Vector3d::UnitX()) *
+        Eigen::AngleAxisd(zl, Eigen::Vector3d::UnitZ()) *
+        Eigen::AngleAxisd(yl, Eigen::Vector3d::UnitY());
 
-    Eigen::Matrix3f Rr;
+    Eigen::Matrix3d Rr;
     Rr =
-        Eigen::AngleAxisf(xr, Eigen::Vector3f::UnitX()) *
-        Eigen::AngleAxisf(zr, Eigen::Vector3f::UnitZ()) *
-        Eigen::AngleAxisf(yr, Eigen::Vector3f::UnitY());
+        Eigen::AngleAxisd(xr, Eigen::Vector3d::UnitX()) *
+        Eigen::AngleAxisd(zr, Eigen::Vector3d::UnitZ()) *
+        Eigen::AngleAxisd(yr, Eigen::Vector3d::UnitY());
 
     auto Kinverse = K.inverse();
 
@@ -207,25 +222,23 @@ void Rectification::paramsToMat(
 
 void Rectification::paramsToMat(
         const TransformParams& params,
-        int inputWidth,
-        int inputHeight,
         int outputWidth,
         int outputHeight,
-        Eigen::Matrix3f& ml,
-        Eigen::Matrix3f& mr) const {
+        Eigen::Matrix3d& ml,
+        Eigen::Matrix3d& mr) const {
     paramsToMat(transform, ml, mr);
 
-    Eigen::Matrix<float, 3, 4> cornersLeft;
+    Eigen::Matrix<double, 3, 4> cornersLeft;
     cornersLeft <<
-        0.0, 0.0        , inputWidth , inputWidth,
-        0.0, inputHeight, inputHeight, 0.0,
-        1.0, 1.0        , 1.0        , 1.0;
+        0.0, 0.0         , imageSize[0], imageSize[0],
+        0.0, imageSize[1], imageSize[1], 0.0,
+        1.0, 1.0         , 1.0         , 1.0;
 
-    Eigen::Matrix<float, 3, 4> cornersRight;
+    Eigen::Matrix<double, 3, 4> cornersRight;
     cornersRight <<
-        0.0, 0.0        , inputWidth , inputWidth,
-        0.0, inputHeight, inputHeight, 0.0,
-        1.0, 1.0        , 1.0        , 1.0;
+        0.0, 0.0         , imageSize[0], imageSize[0],
+        0.0, imageSize[1], imageSize[1], 0.0,
+        1.0, 1.0         , 1.0         , 1.0;
 
     cornersLeft = ml * cornersLeft;
     cornersRight = mr * cornersRight;
@@ -259,21 +272,21 @@ void Rectification::paramsToMat(
     float targetHeight = outputHeight;
 
     auto verticalTransform =
-        Eigen::AlignedScaling2f(1.0, targetHeight / (minmaxY - maxminY)) *
-        Eigen::Translation2f(0, -maxminY);
+        Eigen::AlignedScaling2d(1.0, targetHeight / (minmaxY - maxminY)) *
+        Eigen::Translation2d(0, -maxminY);
 
     ml = verticalTransform *
-        Eigen::AlignedScaling2f(
+        Eigen::AlignedScaling2d(
                 outputWidth / (maxLeft[0] - minLeft[0]),
                 1.0) *
-        Eigen::Translation2f(-minLeft[0], 0) *
+        Eigen::Translation2d(-minLeft[0], 0) *
         ml;
 
     mr = verticalTransform *
-        Eigen::AlignedScaling2f(
-                outputHeight / (maxRight[0] - minRight[0]),
+        Eigen::AlignedScaling2d(
+                outputWidth / (maxRight[0] - minRight[0]),
                 1.0) *
-        Eigen::Translation2f(-minRight[0], 0) *
+        Eigen::Translation2d(-minRight[0], 0) *
         mr;
 }
 
@@ -291,6 +304,32 @@ void Rectification::computeCosts(
                 paramBlock,
                 &get<0>(costs[t]),
                 nullptr);
+    }
+}
+
+void Rectification::computeEpipolarCosts(
+        const TransformParams& transform,
+        vector<tuple<double, int>>& costs) const {
+    costs.resize(matches.size());
+
+    Eigen::Matrix3d ml, mr;
+
+    paramsToMat(transform,
+            1.0, 1.0,
+            ml, mr);
+
+    for (int i = 0; i < matches.size(); i++) {
+        const auto& match = matches[i];
+
+        const Eigen::Vector2f& left = get<0>(match);
+        const Eigen::Vector2f& right = get<1>(match);
+
+        Eigen::Vector3d leftR = ml * Eigen::Vector3d(left[0], left[1], 1.0);
+        Eigen::Vector3d rightR = mr * Eigen::Vector3d(right[0], right[1], 1.0);
+
+        double error = abs(rightR[1] / rightR[2] - leftR[1] / leftR[2]);
+
+        costs[i] = make_tuple(error, i);
     }
 }
 

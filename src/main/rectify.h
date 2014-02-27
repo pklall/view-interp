@@ -53,6 +53,10 @@ class Rectification {
         typedef Eigen::Matrix<double, 6, 1> TransformParams;
 
     private:
+        /**
+         * Cost function based on "Quasi-Euclidean Uncalibrated Epipolar
+         * Rectification" by Fusiello and Isara (2008).
+         */
         struct TransformCostFunction {
             Rectification* self;
 
@@ -173,8 +177,6 @@ class Rectification {
                 int numRestarts);
 
         void estimateDisparityRange(
-                int inputWidth,
-                int inputHeight,
                 int outputWidth,
                 int outputHeight,
                 float& minDisp,
@@ -186,21 +188,24 @@ class Rectification {
                 const CImg<T>& right,
                 CImg<T>& warpedLeft,
                 CImg<T>& warpedRight) const {
-            Eigen::Matrix3f ml, mr;
+            assert(left.width() == imageSize[0]);
+            assert(left.height() == imageSize[1]);
+            assert(right.width() == imageSize[0]);
+            assert(right.height() == imageSize[1]);
+
+            Eigen::Matrix3d ml, mr;
 
             int width = min(warpedLeft.width(), warpedRight.width());
             int height = min(warpedLeft.height(), warpedRight.height());
 
             paramsToMat(transform,
-                    max(left.width(), right.width()),
-                    max(left.height(), right.height()),
                     width, height, ml, mr);
 
-            Eigen::Matrix3f mlInv = ml.inverse();
+            Eigen::Matrix3d mlInv = ml.inverse();
 
-            Eigen::Matrix3f mrInv = mr.inverse();
+            Eigen::Matrix3d mrInv = mr.inverse();
 
-            Eigen::Vector3f v;
+            Eigen::Vector3d v;
 
             cimg_forXY(warpedLeft, x, y) {
                 v[0] = x;
@@ -232,19 +237,32 @@ class Rectification {
     private:
         void paramsToMat(
                 const TransformParams& params,
-                Eigen::Matrix3f& ml,
-                Eigen::Matrix3f& mr) const;
+                Eigen::Matrix3d& ml,
+                Eigen::Matrix3d& mr) const;
 
         void paramsToMat(
                 const TransformParams& params,
-                int inputWidth,
-                int inputHeight,
                 int outputWidth,
                 int outputHeight,
-                Eigen::Matrix3f& ml,
-                Eigen::Matrix3f& mr) const;
+                Eigen::Matrix3d& ml,
+                Eigen::Matrix3d& mr) const;
 
+        /**
+         * Evalutes each error term on the given transform returning tuples
+         * of the form (cost, error term #).
+         */
         void computeCosts(
+                const TransformParams& transform,
+                vector<tuple<double, int>>& costs) const;
+
+        /**
+         * Computes the vertical difference between matched points transformed
+         * by the given parameter.  This difference is normalized assuming
+         * that the output image has a height of 1.
+         *
+         * Tuples of the form (cost, match #) are returned.
+         */
+        void computeEpipolarCosts(
                 const TransformParams& transform,
                 vector<tuple<double, int>>& costs) const;
 
