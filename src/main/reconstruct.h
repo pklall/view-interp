@@ -20,8 +20,8 @@
  */
 class ChainFeatureMatcher {
     private:
-        float maxFeatureCount = 4096;
-        float maxMatchCount = 1024;
+        float maxFeatureCount;
+        float maxMatchCount;
 
         unique_ptr<CVFeatureMatcher> prevMatcher;
         unique_ptr<CVFeatureMatcher> curMatcher;
@@ -47,7 +47,9 @@ class ChainFeatureMatcher {
             return matches;
         }
 
-        ChainFeatureMatcher();
+        ChainFeatureMatcher(
+                float maxFeatureCount = 8192,
+                float maxMatchCount = 4096);
 
         void processNext(
                 const CImg<uint8_t>& gray);

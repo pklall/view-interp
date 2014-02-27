@@ -1,7 +1,8 @@
 #include "cvutil.h"
 
 CVFeatureMatcher::CVFeatureMatcher(
-        int _maxPoints) :
+    int _maxPoints,
+    int patchSize = 31) :
     keypoints(vector<cv::KeyPoint>(_maxPoints)) {
     descriptors = cv::Mat();
 
@@ -13,7 +14,6 @@ CVFeatureMatcher::CVFeatureMatcher(
     int firstLevel=0;
     int WTA_K=2;
     int scoreType=cv::ORB::HARRIS_SCORE;
-    int patchSize=31;
 
     normType = cv::NORM_HAMMING;
 

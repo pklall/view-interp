@@ -72,17 +72,17 @@ void Rectification::solve(
     double curResidual;
     TransformParams curTransform;
 
-    int bestNumInliers = 0;
-
     for (int i = 0; i < numRestarts; i++) {
-        ceres::Problem localProblem(pOptions);
-
-        // Clear the initial parameters
+        // Clear the initial parameters;
         curTransform.fill(0.0);
 
+
         // Fit an initial transform to a selected few points with least-squares
+
+        ceres::Problem localProblem(pOptions);
+
         for (int m = 0; m < matchesPerRestart; m++) {
-            int residualIndex = (i * (matchesPerRestart / 5) + m) % errorTerms.size();
+            int residualIndex = (i * (matchesPerRestart / 2) + m) % errorTerms.size();
 
             localProblem.AddResidualBlock(
                     errorTerms[residualIndex].get(),
@@ -92,51 +92,32 @@ void Rectification::solve(
 
         ceres::Solve(options, &localProblem, &summary);
 
-        // Evaluate the current model against all error terms to detect
-        // outliers
         computeEpipolarCosts(curTransform, costs);
 
         std::sort(costs.begin(), costs.end());
 
+        // Use the top 50% as inliers, unless there are so few matched points
+        // that we should use them all.
+        int numInliers = max((int) (costs.size() * 0.50), 30);
+
+        // Solve the global problem using a robustified loss function
+        
         ceres::Problem globalProblem(pOptions);
 
-        int numInliers = 0;
-
-        const double inlierThresh = 0.05;
-
-        for (int t = 0; t < costs.size(); t++) {
-            if (get<0>(costs[t]) > inlierThresh && t > 30) {
-                break;
-            }
-
+        for (int t = 0; t < numInliers; t++) {
             globalProblem.AddResidualBlock(
                     errorTerms[get<1>(costs[t])].get(),
                     robustLoss,
                     curTransform.data());
-
-            numInliers++;
         }
 
         ceres::Solve(options, &globalProblem, &summary);
 
-        // Compute the number of inliers after refinement
-        computeEpipolarCosts(curTransform, costs);
-
-        numInliers = 0;
-        for (const auto& cost : costs) {
-            if (get<0>(cost) <= inlierThresh) {
-                numInliers++;
-            }
-        }
-
         curResidual = summary.final_cost;
 
-        if (bestNumInliers < numInliers ||
-                (bestNumInliers == numInliers &&
-                 curResidual < residual)) {
+        if (curResidual < residual) {
             residual = curResidual;
             transform = curTransform;
-            bestNumInliers = numInliers;
         }
     }
 }

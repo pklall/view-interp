@@ -1,7 +1,11 @@
 #include "reconstruct.h"
 
-ChainFeatureMatcher::ChainFeatureMatcher() :
-    numPoints(0) {
+ChainFeatureMatcher::ChainFeatureMatcher(
+        float _maxFeatureCount,
+        float _maxMatchCount) :
+        maxFeatureCount(_maxFeatureCount),
+        maxMatchCount(_maxMatchCount),
+        numPoints(0) {
     prevPtGlobalPt = unique_ptr<map<int, int>>(new map<int, int>());
     curPtGlobalPt = unique_ptr<map<int, int>>(new map<int, int>());
 }
@@ -9,7 +13,7 @@ ChainFeatureMatcher::ChainFeatureMatcher() :
 void ChainFeatureMatcher::processNext(
         const CImg<uint8_t>& gray) {
     if (!curMatcher) {
-        curMatcher = unique_ptr<CVFeatureMatcher>(new CVFeatureMatcher(maxFeatureCount));
+        curMatcher = unique_ptr<CVFeatureMatcher>(new CVFeatureMatcher(maxFeatureCount, 31));
     }
 
     int numFeatures = curMatcher->detectFeatures(gray);

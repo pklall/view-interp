@@ -116,7 +116,7 @@ void runMultiview(
 
     cr.init(Eigen::Vector2i(imgs(0).width(), imgs(0).height()), &features);
 
-    cr.solve(100);
+    cr.solve(50);
 
     cr.print(cout);
 

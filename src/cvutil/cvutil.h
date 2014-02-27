@@ -41,7 +41,8 @@ class CVFeatureMatcher {
         }
 
         CVFeatureMatcher(
-                int _maxPoints);
+                int _maxPoints,
+                int _patchSize);
 
         int detectFeatures(
                 const CImg<uint8_t>& grayImg);
