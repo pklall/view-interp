@@ -51,11 +51,12 @@ void Rectification::solve(
     residual = std::numeric_limits<double>::max();
     numInliers = 0;
 
-    const int matchesPerRestart = 10;
+    const int matchesPerRestart = 20;
 
     initErrorTerms();
 
     ceres::Solver::Options options;
+    options.num_threads = 8;
     options.max_num_iterations = 1000;
     options.minimizer_progress_to_stdout = false;
 
@@ -78,17 +79,15 @@ void Rectification::solve(
         // Clear the initial parameters;
         curTransform.fill(0.0);
 
-
         // Fit an initial transform to a selected few points with least-squares
 
         ceres::Problem localProblem(pOptions);
-
         for (int m = 0; m < matchesPerRestart; m++) {
-            int residualIndex = (i * (matchesPerRestart) + m) % errorTerms.size();
+            int residualIndex = (i * (matchesPerRestart / 2) + m) % errorTerms.size();
 
             localProblem.AddResidualBlock(
                     errorTerms[residualIndex].get(),
-                    NULL,
+                    robustLoss,
                     curTransform.data());
         }
 
@@ -97,9 +96,9 @@ void Rectification::solve(
         // Find inliers
         computeEpipolarCosts(curTransform, costs);
 
-        std::sort(costs.begin(), costs.end());
-
         curNumInliers = 0;
+
+        std::sort(costs.begin(), costs.end());
 
         for (const auto& cost : costs) {
             if (get<0>(cost) > 0.01) {
@@ -109,7 +108,9 @@ void Rectification::solve(
             curNumInliers++;
         }
 
-        curNumInliers = max(30, curNumInliers);
+        // curNumInliers = max(30, curNumInliers);
+
+        curNumInliers = costs.size() * 0.5;
 
         // Refine using inliers and a robustified cost function
         
@@ -125,6 +126,11 @@ void Rectification::solve(
         ceres::Solve(options, &globalProblem, &summary);
 
         curResidual = summary.final_cost;
+
+        // A negative final_cost indicates an error
+        if (curResidual < 0) {
+            continue;
+        }
 
         // Recount inliers from the refined model
         {

@@ -32,7 +32,7 @@ using ceres::Solve;
 
 #define dbgOut std::cout
 
-void runMultiview(
+void runRectification(
         const CImgList<uint8_t>& imgs);
 
 void naiveStereoReconstruct(
@@ -78,20 +78,20 @@ int main(int argc, char** argv) {
 
         printf("Running interpolation\n");
         runInterpolation(fst, lst);
-    } else if (op == "multiview") {
+    } else if (op == "rectification") {
         CImgList<uint8_t> imgs(argc - 2);
 
         for (int i = 2; i < argc; i++) {
             imgs(i - 2).load(argv[i]);
         }
 
-        runMultiview(imgs);
+        runRectification(imgs);
     }
 
     return 0;
 }
 
-void runMultiview(
+void runRectification(
         const CImgList<uint8_t>& imgs) {
     ChainFeatureMatcher features;
     
@@ -110,15 +110,13 @@ void runMultiview(
         features.processNext(gray8);
     }
 
-    features.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
-
     Rectification cr;
 
     cr.init(Eigen::Vector2i(imgs(0).width(), imgs(0).height()), &features);
 
     cr.solve(50);
 
-    cr.print(cout);
+    // cr.print(cout);
 
     CImg<uint8_t> warpedL(imgs(0).width(), imgs(0).height(), 1, imgs(0).spectrum());
     CImg<uint8_t> warpedR(imgs(0).width(), imgs(0).height(), 1, imgs(0).spectrum());
@@ -128,12 +126,14 @@ void runMultiview(
     warpedL.save("results/warped_left.png");
     warpedR.save("results/warped_right.png");
 
-    (warpedL, warpedR).display();
+    // features.visualizeFeatureMatches([imgs](int i) -> const CImg<uint8_t>& { return imgs(i); });
 
-    CImg<float> left = warpedL;
-    CImg<float> right = warpedR;
+    // (warpedL, warpedR).display();
 
-    runInterpolation(left, right);
+    // CImg<float> left = warpedL;
+    // CImg<float> right = warpedR;
+
+    // runInterpolation(left, right);
 }
 
 void runInterpolation(

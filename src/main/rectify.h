@@ -19,24 +19,24 @@ inline void radialUndistort(
     // See Eq. 5 of Precise Radial Un-distortion of Images, Mallon &
     // Whelan, 2004.
     T rd2 =
-        T(original[0]) * T(original[0]) +
-        T(original[1]) * T(original[1]);
+        original[0] * original[0] +
+        original[1] * original[1];
     T rd4 = rd2 * rd2;
     T rd6 = rd4 * rd2;
     T rd8 = rd6 * rd2;
 
     T numCoeff = 
-        T(distortion[0]) * rd2 +
-        T(distortion[1]) * rd4 +
-        T(distortion[2]) * rd6 +
-        T(distortion[3]) * rd8;
+        distortion[0] * rd2 +
+        distortion[1] * rd4 +
+        distortion[2] * rd6 +
+        distortion[3] * rd8;
 
     T denom = T(1.0) +
-        T(4.0) * T(distortion[4]) * rd2 +
-        T(6.0) * T(distortion[5]) * rd4;
+        T(4.0) * distortion[4] * rd2 +
+        T(6.0) * distortion[5] * rd4;
 
-    result[0] = T(original[0]) - T(original[0]) * numCoeff / denom;
-    result[1] = T(original[1]) - T(original[1]) * numCoeff / denom;
+    result[0] = original[0] - original[0] * numCoeff / denom;
+    result[1] = original[1] - original[1] * numCoeff / denom;
 }
 
 /**
@@ -45,11 +45,6 @@ inline void radialUndistort(
  */
 class Rectification {
     public:
-        /**
-         * Intrinsics include the focal length term of Fusiello and Isara
-         * followed by 6 parameters for the radial distortion model
-         * of Mallon & Whelan.
-         */
         typedef Eigen::Matrix<double, 6, 1> TransformParams;
 
     private:
@@ -117,24 +112,11 @@ class Rectification {
                     hat *
                     Rl * Kinv;
 
-                // Invert radial distortion
                 Vector2T leftU;
                 Vector2T rightU;
 
-                /*
-                radialUndistort(
-                        Vector2T(T(left[0]), T(left[1])),
-                        &(transform[6]),
-                        leftU);
-
-                radialUndistort(
-                        Vector2T(T(right[0]), T(right[1])),
-                        &(transform[6]),
-                        rightU);
-                */
                 leftU = Vector2T(T(left[0]), T(left[1]));
                 rightU = Vector2T(T(right[0]), T(right[1]));
-
 
                 // Compute Sampson residual
                 Vector3T m1;
@@ -147,7 +129,7 @@ class Rectification {
                 star3 <<
                     T(0), T(-1), T(0),
                     T(1), T(0),  T(0),
-                    T(0), T(1),  T(0);
+                    T(0), T(0),  T(0);
 
                 Vector3T ufm1 = star3 * F * m1;
                 Vector3T m2fu = (m2.transpose() * F * star3).transpose();
