@@ -49,6 +49,8 @@ int CVFeatureMatcher::match(
 
     std::sort(cvMatchList.begin(), cvMatchList.end());
 
+    matchList.reserve(matchList.size() + cvMatchList.size());
+
     for (int i = 0; i < min((int) cvMatchList.size(), maxMatches); i++) {
         const cv::DMatch& match = cvMatchList[i];
 
@@ -70,6 +72,8 @@ int CVFeatureMatcher::match(
 
     std::sort(cvMatchList.begin(), cvMatchList.end());
 
+    matchedPoints.reserve(matchedPoints.size() + cvMatchList.size());
+
     for (const cv::DMatch& match : cvMatchList) {
         int aIdx = match.queryIdx;
         int bIdx = match.trainIdx;
@@ -84,3 +88,34 @@ int CVFeatureMatcher::match(
     return cvMatchList.size();
 }
 
+int CVFeatureMatcher::match(
+        const CVFeatureMatcher& other,
+        bool sortByMatchScore,
+        array<vector<cv::Point2f>, 2>& matchedPoints) {
+    cvMatchList.clear();
+
+    cv::BFMatcher matcher(normType, true);
+
+    matcher.match(descriptors, other.descriptors, cvMatchList);
+
+    if (sortByMatchScore) {
+        std::sort(cvMatchList.begin(), cvMatchList.end());
+    }
+
+    matchedPoints[0].reserve(matchedPoints[0].size() + cvMatchList.size());
+    matchedPoints[1].reserve(matchedPoints[1].size() + cvMatchList.size());
+
+    for (const cv::DMatch& match : cvMatchList) {
+        int aIdx = match.queryIdx;
+        int bIdx = match.trainIdx;
+
+        matchedPoints[0].push_back(cv::Point2f(
+                    keypoints[aIdx].pt.x,
+                    keypoints[aIdx].pt.y));
+        matchedPoints[1].push_back(cv::Point2f(
+                    other.keypoints[bIdx].pt.x,
+                    other.keypoints[bIdx].pt.y));
+    }
+
+    return cvMatchList.size();
+}

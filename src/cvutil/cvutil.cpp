@@ -2,6 +2,8 @@
 
 #include "common.h"
 
+#include <opencv2/core/eigen.hpp>
+
 #include "slic.h"
 
 void convertCImgToMat(
@@ -73,5 +75,23 @@ void slicSuperpixels(
     cimg_forXY(result, x, y) {
         result(x, y) = clusters[x][y];
     }
+}
+
+void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
+        CVFeatureMatcher& left,
+        CVFeatureMatcher& right,
+        Eigen::Matrix3f& fundMat) {
+    points[0].clear();
+    points[1].clear();
+
+    left.match(right, false, points);
+
+    float inlierEpipolarMaxDist = 3;
+    float targetConfidence = 0.99;
+
+    cv::Mat cvFundMat = cv::findFundamentalMat(points[0], points[1],
+            cv::FM_RANSAC, inlierEpipolarMaxDist, targetConfidence);
+
+    cv::cv2eigen(cvFundMat, fundMat);
 }
 

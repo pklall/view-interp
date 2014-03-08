@@ -2,6 +2,8 @@
 
 #include "common.h"
 
+#include <Eigen/Dense>
+
 #include <opencv/cv.h>
 #include <opencv/ml.h>
 
@@ -55,6 +57,22 @@ class CVFeatureMatcher {
         int match(
                 const CVFeatureMatcher& other,
                 vector<tuple<float, float, float, float>>& matchedPoints);
+
+        int match(
+                const CVFeatureMatcher& other,
+                bool sortByMatchScore,
+                array<vector<cv::Point2f>, 2>& matchedPoints);
+
+};
+
+class CVFundamentalMatrixEstimator {
+    public:
+        void estimateFundamentalMatrix(
+                CVFeatureMatcher& left,
+                CVFeatureMatcher& right,
+                Eigen::Matrix3f& fundMat);
+    private:
+        array<vector<cv::Point2f>, 2> points;
 };
 
 class CVStereo {
