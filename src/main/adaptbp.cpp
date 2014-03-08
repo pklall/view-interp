@@ -1,5 +1,7 @@
 #include "adaptbp.h"
 
+#include "Halide.h"
+
 #include "cvutil/cvutil.h"
 
 #include <tuple>

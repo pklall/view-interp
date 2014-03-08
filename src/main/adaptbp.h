@@ -1,5 +1,23 @@
 #pragma once
 
+// OpenGM and Halide MUST be included before CImg, which includes
+// X11 headers with conflicting/stupid definitions (i.e. `#define BOOL`).
+#include "opengm/graphicalmodel/graphicalmodel.hxx"
+#include "opengm/graphicalmodel/space/simplediscretespace.hxx"
+#include "opengm/functions/explicit_function.hxx"
+#include "opengm/functions/potts.hxx"
+#include "opengm/functions/sparsemarray.hxx"
+#include "opengm/inference/messagepassing/messagepassing.hxx"
+#include "opengm/inference/messagepassing/messagepassing_bp.hxx"
+#include "opengm/inference/messagepassing/messagepassing_trbp.hxx"
+#include "opengm/operations/adder.hxx"
+#include "opengm/operations/minimizer.hxx"
+#include "opengm/inference/mqpbo.hxx"
+#include "opengm/inference/graphcut.hxx"
+#include "opengm/inference/alphaexpansion.hxx"
+#include "opengm/inference/alphabetaswap.hxx"
+#include "opengm/inference/auxiliary/minstcutboost.hxx"
+
 #include "common.h"
 
 #include "segment.h"

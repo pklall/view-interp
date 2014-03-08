@@ -302,17 +302,24 @@ void runCVStereo(
     int maxDisp = 256;
 
     printf("Computing stereo...\n");
+
     {
-        CVStereo stereo(fst, lst, true);
+        CVStereo stereo(fst, lst, false);
         stereo.matchStereo(-maxDisp, maxDisp, 3, 1.0f);
         stereo.getStereo(dispLeft);
-        dispLeft.display();
+
+        CImg<float> dispVis(dispLeft.width(), dispLeft.height(), 1, 3);
+        dispVis = dispLeft.equalize(255).normalize(0, 255).map(CImg<float>::jet_LUT256());
+        dispLeft.save("results/disp.png");
     }
+
     printf("Done\n");
+
+    return;
 
     printf("Computing stereo...\n");
     {
-        CVStereo stereo(lst, fst, true);
+        CVStereo stereo(lst, fst, false);
         stereo.matchStereo(-maxDisp, maxDisp, 3, 1.0f);
         stereo.getStereo(dispRight);
     }

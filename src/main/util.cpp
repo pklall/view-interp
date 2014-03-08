@@ -2,6 +2,8 @@
 
 #include "util.h"
 
+#include "opencv2/opencv.hpp"
+
 void visualizeCorrespondence(
         const CImg<float>& from,
         const CImg<int>& corr,
