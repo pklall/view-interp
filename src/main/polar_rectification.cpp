@@ -83,7 +83,7 @@ void PolarRectification::getRelevantEdges(
 void PolarRectification::getEpipolarLine(
         int imgId,
         const Eigen::Vector2f& originalPt,
-        Eigen::Vector2f& line) {
+        Eigen::Vector2f& line) const {
     // Flip the problem when necessary.
     const auto& e0 = (imgId == 0) ? epipoles[0] : epipoles[1];
     const auto& e1 = (imgId == 0) ? epipoles[1] : epipoles[0];
@@ -124,7 +124,7 @@ void PolarRectification::getEpipolarLine(
 }
 
 bool PolarRectification::getImg0ClippingPlanes(
-        array<Eigen::Vector2f, 2>& planes) {
+        array<Eigen::Vector2f, 2>& planes) const {
     Eigen::AlignedBox<float, 2> img1(
             Eigen::Vector2f(0, 0), 
             Eigen::Vector2f(imgWidth, imgHeight));
@@ -153,7 +153,7 @@ bool PolarRectification::getImg0ClippingPlanes(
     for (int i = 0; i < 4; i++) {
         Eigen::Vector2f candidatePlane = eLines[i].unitOrthogonal();
 
-        int numPositive = 0;
+        int numNonNeg = 0;
 
         for (int j = 0; j < 4; j++) {
             if (j == i) {
@@ -163,18 +163,18 @@ bool PolarRectification::getImg0ClippingPlanes(
             // Since these vectors can also be interpreted as points on the
             // epipolar lines after translation such that the epipole is the
             // origin, we can conveniently perform projection in this space.
-            bool positive = eLines[j].transpose() * candidatePlane > 0;
+            bool nonNeg = eLines[j].transpose() * candidatePlane >= 0;
 
-            if (positive) {
-                numPositive++;
+            if (nonNeg) {
+                numNonNeg++;
             }
         }
 
-        if (numPositive == 3) {
+        if (numNonNeg == 3) {
             planes[curCandidate] = candidatePlane;
 
             curCandidate++;
-        } else if (numPositive == 0) {
+        } else if (numNonNeg == 0) {
             planes[curCandidate] = -1 * candidatePlane;
 
             curCandidate++;
@@ -204,6 +204,50 @@ void PolarRectification::createRectificationMap(
      *    new epipolar line.
      */
 
-    vector<Eigen::ParametrizedLine<float, 2>> edges;
+    vector<Eigen::ParametrizedLine<float, 2>> edges0;
+    vector<Eigen::ParametrizedLine<float, 2>> edges1;
+
+    getRelevantEdges(0, edges0);
+    getRelevantEdges(1, edges1);
+
+    array<Eigen::Vector2f, 2> img0Clip;
+
+    bool mustClip = getImg0ClippingPlanes(img0Clip);
+
+    for (const auto& edge : edges0) {
+        float tmin = 0.0f;
+        float tmax = 1.0f;
+
+        if (mustClip) {
+            // TODO adjust tmin and tmax
+        }
+
+        float curT = tmin;
+
+        const float edgeLength = (edge.pointAt(1) - edge.pointAt(0)).norm();
+
+        const float maxStep = 1.0f / edgeLength;
+
+        while (curT < tmax) {
+            const Eigen::Vector2f curPt = edge.pointAt(curT);
+
+            float step = maxStep;
+
+            // TODO
+            // Project curPt's epipolar line onto image 1's relevant edges -> x1'
+            // Project curPt + step epipolar line onto image 1's relevant edges -> x2'
+            // Find maximum step in direction from x1' to x2' along image 1 edge
+            // associated with x1' -> update x2' - also clamp against
+            // endpoints of edge in image1.
+            //
+            // Back project x2' into image 0 and find associated T-value.
+            //
+            // step = min(step, t-value - curT)
+            
+            // TODO emit new endpoint
+
+            curT += step;
+        }
+    }
 }
 

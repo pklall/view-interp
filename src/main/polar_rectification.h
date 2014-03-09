@@ -39,7 +39,7 @@ class PolarRectification {
         void getEpipolarLine(
                 int imgId,
                 const Eigen::Vector2f& originalPt,
-                Eigen::Vector2f& line);
+                Eigen::Vector2f& line) const;
 
         /**
          * Returns clipping planes specifying the region in image 0 space
@@ -50,7 +50,7 @@ class PolarRectification {
          * the entire image 0 region is relevant.
          */
         bool getImg0ClippingPlanes(
-                array<Eigen::Vector2f, 2>& planes);
+                array<Eigen::Vector2f, 2>& planes) const;
 
         bool getIntersection(
                 const vector<Eigen::ParametrizedLine<float, 2>>& edges,
