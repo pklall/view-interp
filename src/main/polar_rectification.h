@@ -30,25 +30,27 @@ class PolarRectification {
                 vector<Eigen::ParametrizedLine<float, 2>>& edges) const;
 
         /**
-         * Returns the half-epipolar lines (parameterized with t = 0 at the epipoles)
-         * associated with the original point given relative to the image 
-         * associated with imgId.
+         * Returns the half-epipolar lines associated with the original point
+         * given relative to the image associated with imgId.
+         *
+         * Since each line must, by definition, intersect the epipole, only
+         * the direction vector is given.
          */
-        void getEpipolarLines(
+        void getEpipolarLine(
                 int imgId,
                 const Eigen::Vector2f& originalPt,
-                Eigen::ParametrizedLine<float, 2>& line0,
-                Eigen::ParametrizedLine<float, 2>& line1);
+                Eigen::Vector2f& line);
 
         /**
          * Returns clipping planes specifying the region in image 0 space
-         * which maps to image 1.
+         * which maps to image 1.  Since these planes, by definition, intersect
+         * epipole 0, they are specified by their normal only.
          *
          * Returns false if the epipole is inside image 1, implying that
          * the entire image 0 region is relevant.
          */
         bool getImg0ClippingPlanes(
-                array<Eigen::Hyperplane<float, 2>, 2>& planes);
+                array<Eigen::Vector2f, 2>& planes);
 
         bool getIntersection(
                 const vector<Eigen::ParametrizedLine<float, 2>>& edges,

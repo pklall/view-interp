@@ -62,9 +62,8 @@ void PolarRectification::getRelevantEdges(
     // right
     rel[3] = epipole.x() < imgWidth;
 
-    // Push the relevant edges in head-to-tail order
-    bool allRelevant = rel[0] && rel[1] && rel[2] && rel[3];
-
+    // Push the relevant edges in head-to-tail order...
+    
     // The first edge to insert must have a non-relevant edge before it.  This
     // ensures that when we insert edges into the final list, we have a
     // contiguous set of edges parameterized from head-to-tail without gaps.
@@ -81,70 +80,112 @@ void PolarRectification::getRelevantEdges(
     }
 }
 
-void PolarRectification::getEpipolarLines(
-    int imgId,
-    const Eigen::Vector2f& originalPt,
-    Eigen::ParametrizedLine<float, 2>& line0,
-    Eigen::ParametrizedLine<float, 2>& line1) {
+void PolarRectification::getEpipolarLine(
+        int imgId,
+        const Eigen::Vector2f& originalPt,
+        Eigen::Vector2f& line) {
+    // Flip the problem when necessary.
+    const auto& e0 = (imgId == 0) ? epipoles[0] : epipoles[1];
+    const auto& e1 = (imgId == 0) ? epipoles[1] : epipoles[0];
+
+    Eigen::Matrix3f fundMat;
 
     if (imgId == 0) {
-        auto line0Dir = originalPt - epipoles[0];
-
-        Eigen::Vector3f line1DirH = F * originalPt.homogeneous();
-        auto line1Dir = line1DirH.hnormalized().unitOrthogonal();
-
-        // Flip the direction of line 1 to select the correct half-epipolar line
-        auto line0MatchProj =
-            (match[0] - epipoles[0]).transpose() *
-            line0Dir;
-
-        auto line1MatchProj =
-            (match[1] - epipoles[1]).transpose() *
-            line1Dir;
-
-        if (line0MatchProj > 0 != line1MatchProj > 0) {
-            line1Dir *= -1;
-        }
-
-        line0 = Eigen::ParametrizedLine<float, 2>(epipoles[0], line0Dir);
-
-        line1 = Eigen::ParametrizedLine<float, 2>(epipoles[1], line1Dir);
+        fundMat = F;
     } else {
-        Eigen::Vector3f line0DirH = F.transpose() * originalPt.homogeneous();
-        auto line0Dir = line0DirH.hnormalized().unitOrthogonal();
+        fundMat = F.transpose();
+    }
 
-        auto line1Dir = originalPt - epipoles[1];
+    const auto& match0 = (imgId == 0) ? match[0] : match[1];
+    const auto& match1 = (imgId == 0) ? match[1] : match[0];
 
-        // Flip the direction of line 0 to select the correct half-epipolar line
-        auto line0MatchProj =
-            (match[0] - epipoles[0]).transpose() *
-            line0Dir;
+    Eigen::Vector2f lineOther;
 
-        auto line1MatchProj =
-            (match[1] - epipoles[1]).transpose() *
-            line1Dir;
+    auto& l0 = (imgId == 0) ? line : lineOther;
+    auto& l1 = (imgId == 0) ? lineOther : line;
 
-        if (line0MatchProj > 0 != line1MatchProj > 0) {
-            line0Dir *= -1;
-        }
+    // Procede to compute lines as if we are given a point in image 0.
 
-        line0 = Eigen::ParametrizedLine<float, 2>(epipoles[0], line0Dir);
+    l0 = originalPt - e0;
 
-        line1 = Eigen::ParametrizedLine<float, 2>(epipoles[1], line1Dir);
+    Eigen::Vector3f line1DirH = fundMat * originalPt.homogeneous();
+    l1 = line1DirH.hnormalized().unitOrthogonal();
+
+    // Project the known match onto each line
+    auto line0MatchProj = (match0 - e0).transpose() * l0;
+
+    auto line1MatchProj = (match1 - e1).transpose() * l1;
+
+    // Flip the direction of line 1 if necessary to select the correct
+    // half-epipolar line.
+    if (line0MatchProj > 0 != line1MatchProj > 0) {
+        l1 *= -1;
     }
 }
 
-/**
- * Returns clipping planes specifying the region in image 0 space
- * which maps to image 1.
- *
- * Returns false if the epipole is inside image 1, implying that
- * the entire image 0 region is relevant.
- */
 bool PolarRectification::getImg0ClippingPlanes(
-        array<Eigen::Hyperplane<float, 2>, 2>& planes) {
-    // FIXME
-    return false;
+        array<Eigen::Vector2f, 2>& planes) {
+    Eigen::AlignedBox<float, 2> img1(
+            Eigen::Vector2f(0, 0), 
+            Eigen::Vector2f(imgWidth, imgHeight));
+
+    if (img1.contains(epipoles[1])) {
+        return false;
+    }
+
+    array<Eigen::Vector2f, 4> eLines;
+
+    for (int i = 0; i < 4; i++) {
+        Eigen::Vector2f corner;
+
+        // Enumerate all corners of the image in binary
+        corner[0] = (i & 0x1) == 0 ? 0 : imgWidth;
+        corner[1] = (i & 0x2) == 0 ? 0 : imgHeight;
+
+        getEpipolarLine(1, corner, eLines[i]);
+    }
+
+    // The clipping planes are the only two planes such that all
+    // other projected epipolar half-lines will be on the same side.
+    // eLines specifies epipolar line directions.
+    int curCandidate = 0;
+
+    for (int i = 0; i < 4; i++) {
+        Eigen::Vector2f candidatePlane = eLines[i].unitOrthogonal();
+
+        int numPositive = 0;
+
+        for (int j = 0; j < 4; j++) {
+            if (j == i) {
+                continue;
+            }
+
+            // Since these vectors can also be interpreted as points on the
+            // epipolar lines after translation such that the epipole is the
+            // origin, we can conveniently perform projection in this space.
+            bool positive = eLines[j].transpose() * candidatePlane > 0;
+
+            if (positive) {
+                numPositive++;
+            }
+        }
+
+        if (numPositive == 3) {
+            planes[curCandidate] = candidatePlane;
+
+            curCandidate++;
+        } else if (numPositive == 0) {
+            planes[curCandidate] = -1 * candidatePlane;
+
+            curCandidate++;
+        }
+        
+        if (curCandidate == 2) {
+            break;
+        }
+    }
+
+    return true;
 }
 
 void PolarRectification::createRectificationMap(
