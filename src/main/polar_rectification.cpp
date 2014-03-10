@@ -191,19 +191,6 @@ bool PolarRectification::getImg0ClippingPlanes(
 void PolarRectification::createRectificationMap(
         int maxPixelsPerLine,
         vector<Eigen::Vector2f>& endpoints) const {
-    /*
-     * To determine the set of epipolar lines to emmit, do the following:
-     *  - Loop over all edges of image 0 which are furthest from the epipolar
-     *    line (these are saved in variable `edges`) in order such that
-     *  - If the epipole is outside in image 1, then clip the current
-     *    edge's domain against the range of t-values associated with the
-     *    intersections of the line with the epipolar lines associated with
-     *    each corner point in image 1.
-     *  - Walk along the edge, stepping maxPixelsPerLine, each time.
-     *  - Determine the distance between the previous edge point and the
-     *    new epipolar line.
-     */
-
     vector<Eigen::ParametrizedLine<float, 2>> edges0;
     vector<Eigen::ParametrizedLine<float, 2>> edges1;
 
@@ -306,11 +293,59 @@ void PolarRectification::createRectificationMap(
 
             assert(step > 0);
 
-            // TODO emit new endpoint
-            endpoints.push_back(edge.pointAt(curT + step));
-
             curT += step;
+
+            curT = min(curT, tmax);
+
+            endpoints.push_back(edge.pointAt(curT));
         }
+    }
+}
+
+void PolarRectification::getEpipolarDistanceRanges(
+        int imgId,
+        float& rmin,
+        float& rmax) const {
+    const Eigen::Vector2f e = epipoles[imgId];
+
+    rmin = std::numeric_limits<float>::max();
+    rmax = std::numeric_limits<float>::min();
+
+    // Corners in counter-clockwise order
+    Eigen::Matrix<float, 2, 4> corners;
+    corners <<
+        0, 0,         imgWidth,  imgWidth,
+        0, imgHeight, imgHeight, 0;
+
+    for (int i = 0; i < 4; i++) {
+        Eigen::Vector2f corner0 = corners.col(i);
+        Eigen::Vector2f corner1 = corners.col((i + 1) % 4);
+
+        Eigen::ParametrizedLine<float, 2> edge(corner0, corner1 - corner0);
+
+        Eigen::Hyperplane<float, 2> epipoleEdgePlane(
+                (corner1 - corner0).normalized(), e);
+
+        // This is the parameter associated with the closest point on the
+        // edge to the epipole.
+        float intersectT = edge.intersectionParameter(epipoleEdgePlane);
+        
+        // Clamp to the bounds of the line segment
+        intersectT = min(1.0f, intersectT);
+        intersectT = max(0.0f, intersectT);
+
+        float dist = (e - (edge.pointAt(intersectT))).norm();
+
+        rmin = min(dist, rmin);
+        rmax = max(dist, rmax);
+    }
+
+    Eigen::AlignedBox<float, 2> bounds(
+            Eigen::Vector2f(0, 0), 
+            Eigen::Vector2f(imgWidth, imgHeight));
+
+    if (bounds.contains(e)) {
+        rmin = 0;
     }
 }
 

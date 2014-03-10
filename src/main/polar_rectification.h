@@ -66,6 +66,15 @@ class PolarRectification {
                 int maxPixelsPerLine,
                 vector<Eigen::Vector2f>& endpoints) const;
 
+        /**
+         * Returns the minimum and maximum distance from the epipole to
+         * the valid region of the specified image.
+         */
+        void getEpipolarDistanceRanges(
+                int imgId,
+                float& rmin,
+                float& rmax) const;
+
         int imgWidth;
         int imgHeight;
 
