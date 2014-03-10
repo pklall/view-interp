@@ -11,7 +11,6 @@ class PolarRectification {
                 int _height,
                 Eigen::Matrix3f _F,
                 array<Eigen::Vector2f, 2> _match);
-        
 
     private:
         /**
@@ -51,12 +50,6 @@ class PolarRectification {
          */
         bool getImg0ClippingPlanes(
                 array<Eigen::Vector2f, 2>& planes) const;
-
-        bool getIntersection(
-                const vector<Eigen::ParametrizedLine<float, 2>>& edges,
-                const Eigen::ParametrizedLine<float, 2>& line,
-                int& edgeId,
-                Eigen::Vector2f& intersection);
 
         /**
          * Generates the set of epipolar lines (in image 0) required for
