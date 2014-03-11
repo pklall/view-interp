@@ -6,11 +6,17 @@
 
 class PolarRectification {
     public:
-        PolarRectification(
+        void init(
                 int _width,
                 int _height,
                 Eigen::Matrix3f _F,
                 array<Eigen::Vector2f, 2> _match);
+
+        void rectify(
+                int imgId,
+                const CImg<uint8_t>& original,
+                CImg<uint8_t>& rectified,
+                CImg<float>& reverseMap) const;
 
     private:
         /**
@@ -63,17 +69,10 @@ class PolarRectification {
 
         /**
          * Generates the set of epipolar lines required for rectification.
-         * Each line is specified by epipoles[0] and an endpoint in the
+         * Each line is specified by an epipole and an endpoint in the
          * provided array.
-         *
-         * \param maxPixelsPerLine The maximum number of pixels in the source
-         *                         images to map to a single pixel in a 
-         *                         destination image
-         * \param endpoints        the output
          */
-        void createRectificationMap(
-                int maxPixelsPerLine,
-                vector<array<Eigen::Vector2f, 2>>& endpoints) const;
+        void createRectificationMap();
 
         /**
          * Returns the minimum and maximum distance from the epipole to
@@ -99,5 +98,14 @@ class PolarRectification {
         array<Eigen::Vector2f, 2> match;
         
         array<Eigen::Vector2f, 2> epipoles;
+
+        /**
+         * Specifies the set of epipolar lines to use for rectification.
+         *
+         * Each epipolar line, i, is represented by a line in image 0
+         * defined by (epipoles[0], epipoleEndpoints[i][0]) and a line
+         * in image 1 defined by (epipoles[1], epipoleEndpoints[i][1]).
+         */
+        vector<array<Eigen::Vector2f, 2>> epipoleEndpoints;
 };
 

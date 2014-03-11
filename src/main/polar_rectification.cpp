@@ -1,17 +1,82 @@
 #include "polar_rectification.h"
 
-PolarRectification::PolarRectification(
+void PolarRectification::init(
         int _width,
         int _height,
         Eigen::Matrix3f _F,
-        array<Eigen::Vector2f, 2> _match) :
-    imgWidth(_width),
-    imgHeight(_height),
-    F(_F),
-    match(_match) {
+        array<Eigen::Vector2f, 2> _match) {
+    imgWidth = _width;
+    imgHeight = _height;
+    F = _F;
+    match = _match;
 
     epipoles[0] = F.fullPivLu().kernel().col(0).hnormalized();
     epipoles[1] = F.transpose().fullPivLu().kernel().col(0).hnormalized();
+
+    createRectificationMap();
+}
+
+void PolarRectification::rectify(
+        int imgId,
+        const CImg<uint8_t>& original,
+        CImg<uint8_t>& rectified,
+        CImg<float>& reverseMap) const {
+    float radMin, radMax;
+
+    getEpipolarDistanceRanges(imgId, radMin, radMax);
+
+    const int numEpipoles = epipoleEndpoints.size();
+
+    const Eigen::Vector2f& e = epipoles[imgId];
+
+    rectified.resize((int) (radMax - radMin + 0.5f), numEpipoles, 1,
+            original.spectrum());
+
+    reverseMap.resize((int) (radMax - radMin + 0.5f), numEpipoles, 2);
+
+    // Generate clipping planes
+    // Note that corners are specified in counter-clockwise order
+    /*
+    Eigen::Matrix<float, 2, 4> corners;
+    corners <<
+        0, 0,         imgWidth,  imgWidth,
+        0, imgHeight, imgHeight, 0;
+
+    array<Eigen::Hyperplane<float, 2>, 4> edgePlanes;
+
+    for (int i = 0; i < 4; i++) {
+        Eigen::Vector2f corner0 = corners.col(i);
+        Eigen::Vector2f corner1 = corners.col((i + 1) % 4);
+
+        Eigen::ParametrizedLine<float, 2> edge(corner0, corner1 - corner0);
+
+        // Note that the plane normal faces inside the image
+        edgePlanes[i] = Eigen::Hyperplane<float, 2>(edge.unitOrthogonal(), corner0);
+    }
+    */
+
+    for (int eI = 0; eI < epipoleEndpoints.size(); eI++) {
+        const array<Eigen::Vector2f, 2>& endpoint = epipoleEndpoints[eI];
+
+        Eigen::Vector2f eLineDir =  (endpoint[imgId] - e).normalized();
+
+        Eigen::ParametrizedLine<float, 2> eLine(e, eLineDir);
+
+        // TODO Clip the line to avoid unnecessary sampling outside the image's
+        // valid region
+        
+        cimg_forC(original, c) {
+            for (int t = radMin; t < radMax; t++) {
+                Eigen::Vector2f pt = eLine.pointAt((float) t);
+
+                rectified(t, eI, 0, c) = original.linear_atXY(pt.x(), pt.y(), 0, c);
+
+                reverseMap(t, eI, 0) = pt.x();
+
+                reverseMap(t, eI, 1) = pt.y();
+            }
+        }
+    }
 }
 
 void PolarRectification::getRelevantEdges(
@@ -201,9 +266,9 @@ bool PolarRectification::getImg0ClippingPlanes(
     return true;
 }
 
-void PolarRectification::createRectificationMap(
-        int maxPixelsPerLine,
-        vector<array<Eigen::Vector2f, 2>>& endpoints) const {
+void PolarRectification::createRectificationMap() {
+    epipoleEndpoints.clear();
+
     vector<Eigen::ParametrizedLine<float, 2>> edges0;
     vector<Eigen::ParametrizedLine<float, 2>> edges1;
 
@@ -218,12 +283,8 @@ void PolarRectification::createRectificationMap(
         float tmin = 0.0f;
         float tmax = 1.0f;
 
-
         if (mustClip) {
             for (const Eigen::Vector2f& normal : img0Clip) {
-                const Eigen::Vector2f edgeStart = edge.pointAt(tmin);
-                const Eigen::Vector2f edgeEnd = edge.pointAt(tmax);
-
                 Eigen::Hyperplane<float, 2> plane(normal, epipoles[0]);
 
                 float intersectT = edge.intersectionParameter(plane);
@@ -326,11 +387,11 @@ void PolarRectification::createRectificationMap(
             // parametrized such that we step with positive T, the smaller
             // step is closer to the current epipolar line)
             if (maxStep0Img0T < maxStep0Img0T) {
-                endpoints.push_back({maxStep0Img0Pt, maxStep0Img1Pt});
+                epipoleEndpoints.push_back({maxStep0Img0Pt, maxStep0Img1Pt});
 
                 curT = maxStep0Img0T;
             } else {
-                endpoints.push_back({maxStep1Img0Pt, maxStep1Img1Pt});
+                epipoleEndpoints.push_back({maxStep1Img0Pt, maxStep1Img1Pt});
 
                 curT = maxStep1Img0T;
             }
