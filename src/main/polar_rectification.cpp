@@ -123,6 +123,19 @@ void PolarRectification::getEpipolarLine(
     }
 }
 
+void PolarRectification::getEpipolarLine(
+        int imgId,
+        const Eigen::Vector2f& originalPt,
+        Eigen::Hyperplane<float, 2>& plane) const {
+    Eigen::Vector2f lineDir;
+
+    getEpipolarLine(imgId, originalPt, lineDir);
+
+    plane = Eigen::Hyperplane<float, 2>(
+            lineDir.unitOrthogonal(),
+            epipoles[(imgId + 1) % 2]);
+}
+
 bool PolarRectification::getImg0ClippingPlanes(
         array<Eigen::Vector2f, 2>& planes) const {
     Eigen::AlignedBox<float, 2> img1(
@@ -190,7 +203,7 @@ bool PolarRectification::getImg0ClippingPlanes(
 
 void PolarRectification::createRectificationMap(
         int maxPixelsPerLine,
-        vector<Eigen::Vector2f>& endpoints) const {
+        vector<array<Eigen::Vector2f, 2>>& endpoints) const {
     vector<Eigen::ParametrizedLine<float, 2>> edges0;
     vector<Eigen::ParametrizedLine<float, 2>> edges1;
 
@@ -232,72 +245,95 @@ void PolarRectification::createRectificationMap(
         const float maxStep = 1.0f / edgeLength;
 
         while (curT < tmax) {
-            const Eigen::Vector2f curPt = edge.pointAt(curT);
+            // Each step should move a maximum of one pixel along the edge of
+            // each image.
+            //
+            // Thus, we must consider 3 epipolar lines and their intersection
+            // with the boundaries of image 0 and image 1:
+            //  - The current epipolar line (cur)
+            //  - The epipolar line formed by rotating the current line as little
+            //    as possible without shrinking pixels in image 0. (maxStep0)
+            //  - The epipolar line formed by rotating the current line as little
+            //    as possible without shrinking pixels in image 1. (maxStep1)
+            
+            // The current epipolar line intersection in each image
+            Eigen::Vector2f curImg0Pt;
+            Eigen::Vector2f curImg1Pt;
 
-            float step = maxStep;
+            // The points of intersection of the epipolar lines associated with
+            // the maximum step with image boundaries.
+            Eigen::Vector2f maxStep0Img0Pt;
+            Eigen::Vector2f maxStep0Img1Pt;
+            Eigen::Vector2f maxStep1Img0Pt;
+            Eigen::Vector2f maxStep1Img1Pt;
+            
+            // The line parameters associated with the above points
+            float curImg0T;
+            float curImg1T;
+            float maxStep0Img0T;
+            float maxStep1Img0T;
+            float maxStep0Img1T;
+            float maxStep1Img1T;
 
-            const Eigen::Vector2f nextPt = edge.pointAt(curT + step);
+            Eigen::Hyperplane<float, 2> curImg1Plane;
+            Eigen::Hyperplane<float, 2> maxStep0Img1Plane;
+            Eigen::Hyperplane<float, 2> maxStep1Img0Plane;
 
-            // curPt's epipolar line in image 1
-            Eigen::Vector2f curPtL1;
+            curImg0T = curT;
+            curImg0Pt = edge.pointAt(curImg0T);
+            getEpipolarLine(0, curImg0Pt, curImg1Plane);
 
-            getEpipolarLine(0, curPt, curPtL1);
-
-            Eigen::Hyperplane<float, 2> curPtL1Plane(
-                    curPtL1.unitOrthogonal(),
-                    epipoles[1]);
-
-            // nextPt's epipolar line in image 1
-            Eigen::Vector2f nextPtL1;
-
-            getEpipolarLine(0, nextPt, nextPtL1);
-
-            Eigen::Hyperplane<float, 2> nextPtL1Plane(
-                    nextPtL1.unitOrthogonal(),
-                    epipoles[1]);
+            maxStep0Img0T = min(curT + maxStep, 1.0f);
+            maxStep0Img0Pt = edge.pointAt(maxStep0Img0T);
+            getEpipolarLine(0, maxStep0Img0Pt, maxStep0Img1Plane);
 
             // Find the relevant edge in image 1 which intersects curPtL1
             Eigen::ParametrizedLine<float, 2>* img1Edge = &(edges1[0]);
 
             for (int i = 0; i < edges1.size(); i++) {
-                float intersectionT = edges1[i].intersectionParameter(curPtL1Plane);
+                float intersectionT =
+                    edges1[i].intersectionParameter(curImg1Plane);
 
                 if (intersectionT >= 0 && intersectionT <= 1) {
                     img1Edge = &(edges1[i]);
                 }
             }
 
-            // Find the points corresponding to of curPt and nextPt in image 1
-            // along the edge of the image.
-            Eigen::Vector2f curPt1 = img1Edge->intersectionPoint(curPtL1Plane);
-            Eigen::Vector2f nextPt1 = img1Edge->intersectionPoint(nextPtL1Plane);
+            // Transfer cur to image 1
+            curImg1T = img1Edge->intersectionParameter(curImg1Plane);
+            curImg1Pt = img1Edge->pointAt(curImg1T);
+
+            // Transfer maxStep0 to image 1
+            maxStep0Img1T = img1Edge->intersectionParameter(maxStep0Img1Plane);
+            maxStep0Img1Pt = img1Edge->pointAt(maxStep0Img1T);
 
             // The point along the image 1 edge corresponding to the maximum
             // allowed step.
-            Eigen::Vector2f maxStepPt1 = 
-                (nextPt1 - curPt1).normalized() * maxPixelsPerLine + curPt1;
+            float maxStep1 = 1.0f /
+                (img1Edge->pointAt(1) - img1Edge->pointAt(0)).norm();
 
-            // maxStepPt1's epipolar line in image 0
-            Eigen::Vector2f maxStepPtL0;
+            // Find maxStep1 in image 1
+            maxStep1Img1T = curImg1T + copysign(maxStep1, maxStep0Img1T - curImg1T);
+            maxStep1Img1T = max(min(maxStep1Img1T, 1.0f), 0.0f);
+            maxStep1Img1Pt = img1Edge->pointAt(maxStep1Img1T);
+            getEpipolarLine(1, maxStep1Img1Pt, maxStep1Img0Plane);
 
-            getEpipolarLine(1, maxStepPt1, maxStepPtL0);
+            // Transfer maxStep1 to image 0
+            maxStep1Img0T = edge.intersectionParameter(maxStep1Img0Plane);
+            maxStep1Img0Pt = edge.pointAt(maxStep1Img0T);
 
-            Eigen::Hyperplane<float, 2> maxStepPtL0Plane(
-                    maxStepPtL0.unitOrthogonal(),
-                    epipoles[0]);
+            // Choose whichever maxStep is closer (since the edge is
+            // parametrized such that we step with positive T, the smaller
+            // step is closer to the current epipolar line)
+            if (maxStep0Img0T < maxStep0Img0T) {
+                endpoints.push_back({maxStep0Img0Pt, maxStep0Img1Pt});
 
-            // The intersection of this epipolar line and the current edge
-            float maxStepT = edge.intersectionParameter(maxStepPtL0Plane);
+                curT = maxStep0Img0T;
+            } else {
+                endpoints.push_back({maxStep1Img0Pt, maxStep1Img1Pt});
 
-            step = min(maxStep, maxStepT - curT);
-
-            assert(step > 0);
-
-            curT += step;
-
-            curT = min(curT, tmax);
-
-            endpoints.push_back(edge.pointAt(curT));
+                curT = maxStep1Img0T;
+            }
         }
     }
 }

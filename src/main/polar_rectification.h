@@ -18,6 +18,11 @@ class PolarRectification {
          * the border of the given image such that a ray from each point
          * on the line to the epipole does not intersect any other edge.
          *
+         * This is useful because relevant edges represent one extremum of
+         * image distortion during rectification.  They also provide enough
+         * information to determine the relevant regions of images in which
+         * stereo correspondence may actually be computed.
+         *
          * If the epipole is in the image, then all edges are relevant.
          * Otherwise, the edges which are furthest away are relevant.
          *
@@ -40,6 +45,11 @@ class PolarRectification {
                 const Eigen::Vector2f& originalPt,
                 Eigen::Vector2f& line) const;
 
+        void getEpipolarLine(
+                int imgId,
+                const Eigen::Vector2f& originalPt,
+                Eigen::Hyperplane<float, 2>& plane) const;
+
         /**
          * Returns clipping planes specifying the region in image 0 space
          * which maps to image 1.  Since these planes, by definition, intersect
@@ -52,8 +62,7 @@ class PolarRectification {
                 array<Eigen::Vector2f, 2>& planes) const;
 
         /**
-         * Generates the set of epipolar lines (in image 0) required for
-         * rectification.
+         * Generates the set of epipolar lines required for rectification.
          * Each line is specified by epipoles[0] and an endpoint in the
          * provided array.
          *
@@ -64,7 +73,7 @@ class PolarRectification {
          */
         void createRectificationMap(
                 int maxPixelsPerLine,
-                vector<Eigen::Vector2f>& endpoints) const;
+                vector<array<Eigen::Vector2f, 2>>& endpoints) const;
 
         /**
          * Returns the minimum and maximum distance from the epipole to
