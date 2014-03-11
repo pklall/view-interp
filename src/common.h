@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <memory>
 #include <cassert>
+#include <iostream>
 
 #define cimg_use_png
 #define cimg_use_jpeg

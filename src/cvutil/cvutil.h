@@ -71,8 +71,31 @@ class CVFundamentalMatrixEstimator {
                 CVFeatureMatcher& left,
                 CVFeatureMatcher& right,
                 Eigen::Matrix3f& fundMat);
+
+        inline int getMatchCount() {
+            return inlierMask.size();
+        }
+
+        inline bool getMatch(
+                int index,
+                Eigen::Vector2f& left,
+                Eigen::Vector2f& right) {
+            if (inlierMask[index] == 0) {
+                return false;
+            }
+
+            const auto& lp = points[0][index];
+            const auto& rp = points[1][index];
+
+            left = Eigen::Vector2f(lp.x, lp.y);
+            right = Eigen::Vector2f(rp.x, rp.y);
+
+            return true;
+        }
+
     private:
         array<vector<cv::Point2f>, 2> points;
+        vector<uint8_t> inlierMask;
 };
 
 class CVStereo {

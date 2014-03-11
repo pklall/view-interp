@@ -107,7 +107,6 @@ void PolarRectification::getRelevantEdges(
     allEdges[3]  = Eigen::ParametrizedLine<float, 2>(
             Eigen::Vector2f(imgWidth, imgHeight),
             Eigen::Vector2f(0, -imgHeight));
-    
 
     edges.clear();
     edges.reserve(4);
@@ -141,7 +140,9 @@ void PolarRectification::getRelevantEdges(
     }
 
     for (int i = 0; i < 4; i++) {
-        edges.push_back(allEdges[(startIndex + i) % 4]);
+        if (rel[(startIndex + i) % 4]) {
+            edges.push_back(allEdges[(startIndex + i) % 4]);
+        }
     }
 }
 
@@ -164,27 +165,24 @@ void PolarRectification::getEpipolarLine(
     const auto& match0 = (imgId == 0) ? match[0] : match[1];
     const auto& match1 = (imgId == 0) ? match[1] : match[0];
 
-    Eigen::Vector2f lineOther;
-
-    auto& l0 = (imgId == 0) ? line : lineOther;
-    auto& l1 = (imgId == 0) ? lineOther : line;
+    Eigen::Vector2f l0;
 
     // Procede to compute lines as if we are given a point in image 0.
 
     l0 = originalPt - e0;
 
     Eigen::Vector3f line1DirH = fundMat * originalPt.homogeneous();
-    l1 = line1DirH.hnormalized().unitOrthogonal();
+    line = line1DirH.hnormalized().unitOrthogonal();
 
     // Project the known match onto each line
     auto line0MatchProj = (match0 - e0).transpose() * l0;
 
-    auto line1MatchProj = (match1 - e1).transpose() * l1;
+    auto line1MatchProj = (match1 - e1).transpose() * line;
 
     // Flip the direction of line 1 if necessary to select the correct
     // half-epipolar line.
     if (line0MatchProj > 0 != line1MatchProj > 0) {
-        l1 *= -1;
+        line *= -1;
     }
 }
 
@@ -263,6 +261,8 @@ bool PolarRectification::getImg0ClippingPlanes(
         }
     }
 
+    assert(curCandidate == 2);
+
     return true;
 }
 
@@ -275,22 +275,101 @@ void PolarRectification::createRectificationMap() {
     getRelevantEdges(0, edges0);
     getRelevantEdges(1, edges1);
 
-    array<Eigen::Vector2f, 2> img0Clip;
+    Eigen::AlignedBox<float, 2> imgBounds(
+            Eigen::Vector2f(0, 0), 
+            Eigen::Vector2f(imgWidth, imgHeight));
 
-    bool mustClip = getImg0ClippingPlanes(img0Clip);
+    // Determine the start and end vectors...
 
-    if (!mustClip) {
-        // Based on the termination criteria for the main loop below, this
-        // should result in a single, full rotation.
-        img0Clip[0] = Eigen::Vector2f(0, 1);
-        img0Clip[1] = Eigen::Vector2f(0, -1);
+    // Use image 0 to determine the start and end directions
+    Eigen::Vector2f start0Dir;
+    Eigen::Vector2f end0Dir;
+
+    {
+        const auto startPoint = edges0[0].pointAt(0.0f);
+        const auto endPoint = edges0[edges0.size() - 1].pointAt(1.0f);
+
+        start0Dir = (startPoint - epipoles[0]).normalized();
+        end0Dir = (endPoint - epipoles[0]).normalized();
+
+        // Force counter-clockwise ordering
+        float cross =
+            start0Dir.x() * end0Dir.y() -
+            start0Dir.y() * end0Dir.x();
+
+        if (cross < 0) {
+            swap(start0Dir, end0Dir);
+        }
+    }
+
+    // Use image 1 to determine the start and end directions
+    Eigen::Vector2f start1Dir;
+    Eigen::Vector2f end1Dir;
+
+    {
+        const auto startPoint = edges1[0].pointAt(0.0f);
+        const auto endPoint = edges1[edges1.size() - 1].pointAt(1.0f);
+
+        getEpipolarLine(1, startPoint, start1Dir);
+        getEpipolarLine(1, endPoint, end1Dir);
+        
+        // Force counter-clockwise ordering
+        float cross =
+            start1Dir.x() * end1Dir.y() -
+            start1Dir.y() * end1Dir.x();
+
+        if (cross < 0) {
+            swap(start1Dir, end1Dir);
+        }
+    }
+
+    // Find the intersection of the arcs defined by the above direction vector
+    // pairs
+    Eigen::Vector2f startDir;
+    Eigen::Vector2f endDir;
+
+    if (imgBounds.contains(epipoles[0]) &&
+            imgBounds.contains(epipoles[1])) {
+        // If both the epipole passes through both images, the start and end
+        // direction should be the same.  We can arbitrarily choose one.
+        startDir = start0Dir;
+        endDir = start0Dir;
+    } else if (imgBounds.contains(epipoles[1])) {
+        startDir = start0Dir;
+        endDir = end0Dir;
+    } else if (imgBounds.contains(epipoles[0])) {
+        startDir = start1Dir;
+        endDir = end1Dir;
+    } else {
+        // If neither epipole is within the image, we must compute intersection.
+        // Note that this not handle the case where the intersection is empty
+        // since for the fundamental matrix to have been computed, we must
+        // have some non-empty common region between the rectified images.
+        float startCross =
+            start0Dir.x() * start1Dir.y() -
+            start0Dir.y() * start1Dir.x();
+
+        startDir = (startCross > 0) ? start0Dir : start1Dir;
+
+        float endCross =
+            end0Dir.x() * end1Dir.y() -
+            end0Dir.y() * end1Dir.x();
+
+        endDir = (endCross < 0) ? end0Dir : end1Dir;
     }
 
     // The direction of the current epipolar line
     // To begin, this should be along the direction of the first clipping-plane
-    Eigen::Vector2f curLineVec = -1 * img0Clip[0].unitOrthogonal();
+    Eigen::Vector2f curLineVec = startDir;
 
-    while (true) {
+    std::cout << "Start Vector:\n" << startDir << endl;
+    std::cout << "End Vector:\n" << endDir << endl;
+
+    std::cout << "epipoles:\n" << epipoles[0] << endl << epipoles[1] << endl;
+
+    int maxSteps = 2 * (imgWidth * 2 + imgHeight * 2);
+
+    for (int counter = 0; counter < maxSteps; counter++) {
         // The intersection of the current epipolar line in image 0 with a
         // relevant edge
         Eigen::Hyperplane<float, 2> curLinePlaneImg0(
@@ -310,6 +389,8 @@ void PolarRectification::createRectificationMap() {
                 curLineEndpointImg0 = intersect;
             }
         }
+
+        std::cout << "Current angle = " << atan2(curLineVec.y(), curLineVec.x()) * 180.0f / cimg::PI << endl;
 
         // The intersection of the current epipolar line in image 1 with a
         // relevant edge
@@ -334,11 +415,11 @@ void PolarRectification::createRectificationMap() {
 
         // A point on next epipolar line, using image 0, in image 0
         Eigen::Vector2f nextLine0Pt0 = curLineEndpointImg0 + curLineVec.unitOrthogonal();
-        Eigen::Vector2f nextLine0Dir0 = nextLine0Pt0 - epipoles[0];
+        Eigen::Vector2f nextLine0Dir0 = (nextLine0Pt0 - epipoles[0]).normalized();
        
         // A point on next epipolar line, using image 1, in image 1
         Eigen::Vector2f nextLine1Pt1 = curLineEndpointImg1 + curLinePlaneImg1.normal();
-        Eigen::Vector2f nextLine1Dir1 = nextLine1Pt1 - epipoles[1];
+        Eigen::Vector2f nextLine1Dir1 = (nextLine1Pt1 - epipoles[1]).normalized();
         
         // Map nextLine0 into image 1
         Eigen::Vector2f nextLine0Dir1;
@@ -348,7 +429,7 @@ void PolarRectification::createRectificationMap() {
         // Map nextLine1 into image 0
         Eigen::Vector2f nextLine1Dir0;
 
-        getEpipolarLine(0, nextLine1Pt1, nextLine1Dir0);
+        getEpipolarLine(1, nextLine1Pt1, nextLine1Dir0);
 
         // Use the next epipolar line which is closest
         float dist0 = (nextLine0Dir0 - curLineVec).squaredNorm();
@@ -356,10 +437,12 @@ void PolarRectification::createRectificationMap() {
 
         Eigen::Vector2f& next = (dist0 < dist1) ? nextLine0Dir0 : nextLine1Dir0;
 
-        // If the vector goes from front-to-back relative to the second clipping
-        // plane, stop.
-        if (curLineVec.transpose() * img0Clip[2] > 0 &&
-                next.transpose() * img0Clip[2] < 0) {
+        // If the vector crosses over the end direction, then stop iterating.
+        if (
+                Eigen::Vector3f(curLineVec.x(), curLineVec.y(), 0).cross(
+                    Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() > 0 &&
+                Eigen::Vector3f(next.x(), next.y(), 0).cross(
+                    Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() < 0) {
             break;
         }
 
