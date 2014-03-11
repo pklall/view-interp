@@ -102,10 +102,10 @@ class PolarRectification {
         /**
          * Specifies the set of epipolar lines to use for rectification.
          *
-         * Each epipolar line, i, is represented by a line in image 0
-         * defined by (epipoles[0], epipoleEndpoints[i][0]) and a line
-         * in image 1 defined by (epipoles[1], epipoleEndpoints[i][1]).
+         * Each epipolar line is precisely specified by its direction vector
+         * in image 0 and image 1 because they must each pass through the
+         * respective epipole.
          */
-        vector<array<Eigen::Vector2f, 2>> epipoleEndpoints;
+        vector<array<Eigen::Vector2f, 2>> epipoleLines;
 };
 
