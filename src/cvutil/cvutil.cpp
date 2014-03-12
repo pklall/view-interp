@@ -89,7 +89,7 @@ void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
     left.match(right, false, points);
 
     float inlierEpipolarMaxDist = 3;
-    float targetConfidence = 0.99;
+    float targetConfidence = 0.999;
 
     cv::Mat cvFundMat = cv::findFundamentalMat(points[0], points[1],
             cv::FM_RANSAC, inlierEpipolarMaxDist, targetConfidence,

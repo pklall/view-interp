@@ -17,7 +17,7 @@ int main(int argc, char** argv) {
     unique_ptr<CImg<uint8_t>> prevImg(new CImg<uint8_t>());
     unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
 
-    const int maxFeatures = 512;
+    const int maxFeatures = 1024;
     const int patchSize = 31;
 
     unique_ptr<CVFeatureMatcher> prevFeat(

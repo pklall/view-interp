@@ -35,26 +35,26 @@ void PolarRectification::rectify(
 
     reverseMap.resize(maxRValues, numEpipoles, 2);
 
-    // Generate clipping planes
-    // Note that corners are specified in counter-clockwise order
-    /*
-    Eigen::Matrix<float, 2, 4> corners;
-    corners <<
-        0, 0,         imgWidth,  imgWidth,
-        0, imgHeight, imgHeight, 0;
+    // It's possible that the resulting transform will result in a reflection.
+    // This would be problematic for computing stereo with conventional
+    // algorithms, so we must detect and correct for it.
+    float rFactor = 1;
+    float rStart = radMin;
 
-    array<Eigen::Hyperplane<float, 2>, 4> edgePlanes;
+    if (numEpipoles > 2) {
+        // if the epipolar lines go in clockwise order, then reflect
+        const auto& eLine0 = epipoleLines[0][imgId];
+        const auto& eLine1 = epipoleLines[1][imgId];
 
-    for (int i = 0; i < 4; i++) {
-        Eigen::Vector2f corner0 = corners.col(i);
-        Eigen::Vector2f corner1 = corners.col((i + 1) % 4);
+        float cross =
+            eLine0.x() * eLine1.y() -
+            eLine0.y() * eLine1.x();
 
-        Eigen::ParametrizedLine<float, 2> edge(corner0, corner1 - corner0);
-
-        // Note that the plane normal faces inside the image
-        edgePlanes[i] = Eigen::Hyperplane<float, 2>(edge.unitOrthogonal(), corner0);
+        if (cross < 0) {
+            rFactor = -1;
+            rStart = radMax;
+        }
     }
-    */
 
     for (int eI = 0; eI < numEpipoles; eI++) {
         const array<Eigen::Vector2f, 2>& endpoint = epipoleLines[eI];
@@ -63,12 +63,9 @@ void PolarRectification::rectify(
 
         Eigen::ParametrizedLine<float, 2> eLine(e, eLineDir);
 
-        // TODO Clip the line to avoid unnecessary sampling outside the image's
-        // valid region
-        
         cimg_forC(original, c) {
             for (int r = 0; r < maxRValues; r++) {
-                Eigen::Vector2f pt = eLine.pointAt((float) r + radMin);
+                Eigen::Vector2f pt = eLine.pointAt(r * rFactor + rStart);
 
                 float out;
 
@@ -455,7 +452,6 @@ void PolarRectification::createRectificationMap() {
                     Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() > 0 &&
                 Eigen::Vector3f(next.x(), next.y(), 0).cross(
                     Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() <= 0) {
-            cout << "Termination reached\n";
             break;
         }
 
