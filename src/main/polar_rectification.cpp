@@ -173,15 +173,24 @@ void PolarRectification::getEpipolarLine(
 
     // Procede to compute lines as if we are given a point in image 0.
 
-    l0 = originalPt - e0;
+    l0 = (originalPt - e0).normalized();
 
     Eigen::Vector3f line1DirH = fundMat * originalPt.homogeneous();
     line = line1DirH.hnormalized().unitOrthogonal();
 
     // Project the known match onto each line
-    auto line0MatchProj = (match0 - e0).dot(l0);
+    float line0MatchProj = (match0 - e0).normalized().dot(l0);
 
-    auto line1MatchProj = (match1 - e1).dot(line);
+    float line1MatchProj = (match1 - e1).normalized().dot(line);
+
+    // If the match point's epipolar line is nearly orthogonal to this
+    // epipolar line, then we can't reliably determine which side is which.
+    // So, we can rotate the matched point 90 degrees.  Note that this
+    // assumes that the input images to rectify are facing the same direction.
+    if (fabs(line0MatchProj) < 0.25f) {
+        line0MatchProj = (match0 - e0).unitOrthogonal().dot(l0);
+        line1MatchProj = (match1 - e1).unitOrthogonal().dot(line);
+    }
 
     // Flip the direction of line 1 if necessary to select the correct
     // half-epipolar line.
@@ -334,14 +343,17 @@ void PolarRectification::createRectificationMap() {
 
     if (imgBounds.contains(epipoles[0]) &&
             imgBounds.contains(epipoles[1])) {
+        printf("Epipoles inside image 0 & image 1\n");
         // If both the epipole passes through both images, the start and end
         // direction should be the same.  We can arbitrarily choose one.
         startDir = Eigen::Vector2f(1, 0);
         endDir = Eigen::Vector2f(1, 0);
     } else if (imgBounds.contains(epipoles[1])) {
+        printf("Epipoles inside image 1\n");
         startDir = start0Dir;
         endDir = end0Dir;
     } else if (imgBounds.contains(epipoles[0])) {
+        printf("Epipoles inside image 0\n");
         startDir = start1Dir;
         endDir = end1Dir;
     } else {
@@ -443,6 +455,7 @@ void PolarRectification::createRectificationMap() {
                     Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() > 0 &&
                 Eigen::Vector3f(next.x(), next.y(), 0).cross(
                     Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() <= 0) {
+            cout << "Termination reached\n";
             break;
         }
 
