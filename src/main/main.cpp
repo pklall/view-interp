@@ -38,11 +38,14 @@ int main(int argc, char** argv) {
 
         curImg->load(argv[1 + imgI]);
 
+        printf("Detecting features...\n");
         curFeat->detectFeatures(curImg->get_RGBtoLab().channel(0));
+        printf("Done\n");
 
+        printf("Estimating fundamental matrix...\n");
         Eigen::Matrix3f F;
-
         fEstimator.estimateFundamentalMatrix(*prevFeat, *curFeat, F);
+        printf("Done\n");
 
         array<Eigen::Vector2f, 2> match;
 
@@ -56,9 +59,19 @@ int main(int argc, char** argv) {
             }
         }
 
-        // TODO get match from estimator
-
+        printf("Initializing rectification...\n");
         rectification.init(curImg->width(), curImg->height(), F, match);
+        printf("Done\n");
+
+        CImg<uint8_t> rectified;
+        CImg<float> reverseMap;
+
+        rectification.rectify(0, *prevImg, rectified, reverseMap);
+        rectified.save(("./results/rectified_" + to_string(imgI) + "_left.png").c_str());
+
+        rectification.rectify(1, *curImg, rectified, reverseMap);
+
+        rectified.save(("./results/rectified_" + to_string(imgI) + "_right.png").c_str());
 
         swap(prevImg, curImg);
         swap(prevFeat, curFeat);

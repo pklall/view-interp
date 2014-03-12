@@ -29,10 +29,11 @@ void PolarRectification::rectify(
 
     const Eigen::Vector2f& e = epipoles[imgId];
 
-    rectified.resize((int) (radMax - radMin + 0.5f), numEpipoles, 1,
-            original.spectrum());
+    int maxRValues = radMax - radMin + 0.5f;
 
-    reverseMap.resize((int) (radMax - radMin + 0.5f), numEpipoles, 2);
+    rectified.resize(maxRValues, numEpipoles, 1, original.spectrum());
+
+    reverseMap.resize(maxRValues, numEpipoles, 2);
 
     // Generate clipping planes
     // Note that corners are specified in counter-clockwise order
@@ -55,7 +56,7 @@ void PolarRectification::rectify(
     }
     */
 
-    for (int eI = 0; eI < epipoleLines.size(); eI++) {
+    for (int eI = 0; eI < numEpipoles; eI++) {
         const array<Eigen::Vector2f, 2>& endpoint = epipoleLines[eI];
 
         Eigen::Vector2f eLineDir =  endpoint[imgId];
@@ -66,14 +67,17 @@ void PolarRectification::rectify(
         // valid region
         
         cimg_forC(original, c) {
-            for (int t = radMin; t < radMax; t++) {
-                Eigen::Vector2f pt = eLine.pointAt((float) t);
+            for (int r = 0; r < maxRValues; r++) {
+                Eigen::Vector2f pt = eLine.pointAt((float) r + radMin);
 
-                rectified(t, eI, 0, c) = original.linear_atXY(pt.x(), pt.y(), 0, c);
+                float out;
 
-                reverseMap(t, eI, 0) = pt.x();
+                rectified(r, eI, 0, c) =
+                    original.linear_atXY(pt.x(), pt.y(), 0, c, out);
 
-                reverseMap(t, eI, 1) = pt.y();
+                reverseMap(r, eI, 0) = pt.x();
+
+                reverseMap(r, eI, 1) = pt.y();
             }
         }
     }
@@ -175,9 +179,9 @@ void PolarRectification::getEpipolarLine(
     line = line1DirH.hnormalized().unitOrthogonal();
 
     // Project the known match onto each line
-    auto line0MatchProj = (match0 - e0).transpose() * l0;
+    auto line0MatchProj = (match0 - e0).dot(l0);
 
-    auto line1MatchProj = (match1 - e1).transpose() * line;
+    auto line1MatchProj = (match1 - e1).dot(line);
 
     // Flip the direction of line 1 if necessary to select the correct
     // half-epipolar line.
@@ -239,7 +243,7 @@ bool PolarRectification::getImg0ClippingPlanes(
             // Since these vectors can also be interpreted as points on the
             // epipolar lines after translation such that the epipole is the
             // origin, we can conveniently perform projection in this space.
-            bool nonNeg = eLines[j].transpose() * candidatePlane >= 0;
+            bool nonNeg = eLines[j].dot(candidatePlane) >= 0;
 
             if (nonNeg) {
                 numNonNeg++;
@@ -332,8 +336,8 @@ void PolarRectification::createRectificationMap() {
             imgBounds.contains(epipoles[1])) {
         // If both the epipole passes through both images, the start and end
         // direction should be the same.  We can arbitrarily choose one.
-        startDir = start0Dir;
-        endDir = start0Dir;
+        startDir = Eigen::Vector2f(1, 0);
+        endDir = Eigen::Vector2f(1, 0);
     } else if (imgBounds.contains(epipoles[1])) {
         startDir = start0Dir;
         endDir = end0Dir;
@@ -349,86 +353,82 @@ void PolarRectification::createRectificationMap() {
             start0Dir.x() * start1Dir.y() -
             start0Dir.y() * start1Dir.x();
 
-        startDir = (startCross > 0) ? start0Dir : start1Dir;
+        startDir = (startCross < 0) ? start0Dir : start1Dir;
 
         float endCross =
             end0Dir.x() * end1Dir.y() -
             end0Dir.y() * end1Dir.x();
 
-        endDir = (endCross < 0) ? end0Dir : end1Dir;
+        endDir = (endCross > 0) ? end0Dir : end1Dir;
     }
 
     // The direction of the current epipolar line
     // To begin, this should be along the direction of the first clipping-plane
     Eigen::Vector2f curLineVec = startDir;
 
-    std::cout << "Start Vector:\n" << startDir << endl;
-    std::cout << "End Vector:\n" << endDir << endl;
-
-    std::cout << "epipoles:\n" << epipoles[0] << endl << epipoles[1] << endl;
-
     int maxSteps = 2 * (imgWidth * 2 + imgHeight * 2);
 
     for (int counter = 0; counter < maxSteps; counter++) {
-        // The intersection of the current epipolar line in image 0 with a
-        // relevant edge
-        Eigen::Hyperplane<float, 2> curLinePlaneImg0(
-                curLineVec.unitOrthogonal(), epipoles[0]);
+        // Compute the intersection of the current epipolar line in image 0 with a
+        // relevant edge by casting a ray from the epipole.
+        Eigen::ParametrizedLine<float, 2> curLine0(epipoles[0], curLineVec);
 
-        Eigen::Vector2f curLineEndpointImg0;
-        float closestDist = std::numeric_limits<float>::max();
+        float closestIntersectionParam0 = std::numeric_limits<float>::max();
 
         for (const auto& edge : edges0) {
-            Eigen::Vector2f intersect =
-                edge.intersectionPoint(curLinePlaneImg0);
+            Eigen::Hyperplane<float, 2> edgePlane(edge);
+            float iParam = curLine0.intersectionParameter(edgePlane);
 
-            float dist = (intersect - epipoles[0]).squaredNorm();
-
-            if (dist < closestDist) {
-                closestDist = dist;
-                curLineEndpointImg0 = intersect;
+            if (iParam > 0) {
+                closestIntersectionParam0 = min(closestIntersectionParam0,
+                        iParam);
             }
         }
 
-        std::cout << "Current angle = " << atan2(curLineVec.y(), curLineVec.x()) * 180.0f / cimg::PI << endl;
+        Eigen::Vector2f curLineEndpointImg0 = curLine0.pointAt(closestIntersectionParam0);
 
-        // The intersection of the current epipolar line in image 1 with a
-        // relevant edge
-        Eigen::Hyperplane<float, 2> curLinePlaneImg1;
+        // Compute the intersection of the current epipolar line in image 1 with a
+        // relevant edge by casting a ray from the epipole.
+        Eigen::Vector2f curLineVec1;
 
-        getEpipolarLine(0, curLineEndpointImg0, curLinePlaneImg1);
+        getEpipolarLine(0, curLineEndpointImg0, curLineVec1);
 
-        Eigen::Vector2f curLineEndpointImg1;
-        closestDist = std::numeric_limits<float>::max();
+        Eigen::ParametrizedLine<float, 2> curLine1(epipoles[1], curLineVec1);
+
+        float closestIntersectionParam1 = std::numeric_limits<float>::max();
 
         for (const auto& edge : edges1) {
-            Eigen::Vector2f intersect =
-                edge.intersectionPoint(curLinePlaneImg1);
+            Eigen::Hyperplane<float, 2> edgePlane(edge);
+            float iParam = curLine1.intersectionParameter(edgePlane);
 
-            float dist = (intersect - epipoles[1]).squaredNorm();
-
-            if (dist < closestDist) {
-                closestDist = dist;
-                curLineEndpointImg1 = intersect;
+            if (iParam > 0) {
+                closestIntersectionParam1 = min(closestIntersectionParam1,
+                        iParam);
             }
         }
+
+        Eigen::Vector2f curLineEndpointImg1 = curLine1.pointAt(closestIntersectionParam1);
 
         // A point on next epipolar line, using image 0, in image 0
         Eigen::Vector2f nextLine0Pt0 = curLineEndpointImg0 + curLineVec.unitOrthogonal();
         Eigen::Vector2f nextLine0Dir0 = (nextLine0Pt0 - epipoles[0]).normalized();
-       
-        // A point on next epipolar line, using image 1, in image 1
-        Eigen::Vector2f nextLine1Pt1 = curLineEndpointImg1 + curLinePlaneImg1.normal();
-        Eigen::Vector2f nextLine1Dir1 = (nextLine1Pt1 - epipoles[1]).normalized();
         
         // Map nextLine0 into image 1
         Eigen::Vector2f nextLine0Dir1;
-
         getEpipolarLine(0, nextLine0Pt0, nextLine0Dir1);
+       
+        // A point on next epipolar line, using image 1, in image 1...
+        
+        // First, we must compute the direction to move in image 1
+        Eigen::Vector2f arcDirImg1 = 
+            (nextLine0Dir1 -
+                (nextLine0Dir1.dot(curLineVec1) * curLineVec1)).normalized();
+
+        Eigen::Vector2f nextLine1Pt1 = curLineEndpointImg1 + arcDirImg1;
+        Eigen::Vector2f nextLine1Dir1 = (nextLine1Pt1 - epipoles[1]).normalized();
         
         // Map nextLine1 into image 0
         Eigen::Vector2f nextLine1Dir0;
-
         getEpipolarLine(1, nextLine1Pt1, nextLine1Dir0);
 
         // Use the next epipolar line which is closest
@@ -442,7 +442,7 @@ void PolarRectification::createRectificationMap() {
                 Eigen::Vector3f(curLineVec.x(), curLineVec.y(), 0).cross(
                     Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() > 0 &&
                 Eigen::Vector3f(next.x(), next.y(), 0).cross(
-                    Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() < 0) {
+                    Eigen::Vector3f(endDir.x(), endDir.y(), 0)).z() <= 0) {
             break;
         }
 
@@ -489,6 +489,11 @@ void PolarRectification::getEpipolarDistanceRanges(
         intersectT = max(0.0f, intersectT);
 
         float dist = (e - (edge.pointAt(intersectT))).norm();
+
+        rmin = min(dist, rmin);
+        rmax = max(dist, rmax);
+
+        dist = (corner0 - e).norm();
 
         rmin = min(dist, rmin);
         rmax = max(dist, rmax);
