@@ -18,7 +18,36 @@ class PolarRectification {
                 CImg<uint8_t>& rectified,
                 CImg<float>& reverseMap) const;
 
+        /*
+        void rectifyBlock(
+                int startRow,
+                const CImg<uint8_t>& original0,
+                const CImg<uint8_t>& original1,
+                int vertSampleFactor,
+                int horSampleFactor,
+                int maxPixelCount,
+                CImg<uint8_t>& rectified0,
+                CImg<uint8_t>& rectified1,
+                float& relativeDisparity,
+                int& nextRow,
+                int& remainingRowCount);
+        */
+
     private:
+        /**
+         * Polar rectification relies on sampling the space of all epipolar
+         * half-lines through the epipole.  It is sufficient to represent
+         * these by their corresponding direction vectors in each image.
+         *
+         * Along with each such vector, there is a relevant range of distance
+         * from the epipole at which the half-line intersects each image.
+         */
+        struct EpipolarLineSample {
+            Eigen::Vector2f direction[2];
+            float minRadius[2];
+            float maxRadius[2];
+        };
+
         /**
          * Relevant edges are parameterized lines, with t in [0, 1], along
          * the border of the given image such that a ray from each point
@@ -67,10 +96,14 @@ class PolarRectification {
         bool getImg0ClippingPlanes(
                 array<Eigen::Vector2f, 2>& planes) const;
 
+        void getEpipoleDistanceRange(
+                int imgId,
+                const Eigen::Vector2f& direction,
+                float& rmin,
+                float& rmax) const;
+
         /**
-         * Generates the set of epipolar lines required for rectification.
-         * Each line is specified by an epipole and an endpoint in the
-         * provided array.
+         * Computes `epipoleLines`.
          */
         void createRectificationMap();
 
@@ -106,6 +139,6 @@ class PolarRectification {
          * in image 0 and image 1 because they must each pass through the
          * respective epipole.
          */
-        vector<array<Eigen::Vector2f, 2>> epipoleLines;
+        vector<EpipolarLineSample> epipoleLines;
 };
 

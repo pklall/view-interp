@@ -43,8 +43,8 @@ void PolarRectification::rectify(
 
     if (numEpipoles > 2) {
         // if the epipolar lines go in clockwise order, then reflect
-        const auto& eLine0 = epipoleLines[0][imgId];
-        const auto& eLine1 = epipoleLines[1][imgId];
+        const auto& eLine0 = epipoleLines[0].direction[imgId];
+        const auto& eLine1 = epipoleLines[1].direction[imgId];
 
         float cross =
             eLine0.x() * eLine1.y() -
@@ -57,9 +57,7 @@ void PolarRectification::rectify(
     }
 
     for (int eI = 0; eI < numEpipoles; eI++) {
-        const array<Eigen::Vector2f, 2>& endpoint = epipoleLines[eI];
-
-        Eigen::Vector2f eLineDir =  endpoint[imgId];
+        const Eigen::Vector2f& eLineDir = epipoleLines[eI].direction[imgId];
 
         Eigen::ParametrizedLine<float, 2> eLine(e, eLineDir);
 
@@ -276,6 +274,49 @@ bool PolarRectification::getImg0ClippingPlanes(
     return true;
 }
 
+void PolarRectification::getEpipoleDistanceRange(
+        int imgId,
+        const Eigen::Vector2f& direction,
+        float& rmin,
+        float& rmax) const {
+    // Corners in counter-clockwise order
+    Eigen::Matrix<float, 2, 4> corners;
+    corners <<
+        0, imgWidth, imgWidth,  0,
+        0, 0,        imgHeight, imgHeight;
+
+    Eigen::ParametrizedLine<float, 2> eLine(epipoles[imgId], direction);
+
+    rmin = std::numeric_limits<float>::min();
+    rmax = std::numeric_limits<float>::max();
+
+    for (int i = 0; i < 4; i++) {
+        Eigen::Vector2f corner0 = corners.col(i);
+        Eigen::Vector2f corner1 = corners.col((i + 1) % 4);
+
+        // Note that, since corners are enumerated in ccw order, the normal
+        // faces *inside* the image.
+        Eigen::Hyperplane<float, 2> edgePlane(
+                (corner1 - corner0).unitOrthogonal(), corner1);
+
+        float intersectT = eLine.intersectionParameter(edgePlane);
+
+        // Ignore backwards intersections
+        if (intersectT > 0) {
+            if (direction.dot(edgePlane.normal()) < 0) {
+                // The maximum radius should be the minimum of distances along the
+                // line to planes facing the epipole
+                rmax = min(rmax, intersectT);
+            } else {
+                rmin = max(rmin, intersectT);
+            }
+        }
+    }
+
+    // Minimum radius cannot be negative
+    rmin = max(0.0f, rmin);
+}
+
 void PolarRectification::createRectificationMap() {
     epipoleLines.clear();
 
@@ -334,7 +375,7 @@ void PolarRectification::createRectificationMap() {
     }
 
     // Find the intersection of the arcs defined by the above direction vector
-    // pairs
+    // pairs.  This will define the feasible region of the rectified images.
     Eigen::Vector2f startDir;
     Eigen::Vector2f endDir;
 
@@ -378,23 +419,18 @@ void PolarRectification::createRectificationMap() {
     int maxSteps = 2 * (imgWidth * 2 + imgHeight * 2);
 
     for (int counter = 0; counter < maxSteps; counter++) {
+        EpipolarLineSample curSample;
+
+        curSample.direction[0] = curLineVec;
+
         // Compute the intersection of the current epipolar line in image 0 with a
         // relevant edge by casting a ray from the epipole.
         Eigen::ParametrizedLine<float, 2> curLine0(epipoles[0], curLineVec);
 
-        float closestIntersectionParam0 = std::numeric_limits<float>::max();
+        getEpipoleDistanceRange(0, curLineVec, curSample.minRadius[0],
+                curSample.maxRadius[0]);
 
-        for (const auto& edge : edges0) {
-            Eigen::Hyperplane<float, 2> edgePlane(edge);
-            float iParam = curLine0.intersectionParameter(edgePlane);
-
-            if (iParam > 0) {
-                closestIntersectionParam0 = min(closestIntersectionParam0,
-                        iParam);
-            }
-        }
-
-        Eigen::Vector2f curLineEndpointImg0 = curLine0.pointAt(closestIntersectionParam0);
+        Eigen::Vector2f curLineEndpointImg0 = curLine0.pointAt(curSample.maxRadius[0]);
 
         // Compute the intersection of the current epipolar line in image 1 with a
         // relevant edge by casting a ray from the epipole.
@@ -402,21 +438,21 @@ void PolarRectification::createRectificationMap() {
 
         getEpipolarLine(0, curLineEndpointImg0, curLineVec1);
 
+        curSample.direction[1] = curLineVec1;
+
         Eigen::ParametrizedLine<float, 2> curLine1(epipoles[1], curLineVec1);
 
-        float closestIntersectionParam1 = std::numeric_limits<float>::max();
+        getEpipoleDistanceRange(1, curLineVec1, curSample.minRadius[1],
+                curSample.maxRadius[1]);
 
-        for (const auto& edge : edges1) {
-            Eigen::Hyperplane<float, 2> edgePlane(edge);
-            float iParam = curLine1.intersectionParameter(edgePlane);
+        Eigen::Vector2f curLineEndpointImg1 = curLine1.pointAt(curSample.maxRadius[1]);
 
-            if (iParam > 0) {
-                closestIntersectionParam1 = min(closestIntersectionParam1,
-                        iParam);
-            }
-        }
+        // Push the current epipolar line
+        epipoleLines.push_back(curSample);
 
-        Eigen::Vector2f curLineEndpointImg1 = curLine1.pointAt(closestIntersectionParam1);
+        // Compute the next epipolar line by considering those resulting from moving
+        // one unit along the edge of image 0 and image 1 from the current epipolar
+        // line.
 
         // A point on next epipolar line, using image 0, in image 0
         Eigen::Vector2f nextLine0Pt0 = curLineEndpointImg0 + curLineVec.unitOrthogonal();
@@ -456,12 +492,6 @@ void PolarRectification::createRectificationMap() {
         }
 
         curLineVec = next;
-
-        if (dist0 < dist1) {
-            epipoleLines.push_back({nextLine0Dir0, nextLine0Dir1});
-        } else {
-            epipoleLines.push_back({nextLine1Dir0, nextLine1Dir1});
-        }
     }
 }
 
@@ -477,8 +507,8 @@ void PolarRectification::getEpipolarDistanceRanges(
     // Corners in counter-clockwise order
     Eigen::Matrix<float, 2, 4> corners;
     corners <<
-        0, 0,         imgWidth,  imgWidth,
-        0, imgHeight, imgHeight, 0;
+        0, imgWidth, imgWidth,  0,
+        0, 0,        imgHeight, imgHeight;
 
     for (int i = 0; i < 4; i++) {
         Eigen::Vector2f corner0 = corners.col(i);
