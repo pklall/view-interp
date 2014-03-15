@@ -48,21 +48,18 @@ void PolarRectification::rectify(
 
     const Eigen::Vector2d& e = epipoles[imgId];
 
-    int maxRValues = radMax - radMin + 0.5f;
+    int maxRValues = radMax - radMin;
 
     rectified.resize(maxRValues, numEpipoles, 1, original.spectrum());
 
     reverseMap.resize(maxRValues, numEpipoles, 2);
 
-    // It's possible that the resulting transform will result in a reflection.
-    // This would be problematic for computing stereo with conventional
-    // algorithms, so we must detect and correct for it.
-    double rFactor = 1;
-    double rStart = radMin;
+    int rFactor = 1;
+    int rStart = 0;
 
     if (epipolesReflected && imgId == 1) {
         rFactor = -1;
-        rStart = radMax;
+        rStart = maxRValues - 1;
     }
 
     for (int eI = 0; eI < numEpipoles; eI++) {
@@ -70,20 +67,97 @@ void PolarRectification::rectify(
 
         Eigen::ParametrizedLine<double, 2> eLine(e, eLineDir);
 
+        int minR = epipoleLines[eI].minRadius[imgId] - radMin - 0.5f;
+        int maxR = epipoleLines[eI].maxRadius[imgId] - radMin + 0.5f;
+
         cimg_forC(original, c) {
-            for (int r = 0; r < maxRValues; r++) {
-                Eigen::Vector2d pt = eLine.pointAt(r * rFactor + rStart);
+            for (int r = 0; r < minR; r++) {
+                int rStorage = r * rFactor + rStart;
+
+                rectified(rStorage, eI, 0, c) = 0;
+
+                reverseMap(rStorage, eI, 0) = -1;
+
+                reverseMap(rStorage, eI, 1) = -1;
+            }
+
+            for (int r = minR; r < maxR; r++) {
+                int rStorage = r * rFactor + rStart;
+
+                Eigen::Vector2d pt = eLine.pointAt(r + radMin);
 
                 float out;
 
-                rectified(r, eI, 0, c) =
+                rectified(rStorage, eI, 0, c) =
                     original.linear_atXY(pt.x(), pt.y(), 0, c, out);
 
-                reverseMap(r, eI, 0) = pt.x();
+                reverseMap(rStorage, eI, 0) = pt.x();
 
-                reverseMap(r, eI, 1) = pt.y();
+                reverseMap(rStorage, eI, 1) = pt.y();
+            }
+
+            for (int r = maxR; r < maxRValues; r++) {
+                int rStorage = r * rFactor + rStart;
+
+                rectified(rStorage, eI, 0, c) = 0;
+
+                reverseMap(rStorage, eI, 0) = -1;
+
+                reverseMap(rStorage, eI, 1) = -1;
             }
         }
+    }
+}
+
+void PolarRectification::maximalRectificationRange(
+        int maximumPixelCount,
+        int startRow,
+        int& numRows,
+        int& maximumWidth,
+        double& disparityFactor,
+        double& disparityOffset) {
+    double minR[2];
+    double maxR[2];
+
+    for (int i = 0; i < 2; i++) {
+        minR[i] = std::numeric_limits<double>::max();
+        maxR[i] = std::numeric_limits<double>::min();
+    }
+
+    maximumWidth = 0;
+
+    for (numRows = 0; numRows < epipoleLines.size() - startRow; numRows++) {
+        for (int i = 0; i < 2; i++) {
+            // Compute this before we clobber minR and maxR with values from
+            // a row which may not be in the maximal span.
+            if (epipolesReflected) {
+                disparityFactor = -1;
+                disparityOffset = minR[0] - maxR[1];
+            } else {
+                disparityFactor = 1;
+                disparityOffset = minR[0] - minR[1];
+            }
+
+            minR[i] = min(minR[i], epipoleLines[startRow + numRows].minRadius[i]);
+            maxR[i] = max(maxR[i], epipoleLines[startRow + numRows].maxRadius[i]);
+
+            int newMaximumWidth = (maxR - minR) + 0.5;
+
+            if (newMaximumWidth * (numRows + 1) > maximumPixelCount) {
+                numRows++;
+                break;
+            } else {
+                maximumWidth = max(maximumWidth, newMaximumWidth);
+            }
+        }
+    }
+
+    if (epipolesReflected) {
+        disparityFactor = -1;
+        disparityOffset = minR[0] - maxR[1];
+    } else {
+        disparityFactor = 1;
+        disparityOffset = minR[0] - minR[1];
     }
 }
 

@@ -20,26 +20,87 @@ class PolarRectification {
                 Eigen::Matrix3d _F,
                 array<Eigen::Vector2d, 2> _match);
 
+        /**
+         * Rectifies an entire image.  Note that the result may be very large
+         * and include arbitrary radial offsets.  Therefore, other methods
+         * below should be used instead if stereo matching is to be performed.
+         */
         void rectify(
                 int imgId,
                 const CImg<uint8_t>& original,
                 CImg<uint8_t>& rectified,
                 CImg<float>& reverseMap) const;
 
-        /*
-        void rectifyBlock(
+        inline int getRectifiedSpanCount() {
+            return epipoleLines.size();
+        }
+
+        /**
+         * Computes the largest vertical region with the given starting
+         * span index which will fit in an image buffers with the given
+         * number of maximum pixels.
+         *
+         * Note that maximumPixelCount represents the maximum number
+         * of pixels in both the left and the right images, so double
+         * the memory will be required to store both rectified images.
+         *
+         * `endSpan` is exclusive.
+         *
+         * disparity[Factor|Offset] defines the linear function of disparity
+         * values from horizontal offsets in the rectified images to
+         * differences in radial distance from epipoles as:
+         *   epipolar_distance = disparityFactor * horizontal_disparity +
+         *                       disparityOffset
+         */
+        void maximalRectificationRange(
+                int maximumPixelCount,
                 int startRow,
-                const CImg<uint8_t>& original0,
-                const CImg<uint8_t>& original1,
-                float angularSampleFactor,
-                float radialSampleFactor,
-                int maxPixelCount,
-                CImg<uint8_t>& rectified0,
-                CImg<uint8_t>& rectified1,
-                float& rectificationDisparity,
-                int& nextRow,
-                int& remainingRowCount) const;
-        */
+                int& numRows,
+                int& maximumWidth,
+                double& disparityFactor,
+                double& disparityOffset);
+
+        template<class Callback>
+        inline void evaluateRectificationTransform(
+                int imgId,
+                int startRow,
+                int numRows,
+                Callback callback) const {
+            double minR = std::numeric_limits<double>::max();
+            double maxR = std::numeric_limits<double>::min();
+
+            for (int eI = 0; eI < numRows; eI++) {
+                const auto& sample = epipoleLines[startRow + eI];
+
+                minR = min(minR, sample.minRadius[imgId]);
+                maxR = max(maxR, sample.maxRadius[imgId]);
+            }
+
+            int rFactor = 1;
+            double rStart = minR;
+
+            if (epipolesReflected && imgId == 1) {
+                rFactor = -1;
+                rStart = maxR;
+            }
+
+            const Eigen::Vector2d& e = epipoles[imgId];
+
+            for (int eI = 0; eI < numRows; eI++) {
+                const Eigen::Vector2d& eLineDir = epipoleLines[eI].direction[imgId];
+
+                Eigen::ParametrizedLine<double, 2> eLine(e, eLineDir);
+
+                for (int r = 0; r < (maxR - minR) + 0.5; r++) {
+                    int rStorage = r * rFactor + rStart;
+
+                    Eigen::Vector2i x(eI, r);
+                    Eigen::Vector2d y = eLine.pointAt(r * rFactor + rStart);
+                    
+                    callback(x, y);
+                }
+            }
+        }
 
     private:
         /**
