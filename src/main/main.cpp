@@ -17,8 +17,8 @@ int main(int argc, char** argv) {
     unique_ptr<CImg<uint8_t>> prevImg(new CImg<uint8_t>());
     unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
 
-    const int maxFeatures = 1024;
-    const int patchSize = 31;
+    const int maxFeatures = 4096;
+    const int patchSize = 61;
 
     unique_ptr<CVFeatureMatcher> prevFeat(
             new CVFeatureMatcher(maxFeatures, patchSize));
@@ -43,11 +43,15 @@ int main(int argc, char** argv) {
         printf("Done\n");
 
         printf("Estimating fundamental matrix...\n");
-        Eigen::Matrix3f F;
+        Eigen::Matrix3d F;
         fEstimator.estimateFundamentalMatrix(*prevFeat, *curFeat, F);
         printf("Done\n");
 
-        array<Eigen::Vector2f, 2> match;
+        cout << "F = " << endl;
+        cout << F;
+        cout << endl << endl;
+
+        array<Eigen::Vector2d, 2> match;
 
         int numMatches = fEstimator.getMatchCount();
 
@@ -60,8 +64,13 @@ int main(int argc, char** argv) {
         }
 
         printf("Initializing rectification...\n");
-        rectification.init(curImg->width(), curImg->height(), F, match);
+        bool rectificationSuccess = rectification.init(curImg->width(), curImg->height(), F, match);
         printf("Done\n");
+
+        if (!rectificationSuccess) {
+            printf("Rectification failed\n");
+            continue;
+        }
 
         CImg<uint8_t> rectified;
         CImg<float> reverseMap;

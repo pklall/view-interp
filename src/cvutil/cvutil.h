@@ -70,7 +70,7 @@ class CVFundamentalMatrixEstimator {
         void estimateFundamentalMatrix(
                 CVFeatureMatcher& left,
                 CVFeatureMatcher& right,
-                Eigen::Matrix3f& fundMat);
+                Eigen::Matrix3d& fundMat);
 
         inline int getMatchCount() {
             return inlierMask.size();
@@ -78,8 +78,8 @@ class CVFundamentalMatrixEstimator {
 
         inline bool getMatch(
                 int index,
-                Eigen::Vector2f& left,
-                Eigen::Vector2f& right) {
+                Eigen::Vector2d& left,
+                Eigen::Vector2d& right) {
             if (inlierMask[index] == 0) {
                 return false;
             }
@@ -87,8 +87,8 @@ class CVFundamentalMatrixEstimator {
             const auto& lp = points[0][index];
             const auto& rp = points[1][index];
 
-            left = Eigen::Vector2f(lp.x, lp.y);
-            right = Eigen::Vector2f(rp.x, rp.y);
+            left = Eigen::Vector2d(lp.x, lp.y);
+            right = Eigen::Vector2d(rp.x, rp.y);
 
             return true;
         }

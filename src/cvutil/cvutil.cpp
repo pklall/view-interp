@@ -80,7 +80,7 @@ void slicSuperpixels(
 void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
         CVFeatureMatcher& left,
         CVFeatureMatcher& right,
-        Eigen::Matrix3f& fundMat) {
+        Eigen::Matrix3d& fundMat) {
     points[0].clear();
     points[1].clear();
 
