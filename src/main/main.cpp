@@ -18,7 +18,11 @@ int main(int argc, char** argv) {
     unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
 
     const int maxFeatures = 4096;
-    const int patchSize = 61;
+
+    // Larger patch size is necessary for highe resolution images.
+    // Note that detecting features on full-size images is ideal for greatest
+    // precision in computing the fundamental matrix.
+    const int patchSize = 128;
 
     unique_ptr<CVFeatureMatcher> prevFeat(
             new CVFeatureMatcher(maxFeatures, patchSize));
@@ -27,11 +31,13 @@ int main(int argc, char** argv) {
 
     CVFundamentalMatrixEstimator fEstimator;
 
-    PolarRectification rectification;
-
     prevImg->load(argv[1]);
 
     prevFeat->detectFeatures(prevImg->get_RGBtoLab().channel(0));
+
+    PolarFundamentalMatrix F;
+
+    PolarRectification rectification;
 
     for (int imgI = 1; imgI < imageCount; imgI++) {
         printf("Processing image #%d\n", imgI);
@@ -43,12 +49,12 @@ int main(int argc, char** argv) {
         printf("Done\n");
 
         printf("Estimating fundamental matrix...\n");
-        Eigen::Matrix3d F;
-        fEstimator.estimateFundamentalMatrix(*prevFeat, *curFeat, F);
+        Eigen::Matrix3d fundMat;
+        fEstimator.estimateFundamentalMatrix(*prevFeat, *curFeat, fundMat);
         printf("Done\n");
 
         cout << "F = " << endl;
-        cout << F;
+        cout << fundMat;
         cout << endl << endl;
 
         array<Eigen::Vector2d, 2> match;
@@ -63,14 +69,17 @@ int main(int argc, char** argv) {
             }
         }
 
-        printf("Initializing rectification...\n");
-        bool rectificationSuccess = rectification.init(curImg->width(), curImg->height(), F, match);
-        printf("Done\n");
+        bool rectificationPossible = F.init(fundMat, match);
 
-        if (!rectificationSuccess) {
-            printf("Rectification failed\n");
+        if (!rectificationPossible) {
+            printf("Rectification not possible, epipoles at infinity.\n");
             continue;
         }
+
+
+        printf("Initializing rectification...\n");
+        rectification.init(curImg->width(), curImg->height(), F);
+        printf("Done\n");
 
         CImg<uint8_t> rectified;
         CImg<float> reverseMap;

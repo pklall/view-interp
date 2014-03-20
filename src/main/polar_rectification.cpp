@@ -1,17 +1,21 @@
 #include "polar_rectification.h"
 
-bool PolarRectification::init(
-        int _width,
-        int _height,
-        Eigen::Matrix3d _F,
-        array<Eigen::Vector2d, 2> _match) {
-    imgWidth = _width;
-    imgHeight = _height;
+bool PolarFundamentalMatrix::init(
+        const Eigen::Matrix3d& _F,
+        const  array<Eigen::Vector2d, 2>& _match) {
     F = _F;
     match = _match;
 
-    Eigen::Vector3d epipole0 = F.fullPivLu().kernel().col(0);
-    Eigen::Vector3d epipole1 = F.transpose().fullPivLu().kernel().col(0);
+    auto Fkern = F.fullPivLu().kernel();
+    auto FTkern = F.transpose().fullPivLu().kernel();
+
+    if (Fkern.cols() < 1 ||
+            FTkern.cols() < 1) {
+        return false;
+    }
+
+    Eigen::Vector3d epipole0 = Fkern.col(0);
+    Eigen::Vector3d epipole1 = FTkern.col(0);
 
     epipoles[0] = epipole0.hnormalized();
     epipoles[1] = epipole1.hnormalized();
@@ -22,13 +26,134 @@ bool PolarRectification::init(
                 return false;
             }
         }
-    }
 
-    for (int i = 0; i < 2; i++) {
         matchDir[i] = (_match[i] - epipoles[i]).normalized();
     }
 
-    detectReflection();
+    // Detect reflection...
+    // Reflection implies that rotation about the epipole in one
+    // image corresponds to rotation in the opposite direction
+    // about the epipole in the other image.
+
+    // If both epipoles are within the images, there cannot be any reflection.
+    /*
+    Eigen::AlignedBox<double, 2> imgBounds(
+            Eigen::Vector2d(0, 0), 
+            Eigen::Vector2d(imgWidth, imgHeight));
+
+    if (imgBounds.contains(epipoles[0]) &&
+            imgBounds.contains(epipoles[1])) {
+        epipolesReflected = false;
+
+        return;
+    }
+    */
+
+    /**
+     * The magic below is based on the following:
+     *  - Let (x, y) be a point to the right of the epipole.
+     *  - A = [x, y, 1]'
+     *  - B = [x, y + eps, 1]'
+     *  - So, vector AB is oriented counter-clockwise relative to the epipole.
+     *  - A_tH = F * A
+     *  - B_tH = F * B
+     *  - A_t = [A[0], A[1]]'
+     *  - B_t = [B[0], B[1]]'
+     *  - Now, A_t and B_t are scaled normals to the epipolar lines in image 1
+     *    which correspond to ponits A and B in image 0.
+     *    We should expect A_t x B_t to be positive iff these normals are rotating
+     *    counter-clockwise for small eps.
+     *  - Using maxima to symbolically differentiate W.R.T eps and evaluate
+     *    at 0, we get the result below, which has been split into positive
+     *    and negative terms to increase numerical stability.
+     */
+    double x = epipoles[0].x() + 1.0; // imgWidth;
+
+    double lhs = F(0, 1) * (F(1, 0) * x + F(1, 2));
+    double rhs = F(1, 1) * (F(0, 0) * x + F(0, 2));
+
+    epipolesReflected = lhs > rhs;
+
+    return true;
+} 
+
+
+void PolarFundamentalMatrix::getEpipolarLine(
+        int imgId,
+        const Eigen::Vector2d& originalPt,
+        Eigen::Vector2d& line) const {
+    // Flip the problem when necessary.
+    const auto& e0 = (imgId == 0) ? epipoles[0] : epipoles[1];
+
+    Eigen::Matrix3d fundMat;
+
+    if (imgId == 0) {
+        fundMat = F;
+    } else {
+        fundMat = F.transpose();
+    }
+
+    const auto& match0 = (imgId == 0) ? matchDir[0] : matchDir[1];
+    const auto& match1 = (imgId == 0) ? matchDir[1] : matchDir[0];
+
+    Eigen::Vector2d l0;
+
+    // Procede to compute lines as if we are given a point in image 0.
+
+    l0 = (originalPt - e0).normalized();
+
+    Eigen::Vector3d line1DirH = fundMat * originalPt.homogeneous();
+    line = line1DirH.hnormalized().unitOrthogonal();
+
+    // Project the known match onto each line
+    double line0MatchProj = match0.dot(l0);
+
+    double line1MatchProj = match1.dot(line);
+
+    // If the match point's epipolar line is nearly orthogonal to this
+    // epipolar line, then we can't reliably determine which side is which.
+    // So, we can rotate the matched point 90 degrees.
+    if (fabs(line0MatchProj) < 0.25f) {
+        Eigen::Vector2d match0R(-match0.y(), match0.x());
+        Eigen::Vector2d match1R(-match1.y(), match1.x());
+
+        if (epipolesReflected) {
+            match1R *= -1;
+        }
+
+        line0MatchProj = match0R.dot(l0);
+
+        line1MatchProj = match1R.dot(line);
+    }
+
+    // Flip the direction of line 1 if necessary to select the correct
+    // half-epipolar line.
+    if (line0MatchProj > 0 != line1MatchProj > 0) {
+        line *= -1;
+    }
+}
+
+void PolarFundamentalMatrix::getEpipolarLine(
+        int imgId,
+        const Eigen::Vector2d& originalPt,
+        Eigen::Hyperplane<double, 2>& plane) const {
+    Eigen::Vector2d lineDir;
+
+    getEpipolarLine(imgId, originalPt, lineDir);
+
+    plane = Eigen::Hyperplane<double, 2>(
+            lineDir.unitOrthogonal(),
+            epipoles[(imgId + 1) % 2]);
+}
+
+
+bool PolarRectification::init(
+        int _width,
+        int _height,
+        const PolarFundamentalMatrix& _F) {
+    imgWidth = _width;
+    imgHeight = _height;
+    F = _F;
 
     createRectificationMap();
 
@@ -46,7 +171,7 @@ void PolarRectification::rectify(
 
     const int numEpipoles = epipoleLines.size();
 
-    const Eigen::Vector2d& e = epipoles[imgId];
+    const Eigen::Vector2d& e = F.getEpipole(imgId);
 
     int maxRValues = radMax - radMin;
 
@@ -57,7 +182,7 @@ void PolarRectification::rectify(
     int rFactor = 1;
     int rStart = 0;
 
-    if (epipolesReflected && imgId == 1) {
+    if (F.areEpipolesReflected() && imgId == 1) {
         rFactor = -1;
         rStart = maxRValues - 1;
     }
@@ -130,7 +255,7 @@ void PolarRectification::maximalRectificationRange(
         for (int i = 0; i < 2; i++) {
             // Compute this before we clobber minR and maxR with values from
             // a row which may not be in the maximal span.
-            if (epipolesReflected) {
+            if (F.areEpipolesReflected()) {
                 disparityFactor = -1;
                 disparityOffset = minR[0] - maxR[1];
             } else {
@@ -152,7 +277,7 @@ void PolarRectification::maximalRectificationRange(
         }
     }
 
-    if (epipolesReflected) {
+    if (F.areEpipolesReflected()) {
         disparityFactor = -1;
         disparityOffset = minR[0] - maxR[1];
     } else {
@@ -161,81 +286,10 @@ void PolarRectification::maximalRectificationRange(
     }
 }
 
-/*
-void PolarRectification::rectifyBlock(
-        int startRow,
-        const CImg<uint8_t>& original0,
-        const CImg<uint8_t>& original1,
-        int vertSampleFactor,
-        int horSampleFactor,
-        int maxPixelCount,
-        CImg<uint8_t>& rectified0,
-        CImg<uint8_t>& rectified1,
-        float& rectificationDisparity,
-        int& nextRow,
-        int& remainingRowCount) const {
-    float radMin, radMax;
-
-    getEpipolarDistanceRanges(imgId, radMin, radMax);
-
-    const int numEpipoles = epipoleLines.size();
-
-    const Eigen::Vector2d& e = epipoles[imgId];
-
-    int maxRValues = radMax - radMin + 0.5f;
-
-    rectified.resize(maxRValues, numEpipoles, 1, original.spectrum());
-
-    reverseMap.resize(maxRValues, numEpipoles, 2);
-
-    // It's possible that the resulting transform will result in a reflection.
-    // This would be problematic for computing stereo with conventional
-    // algorithms, so we must detect and correct for it.
-    float rFactor = 1;
-    float rStart = radMin;
-
-    if (epipolesReflected) {
-        // if the epipolar lines go in clockwise order, then reflect
-        const auto& eLine0 = epipoleLines[0].direction[imgId];
-        const auto& eLine1 = epipoleLines[1].direction[imgId];
-
-        float cross =
-            eLine0.x() * eLine1.y() -
-            eLine0.y() * eLine1.x();
-
-        if (cross < 0) {
-            rFactor = -1;
-            rStart = radMax;
-        }
-    }
-
-    for (int eI = 0; eI < numEpipoles; eI++) {
-        const Eigen::Vector2d& eLineDir = epipoleLines[eI].direction[imgId];
-
-        Eigen::ParametrizedLine<float, 2> eLine(e, eLineDir);
-
-        cimg_forC(original, c) {
-            for (int r = 0; r < maxRValues; r++) {
-                Eigen::Vector2d pt = eLine.pointAt(r * rFactor + rStart);
-
-                float out;
-
-                rectified(r, eI, 0, c) =
-                    original.linear_atXY(pt.x(), pt.y(), 0, c, out);
-
-                reverseMap(r, eI, 0) = pt.x();
-
-                reverseMap(r, eI, 1) = pt.y();
-            }
-        }
-    }
-}
-*/
-
 void PolarRectification::getRelevantEdges(
         int imgId,
         vector<Eigen::ParametrizedLine<double, 2>>& edges) const {
-    const auto& epipole = epipoles[imgId];
+    const auto& epipole = F.getEpipole(imgId);
 
     // All 4 lines are parameterized in counter-clockwise order: top, left,
     // right, bottom.
@@ -299,81 +353,13 @@ void PolarRectification::getRelevantEdges(
     }
 }
 
-void PolarRectification::getEpipolarLine(
-        int imgId,
-        const Eigen::Vector2d& originalPt,
-        Eigen::Vector2d& line) const {
-    // Flip the problem when necessary.
-    const auto& e0 = (imgId == 0) ? epipoles[0] : epipoles[1];
-
-    Eigen::Matrix3d fundMat;
-
-    if (imgId == 0) {
-        fundMat = F;
-    } else {
-        fundMat = F.transpose();
-    }
-
-    const auto& match0 = (imgId == 0) ? matchDir[0] : matchDir[1];
-    const auto& match1 = (imgId == 0) ? matchDir[1] : matchDir[0];
-
-    Eigen::Vector2d l0;
-
-    // Procede to compute lines as if we are given a point in image 0.
-
-    l0 = (originalPt - e0).normalized();
-
-    Eigen::Vector3d line1DirH = fundMat * originalPt.homogeneous();
-    line = line1DirH.hnormalized().unitOrthogonal();
-
-    // Project the known match onto each line
-    double line0MatchProj = match0.dot(l0);
-
-    double line1MatchProj = match1.dot(line);
-
-    // If the match point's epipolar line is nearly orthogonal to this
-    // epipolar line, then we can't reliably determine which side is which.
-    // So, we can rotate the matched point 90 degrees.
-    if (fabs(line0MatchProj) < 0.25f) {
-        Eigen::Vector2d match0R(-match0.y(), match0.x());
-        Eigen::Vector2d match1R(-match1.y(), match1.x());
-
-        if (epipolesReflected) {
-            match1R *= -1;
-        }
-
-        line0MatchProj = match0R.dot(l0);
-
-        line1MatchProj = match1R.dot(line);
-    }
-
-    // Flip the direction of line 1 if necessary to select the correct
-    // half-epipolar line.
-    if (line0MatchProj > 0 != line1MatchProj > 0) {
-        line *= -1;
-    }
-}
-
-void PolarRectification::getEpipolarLine(
-        int imgId,
-        const Eigen::Vector2d& originalPt,
-        Eigen::Hyperplane<double, 2>& plane) const {
-    Eigen::Vector2d lineDir;
-
-    getEpipolarLine(imgId, originalPt, lineDir);
-
-    plane = Eigen::Hyperplane<double, 2>(
-            lineDir.unitOrthogonal(),
-            epipoles[(imgId + 1) % 2]);
-}
-
 bool PolarRectification::getImg0ClippingPlanes(
         array<Eigen::Vector2d, 2>& planes) const {
     Eigen::AlignedBox<double, 2> img1(
             Eigen::Vector2d(0, 0), 
             Eigen::Vector2d(imgWidth, imgHeight));
 
-    if (img1.contains(epipoles[1])) {
+    if (img1.contains(F.getEpipole(1))) {
         return false;
     }
 
@@ -386,7 +372,7 @@ bool PolarRectification::getImg0ClippingPlanes(
         corner[0] = (i & 0x1) == 0 ? 0 : imgWidth;
         corner[1] = (i & 0x2) == 0 ? 0 : imgHeight;
 
-        getEpipolarLine(1, corner, eLines[i]);
+        F.getEpipolarLine(1, corner, eLines[i]);
     }
 
     // The clipping planes are the only two planes such that all
@@ -445,7 +431,7 @@ void PolarRectification::getEpipoleDistanceRange(
         0, imgWidth, imgWidth,  0,
         0, 0,        imgHeight, imgHeight;
 
-    Eigen::ParametrizedLine<double, 2> eLine(epipoles[imgId], direction);
+    Eigen::ParametrizedLine<double, 2> eLine(F.getEpipole(imgId), direction);
 
     rmin = std::numeric_limits<double>::min();
     rmax = std::numeric_limits<double>::max();
@@ -477,45 +463,6 @@ void PolarRectification::getEpipoleDistanceRange(
     rmin = max(0.0, rmin);
 }
 
-void PolarRectification::detectReflection() {
-    // If both epipoles are within the images, there cannot be any reflection.
-    Eigen::AlignedBox<double, 2> imgBounds(
-            Eigen::Vector2d(0, 0), 
-            Eigen::Vector2d(imgWidth, imgHeight));
-
-    if (imgBounds.contains(epipoles[0]) &&
-            imgBounds.contains(epipoles[1])) {
-        epipolesReflected = false;
-
-        return;
-    }
-
-    /**
-     * The magic below is based on the following:
-     *  - Let (x, y) be a point to the right of the epipole.
-     *  - A = [x, y, 1]'
-     *  - B = [x, y + eps, 1]'
-     *  - So, vector AB is oriented counter-clockwise relative to the epipole.
-     *  - A_tH = F * A
-     *  - B_tH = F * B
-     *  - A_t = [A[0], A[1]]'
-     *  - B_t = [B[0], B[1]]'
-     *  - Now, A_t and B_t are scaled normals to the epipolar lines in image 1
-     *    which correspond to ponits A and B in image 0.
-     *    We should expect A_t x B_t to be positive iff these normals are rotating
-     *    counter-clockwise for small eps.
-     *  - Using maxima to symbolically differentiate W.R.T eps and evaluate
-     *    at 0, we get the result below, which has been split into positive
-     *    and negative terms to increase numerical stability.
-     */
-    double x = imgWidth + epipoles[0].x();
-
-    double lhs = F(0, 1) * (F(1, 0) * x + F(1, 2));
-    double rhs = F(1, 1) * (F(0, 0) * x + F(0, 2));
-
-    epipolesReflected = lhs > rhs;
-} 
-
 void PolarRectification::createRectificationMap() {
     epipoleLines.clear();
 
@@ -539,8 +486,8 @@ void PolarRectification::createRectificationMap() {
         const auto startPoint = edges0[0].pointAt(0.0);
         const auto endPoint = edges0[edges0.size() - 1].pointAt(1.0);
 
-        start0Dir = (startPoint - epipoles[0]).normalized();
-        end0Dir = (endPoint - epipoles[0]).normalized();
+        start0Dir = (startPoint - F.getEpipole(0)).normalized();
+        end0Dir = (endPoint - F.getEpipole(0)).normalized();
 
         // Force counter-clockwise ordering
         double cross =
@@ -560,8 +507,8 @@ void PolarRectification::createRectificationMap() {
         const auto startPoint = edges1[0].pointAt(0.0);
         const auto endPoint = edges1[edges1.size() - 1].pointAt(1.0);
 
-        getEpipolarLine(1, startPoint, start1Dir);
-        getEpipolarLine(1, endPoint, end1Dir);
+        F.getEpipolarLine(1, startPoint, start1Dir);
+        F.getEpipolarLine(1, endPoint, end1Dir);
         
         // Force counter-clockwise ordering
         double cross =
@@ -578,18 +525,18 @@ void PolarRectification::createRectificationMap() {
     Eigen::Vector2d startDir;
     Eigen::Vector2d endDir;
 
-    if (imgBounds.contains(epipoles[0]) &&
-            imgBounds.contains(epipoles[1])) {
+    if (imgBounds.contains(F.getEpipole(0)) &&
+            imgBounds.contains(F.getEpipole(1))) {
         printf("Epipoles inside image 0 & image 1\n");
         // If both the epipole passes through both images, the start and end
         // direction should be the same.  We can arbitrarily choose one.
         startDir = Eigen::Vector2d(1, 0);
         endDir = Eigen::Vector2d(1, 0);
-    } else if (imgBounds.contains(epipoles[1])) {
+    } else if (imgBounds.contains(F.getEpipole(1))) {
         printf("Epipoles inside image 1\n");
         startDir = start0Dir;
         endDir = end0Dir;
-    } else if (imgBounds.contains(epipoles[0])) {
+    } else if (imgBounds.contains(F.getEpipole(0))) {
         printf("Epipoles inside image 0\n");
         startDir = start1Dir;
         endDir = end1Dir;
@@ -624,7 +571,7 @@ void PolarRectification::createRectificationMap() {
 
         // Compute the intersection of the current epipolar line in image 0 with a
         // relevant edge by casting a ray from the epipole.
-        Eigen::ParametrizedLine<double, 2> curLine0(epipoles[0], curLineVec);
+        Eigen::ParametrizedLine<double, 2> curLine0(F.getEpipole(0), curLineVec);
 
         getEpipoleDistanceRange(0, curLineVec, curSample.minRadius[0],
                 curSample.maxRadius[0]);
@@ -635,11 +582,11 @@ void PolarRectification::createRectificationMap() {
         // relevant edge by casting a ray from the epipole.
         Eigen::Vector2d curLineVec1;
 
-        getEpipolarLine(0, curLineEndpointImg0, curLineVec1);
+        F.getEpipolarLine(0, curLineEndpointImg0, curLineVec1);
 
         curSample.direction[1] = curLineVec1;
 
-        Eigen::ParametrizedLine<double, 2> curLine1(epipoles[1], curLineVec1);
+        Eigen::ParametrizedLine<double, 2> curLine1(F.getEpipole(1), curLineVec1);
 
         getEpipoleDistanceRange(1, curLineVec1, curSample.minRadius[1],
                 curSample.maxRadius[1]);
@@ -655,11 +602,11 @@ void PolarRectification::createRectificationMap() {
 
         // A point on next epipolar line, using image 0, in image 0
         Eigen::Vector2d nextLine0Pt0 = curLineEndpointImg0 + curLineVec.unitOrthogonal();
-        Eigen::Vector2d nextLine0Dir0 = (nextLine0Pt0 - epipoles[0]).normalized();
+        Eigen::Vector2d nextLine0Dir0 = (nextLine0Pt0 - F.getEpipole(0)).normalized();
         
         // Map nextLine0 into image 1
         Eigen::Vector2d nextLine0Dir1;
-        getEpipolarLine(0, nextLine0Pt0, nextLine0Dir1);
+        F.getEpipolarLine(0, nextLine0Pt0, nextLine0Dir1);
        
         // A point on next epipolar line, using image 1, in image 1...
         
@@ -672,7 +619,7 @@ void PolarRectification::createRectificationMap() {
         
         // Map nextLine1 into image 0
         Eigen::Vector2d nextLine1Dir0;
-        getEpipolarLine(1, nextLine1Pt1, nextLine1Dir0);
+        F.getEpipolarLine(1, nextLine1Pt1, nextLine1Dir0);
 
         // Use the next epipolar line which is closest
         double dist0 = (nextLine0Dir0 - curLineVec).squaredNorm();
@@ -696,7 +643,7 @@ void PolarRectification::getEpipolarDistanceRanges(
         int imgId,
         double& rmin,
         double& rmax) const {
-    const Eigen::Vector2d& e = epipoles[imgId];
+    const Eigen::Vector2d& e = F.getEpipole(imgId);
 
     rmin = std::numeric_limits<double>::max();
     rmax = std::numeric_limits<double>::min();

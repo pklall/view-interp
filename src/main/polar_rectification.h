@@ -4,6 +4,86 @@
 
 #include "common.h"
 
+/**
+ * Wraps a fundamental matrix with functionality relevant to polar
+ * rectification.
+ */
+class PolarFundamentalMatrix {
+public:
+    /**
+     * Attempts to initialize with the given fundamental matrix
+     * and matched point correspondence.
+     *
+     * If the epipolar line is parallel to either image plane, then a polar
+     * representation is not possible, and the method returns false.
+     */
+    bool init(
+            const Eigen::Matrix3d& _F,
+            const  array<Eigen::Vector2d, 2>& _match);
+
+    /**
+     * Returns the half-epipolar lines associated with the original point
+     * given relative to the image associated with imgId.
+     *
+     * Since each line must, by definition, intersect the epipole, only
+     * the direction vector is given.
+     */
+    void getEpipolarLine(
+            int imgId,
+            const Eigen::Vector2d& originalPt,
+            Eigen::Vector2d& line) const;
+
+    void getEpipolarLine(
+            int imgId,
+            const Eigen::Vector2d& originalPt,
+            Eigen::Hyperplane<double, 2>& plane) const;
+
+    inline const Eigen::Vector2d& getEpipole(
+            int imgId) const {
+        return epipoles[imgId];
+    }
+
+    inline const array<Eigen::Vector2d, 2>& getEpipoles() const {
+        return epipoles;
+    }
+
+    inline bool areEpipolesReflected() const {
+        return epipolesReflected;
+    }
+
+private:
+
+    /**
+     * Initializes `epipolesReflected`.
+     */
+    void detectReflection();
+
+    Eigen::Matrix3d F;
+
+    /**
+     * The location of the epipole relative to the coordinate spaces
+     * of each image.
+     */
+    array<Eigen::Vector2d, 2> epipoles;
+
+    /**
+     * The direction, relative to each epipole, of a pair of point
+     * correspondences.  This allows orienting half-epipolar lines.
+     */
+    array<Eigen::Vector2d, 2> match;
+    array<Eigen::Vector2d, 2> matchDir;
+
+    /**
+     * If true, counter-clockwise rotation relative to the epipole in
+     * image 0 corresponds to a clockwise rotation relative to the
+     * epipole in image 1.  Thus, the resulting rectification transform
+     * must perform a reflection in the radius-domain to allow proper
+     * stereo estimation via conventional algorithms which do not consider
+     * reflection.
+     */
+    bool epipolesReflected;
+};
+
 class PolarRectification {
     public:
         /**
@@ -17,8 +97,7 @@ class PolarRectification {
         bool init(
                 int _width,
                 int _height,
-                Eigen::Matrix3d _F,
-                array<Eigen::Vector2d, 2> _match);
+                const PolarFundamentalMatrix& _F);
 
         /**
          * Rectifies an entire image.  Note that the result may be very large
@@ -60,6 +139,11 @@ class PolarRectification {
                 double& disparityFactor,
                 double& disparityOffset);
 
+        /**
+         * Evaluates the rectification transform at each sample in the 
+         * relevant rectangular region of the co-domain specified by
+         * startRow and numRows.
+         */
         template<class Callback>
         inline void evaluateRectificationTransform(
                 int imgId,
@@ -79,25 +163,29 @@ class PolarRectification {
             int rFactor = 1;
             double rStart = minR;
 
-            if (epipolesReflected && imgId == 1) {
+            if (F.areEpipolesReflected() && imgId == 1) {
                 rFactor = -1;
                 rStart = maxR;
             }
 
-            const Eigen::Vector2d& e = epipoles[imgId];
+            const Eigen::Vector2d& e = F.getEpipole(imgId);
 
+            // TODO These loops could be blocked for greater performance
             for (int eI = 0; eI < numRows; eI++) {
                 const Eigen::Vector2d& eLineDir = epipoleLines[eI].direction[imgId];
 
                 Eigen::ParametrizedLine<double, 2> eLine(e, eLineDir);
 
-                for (int r = 0; r < (maxR - minR) + 0.5; r++) {
-                    int rStorage = r * rFactor + rStart;
+                double angle = atan2(eLineDir.y(), eLineDir.x());
 
-                    Eigen::Vector2i x(eI, r);
-                    Eigen::Vector2d y = eLine.pointAt(r * rFactor + rStart);
+                for (int r = 0; r < (maxR - minR) + 0.5; r++) {
+                    double rValue = r * rFactor + rStart;
+
+                    Eigen::Vector2i sampleDomain(r, eI);
+                    Eigen::Vector2d polarDomain(angle, rValue);
+                    Eigen::Vector2d range = eLine.pointAt(rValue);
                     
-                    callback(x, y);
+                    callback(sampleDomain, polarDomain, range);
                 }
             }
         }
@@ -138,23 +226,6 @@ class PolarRectification {
                 vector<Eigen::ParametrizedLine<double , 2>>& edges) const;
 
         /**
-         * Returns the half-epipolar lines associated with the original point
-         * given relative to the image associated with imgId.
-         *
-         * Since each line must, by definition, intersect the epipole, only
-         * the direction vector is given.
-         */
-        void getEpipolarLine(
-                int imgId,
-                const Eigen::Vector2d& originalPt,
-                Eigen::Vector2d& line) const;
-
-        void getEpipolarLine(
-                int imgId,
-                const Eigen::Vector2d& originalPt,
-                Eigen::Hyperplane<double, 2>& plane) const;
-
-        /**
          * Returns clipping planes specifying the region in image 0 space
          * which maps to image 1.  Since these planes, by definition, intersect
          * epipole 0, they are specified by their normal only.
@@ -170,11 +241,6 @@ class PolarRectification {
                 const Eigen::Vector2d& direction,
                 double& rmin,
                 double& rmax) const;
-
-        /**
-         * Initializes `epipolesReflected`.
-         */
-        void detectReflection();
 
         /**
          * Initializes `epipoleLines`.
@@ -197,20 +263,7 @@ class PolarRectification {
          * The fundamental matrix:
          * transpose(x1) * F * x0 = 0
          */
-        Eigen::Matrix3d F;
-
-        /**
-         * The location of the epipole relative to the coordinate spaces
-         * of each image.
-         */
-        array<Eigen::Vector2d, 2> epipoles;
-
-        /**
-         * The direction, relative to each epipole, of a pair of point
-         * correspondences.  This allows orienting half-epipolar lines.
-         */
-        array<Eigen::Vector2d, 2> match;
-        array<Eigen::Vector2d, 2> matchDir;
+        PolarFundamentalMatrix F;
 
         /**
          * Specifies the set of epipolar lines to use for rectification.
@@ -220,15 +273,5 @@ class PolarRectification {
          * respective epipole.
          */
         vector<EpipolarLineSample> epipoleLines;
-
-        /**
-         * If true, counter-clockwise rotation relative to the epipole in
-         * image 0 corresponds to a clockwise rotation relative to the
-         * epipole in image 1.  Thus, the resulting rectification transform
-         * must perform a reflection in the radius-domain to allow proper
-         * stereo estimation via conventional algorithms which do not consider
-         * reflection.
-         */
-        bool epipolesReflected;
 };
 
