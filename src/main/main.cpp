@@ -76,7 +76,6 @@ int main(int argc, char** argv) {
             continue;
         }
 
-
         printf("Initializing rectification...\n");
         rectification.init(curImg->width(), curImg->height(), F);
         printf("Done\n");

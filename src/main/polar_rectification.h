@@ -21,6 +21,18 @@ public:
             const Eigen::Matrix3d& _F,
             const  array<Eigen::Vector2d, 2>& _match);
 
+    inline double getEpipolarDistance(
+            int imgId,
+            const Eigen::Vector2d& pt) {
+        return (pt - getEpipole(imgId)).norm();
+    }
+
+    inline double getRadialDisparity(
+            const Eigen::Vector2d& pt0,
+            const Eigen::Vector2d& pt1) {
+        return getEpipolarDistance(1, pt1) - getEpipolarDistance(0, pt0);
+    }
+
     /**
      * Returns the half-epipolar lines associated with the original point
      * given relative to the image associated with imgId.
@@ -137,7 +149,7 @@ class PolarRectification {
                 int& numRows,
                 int& maximumWidth,
                 double& disparityFactor,
-                double& disparityOffset);
+                double& disparityOffset) const;
 
         /**
          * Evaluates the rectification transform at each sample in the 
@@ -273,5 +285,41 @@ class PolarRectification {
          * respective epipole.
          */
         vector<EpipolarLineSample> epipoleLines;
+};
+
+class PolarStereo {
+    public:
+        PolarStereo(
+                int maxRectificationPixels);
+
+        void computeStereo(
+                int numScales,
+                float scaleStep,
+                const PolarFundamentalMatrix& F,
+                const CImg<uint8_t>& leftLab,
+                const CImg<uint8_t>& rightLab);
+
+        inline float disparityAt(
+                int scaleIndex,
+                int x,
+                int y) {
+            float scale = pow(scaleStep, scaleIndex);
+            float xs = x * scale;
+            float ys = y * scale;
+
+            return disparityPyramid[scaleIndex].linear_atXY(xs, ys);
+        }
+        
+    private:
+        const int rectificationBufferSize;
+        
+        // Buffers for storing rectified segments
+        array<unique_ptr<uint8_t[]>, 2> rectificationBuffers;
+
+        float scaleStep;
+
+        vector<CImg<float>> disparityPyramid;
+
+        PolarRectification rectifier;
 };
 

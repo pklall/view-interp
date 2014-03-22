@@ -30,26 +30,12 @@ bool PolarFundamentalMatrix::init(
         matchDir[i] = (_match[i] - epipoles[i]).normalized();
     }
 
-    // Detect reflection...
-    // Reflection implies that rotation about the epipole in one
-    // image corresponds to rotation in the opposite direction
-    // about the epipole in the other image.
-
-    // If both epipoles are within the images, there cannot be any reflection.
-    /*
-    Eigen::AlignedBox<double, 2> imgBounds(
-            Eigen::Vector2d(0, 0), 
-            Eigen::Vector2d(imgWidth, imgHeight));
-
-    if (imgBounds.contains(epipoles[0]) &&
-            imgBounds.contains(epipoles[1])) {
-        epipolesReflected = false;
-
-        return;
-    }
-    */
-
     /**
+     * Detect reflection...
+     * Reflection implies that rotation about the epipole in one
+     * image corresponds to rotation in the opposite direction
+     * about the epipole in the other image.
+     *
      * The magic below is based on the following:
      *  - Let (x, y) be a point to the right of the epipole.
      *  - A = [x, y, 1]'
@@ -67,7 +53,7 @@ bool PolarFundamentalMatrix::init(
      *    at 0, we get the result below, which has been split into positive
      *    and negative terms to increase numerical stability.
      */
-    double x = epipoles[0].x() + 1.0; // imgWidth;
+    double x = epipoles[0].x() + 1.0;
 
     double lhs = F(0, 1) * (F(1, 0) * x + F(1, 2));
     double rhs = F(1, 1) * (F(0, 0) * x + F(0, 2));
@@ -165,6 +151,50 @@ void PolarRectification::rectify(
         const CImg<uint8_t>& original,
         CImg<uint8_t>& rectified,
         CImg<float>& reverseMap) const {
+    int maximumPixelCount = std::numeric_limits<int>::max();
+    int startRow = 0;
+    int numRows;
+    int maximumWidth;
+    double disparityFactor, disparityOffset;
+
+    maximalRectificationRange(maximumPixelCount, startRow, numRows,
+            maximumWidth, disparityFactor, disparityOffset);
+
+    printf("startRow = %d, numRows = %d, maximumWidth = %d\n",
+            startRow, numRows, maximumWidth);
+
+    rectified.resize(maximumWidth, numRows, 1, original.spectrum());
+
+    reverseMap.resize(maximumWidth, numRows, 2);
+
+    struct {
+        const CImg<uint8_t>& original;
+        CImg<uint8_t>& rectified;
+        CImg<float>& reverseMap;
+        int channel;
+
+        void operator()(
+                const Eigen::Vector2i& rCoord,
+                const Eigen::Vector2d& polar,
+                const Eigen::Vector2d& oCoord) {
+            reverseMap(rCoord.x(), rCoord.y(), 0) =
+                oCoord.x();
+            reverseMap(rCoord.x(), rCoord.y(), 1) =
+                oCoord.y();
+
+            float col = 0;
+
+            rectified(rCoord.x(), rCoord.y(), 0, channel) =
+                original.linear_atXY(oCoord.x(), oCoord.y(), 0, channel, col);
+        }
+    } rectCallback = {original, rectified, reverseMap, 0};
+
+    for (int c = 0; c < original.spectrum(); c++) {
+        rectCallback.channel = c;
+        evaluateRectificationTransform(imgId, startRow, numRows, rectCallback);
+    }
+
+    /*
     double radMin, radMax;
 
     getEpipolarDistanceRanges(imgId, radMin, radMax);
@@ -211,7 +241,7 @@ void PolarRectification::rectify(
 
                 Eigen::Vector2d pt = eLine.pointAt(r + radMin);
 
-                float out;
+                float out = 0.0;
 
                 rectified(rStorage, eI, 0, c) =
                     original.linear_atXY(pt.x(), pt.y(), 0, c, out);
@@ -232,6 +262,7 @@ void PolarRectification::rectify(
             }
         }
     }
+    */
 }
 
 void PolarRectification::maximalRectificationRange(
@@ -240,7 +271,7 @@ void PolarRectification::maximalRectificationRange(
         int& numRows,
         int& maximumWidth,
         double& disparityFactor,
-        double& disparityOffset) {
+        double& disparityOffset) const {
     double minR[2];
     double maxR[2];
 
@@ -266,7 +297,7 @@ void PolarRectification::maximalRectificationRange(
             minR[i] = min(minR[i], epipoleLines[startRow + numRows].minRadius[i]);
             maxR[i] = max(maxR[i], epipoleLines[startRow + numRows].maxRadius[i]);
 
-            int newMaximumWidth = (maxR - minR) + 0.5;
+            int newMaximumWidth = (maxR[i] - minR[i]) + 0.5;
 
             if (newMaximumWidth * (numRows + 1) > maximumPixelCount) {
                 numRows++;
@@ -686,6 +717,59 @@ void PolarRectification::getEpipolarDistanceRanges(
 
     if (bounds.contains(e)) {
         rmin = 0;
+    }
+}
+
+PolarStereo::PolarStereo(
+        int maxRectificationPixels) :
+    rectificationBufferSize(maxRectificationPixels) {
+
+    for (auto& bufPtr : rectificationBuffers) {
+        bufPtr.reset(new uint8_t[rectificationBufferSize * 3]);
+    }
+}
+
+
+void PolarStereo::computeStereo(
+        int numScales,
+        float scaleStep,
+        const PolarFundamentalMatrix& F,
+        const CImg<uint8_t>& leftLab,
+        const CImg<uint8_t>& rightLab) {
+    assert(leftLab.is_sameXYZC(rightLab));
+    assert(leftLab.depth() == 1);
+    assert(leftLab.spectrum() == 3);
+
+    int imgWidth = leftLab.width();
+    int imgHeight = leftLab.height();
+    int imgSpectrum = leftLab.spectrum();
+
+    // Allocate space for the resulting pyramid of disparity images
+    disparityPyramid.reserve(numScales);
+
+    int curImgWidth = imgWidth;
+    int curImgHeight = imgHeight;
+    for (int i = 0; i < numScales; i++) {
+        disparityPyramid[i].resize(imgWidth, imgHeight, 1, imgSpectrum, -1);
+
+        rectifier.init(imgWidth, imgHeight, F);
+
+        int numRows;
+
+        for (int startRow = 0; startRow < imgHeight; startRow += numRows) {
+            int rectifiedMaxWidth;
+            double disparityFactor;
+            double disparityOffset;
+
+            rectifier.maximalRectificationRange(
+                    // divide by 3 to allow memory for left and right padding
+                    rectificationBufferSize / 3,
+                    startRow,
+                    numRows,
+                    rectifiedMaxWidth,
+                    disparityFactor,
+                    disparityOffset);
+        }
     }
 }
 
