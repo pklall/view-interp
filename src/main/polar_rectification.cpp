@@ -1,8 +1,10 @@
 #include "polar_rectification.h"
 
+#include "cvutil/cvutil.h"
+
 bool PolarFundamentalMatrix::init(
         const Eigen::Matrix3d& _F,
-        const  array<Eigen::Vector2d, 2>& _match) {
+        const array<Eigen::Vector2d, 2>& _match) {
     F = _F;
     match = _match;
 
@@ -19,6 +21,9 @@ bool PolarFundamentalMatrix::init(
 
     epipoles[0] = epipole0.hnormalized();
     epipoles[1] = epipole1.hnormalized();
+
+    cout << "Epipole 0:\n" << epipoles[0] << endl;
+    cout << "Epipole 1:\n" << epipoles[1] << endl;
 
     for (int i = 0; i < 2; i++) {
         for (int j = 0; j < 2; j++) {
@@ -62,6 +67,41 @@ bool PolarFundamentalMatrix::init(
 
     return true;
 } 
+
+void PolarFundamentalMatrix::scale(
+        int originalWidth,
+        int originalHeight,
+        int finalWidth,
+        int finalHeight) {
+    double scaleX = finalWidth / (double) originalWidth;
+    double scaleY = finalHeight / (double) originalHeight;
+
+    Eigen::Matrix3d invScale;
+    invScale <<
+        (originalWidth / (double) finalWidth), 0.0, 0.0,
+        0.0, (originalHeight / (double) finalHeight), 0.0,
+        0.0, 0.0, 1.0;
+
+    Eigen::Matrix3d newF = invScale.transpose() * F * invScale;
+
+    F = newF;
+
+    for (int i = 0; i < 2; i++) {
+        match[i] <<
+            (match[i].x() * scaleX),
+            (match[i].y() * scaleY);
+
+        matchDir[i] <<
+            (matchDir[i].x() * scaleX),
+            (matchDir[i].y() * scaleY);
+
+        matchDir[i].normalize();
+
+        epipoles[i] <<
+            (epipoles[i].x() * scaleX),
+            (epipoles[i].y() * scaleY);
+    }
+}
 
 
 void PolarFundamentalMatrix::getEpipolarLine(
@@ -160,9 +200,6 @@ void PolarRectification::rectify(
     maximalRectificationRange(maximumPixelCount, startRow, numRows,
             maximumWidth, disparityFactor, disparityOffset);
 
-    printf("startRow = %d, numRows = %d, maximumWidth = %d\n",
-            startRow, numRows, maximumWidth);
-
     rectified.resize(maximumWidth, numRows, 1, original.spectrum());
 
     reverseMap.resize(maximumWidth, numRows, 2);
@@ -177,6 +214,12 @@ void PolarRectification::rectify(
                 const Eigen::Vector2i& rCoord,
                 const Eigen::Vector2d& polar,
                 const Eigen::Vector2d& oCoord) {
+            if (rCoord.x() >= reverseMap.width()) {
+                printf("rCoord OUT OF BOUNDS = %d\n", rCoord.x());
+            }
+            assert(rCoord.x() < reverseMap.width());
+            assert(rCoord.y() < reverseMap.height());
+
             reverseMap(rCoord.x(), rCoord.y(), 0) =
                 oCoord.x();
             reverseMap(rCoord.x(), rCoord.y(), 1) =
@@ -227,7 +270,7 @@ void PolarRectification::maximalRectificationRange(
             minR[i] = min(minR[i], epipoleLines[startRow + numRows].minRadius[i]);
             maxR[i] = max(maxR[i], epipoleLines[startRow + numRows].maxRadius[i]);
 
-            int newMaximumWidth = (maxR[i] - minR[i]) + 0.5;
+            int newMaximumWidth = (maxR[i] - minR[i]) + 2;
 
             if (newMaximumWidth * (numRows + 1) > maximumPixelCount) {
                 numRows++;
@@ -650,16 +693,6 @@ void PolarRectification::getEpipolarDistanceRanges(
     }
 }
 
-PolarStereo::PolarStereo(
-        int maxRectificationPixels) :
-    rectificationBufferSize(maxRectificationPixels) {
-
-    for (auto& bufPtr : rectificationBuffers) {
-        bufPtr.reset(new uint8_t[rectificationBufferSize * 3]);
-    }
-}
-
-
 void PolarStereo::computeStereo(
         int numScales,
         float scaleStep,
@@ -679,27 +712,96 @@ void PolarStereo::computeStereo(
 
     int curImgWidth = imgWidth;
     int curImgHeight = imgHeight;
+
+    PolarFundamentalMatrix curF;
+
+    array<CImg<uint8_t>, 2> imgScaledLab;
+    imgScaledLab[0] = leftLab;
+    imgScaledLab[1] = rightLab;
+
+    array<CImg<uint8_t>, 2> rectifiedLab;
+
+    CImg<float> disparity;
+
+    disparityPyramid.resize(numScales);
+
     for (int i = 0; i < numScales; i++) {
-        disparityPyramid[i].resize(imgWidth, imgHeight, 1, imgSpectrum, -1);
+        curImgWidth = imgWidth * pow(scaleStep, i);
+        curImgHeight = imgHeight * pow(scaleStep, i);
 
-        rectifier.init(imgWidth, imgHeight, F);
+        disparityPyramid[i].resize(curImgWidth, curImgHeight, 1, imgSpectrum, -1);
 
-        int numRows;
-
-        for (int startRow = 0; startRow < imgHeight; startRow += numRows) {
-            int rectifiedMaxWidth;
-            double disparityFactor;
-            double disparityOffset;
-
-            rectifier.maximalRectificationRange(
-                    // divide by 3 to allow memory for left and right padding
-                    rectificationBufferSize / 3,
-                    startRow,
-                    numRows,
-                    rectifiedMaxWidth,
-                    disparityFactor,
-                    disparityOffset);
+        for (CImg<uint8_t>& scaledImg : imgScaledLab) {
+            // 3 indicates nearest-neighbor resampling
+            scaledImg.resize(curImgWidth, curImgHeight, 1, imgSpectrum, 3);
         }
+
+        curF = F;
+        curF.scale(imgWidth, imgHeight, curImgWidth, curImgHeight);
+
+        rectifier.init(curImgWidth, curImgHeight, F);
+
+        int startRow = 0;
+        int numRows;
+        int maximumWidth;
+        double disparityFactor, disparityOffset;
+
+        rectifier.maximalRectificationRange(std::numeric_limits<int>::max(),
+                startRow, numRows, maximumWidth, disparityFactor,
+                disparityOffset);
+
+        // Allocate a width 3 times as much is necessary since OpenCV's stereo
+        // refuses to compute along the image border.
+        for (CImg<uint8_t>& rectImg : rectifiedLab) {
+            rectImg.resize(maximumWidth * 3, numRows, 1, imgSpectrum, -1);
+            rectImg = (uint8_t) 0;
+        }
+
+        // Round up to the next multiple of 8 since CVStereo requires
+        // a disparity range which is a multiple of 16, and the entire
+        // disparity range will be [-rectifiedPadding, rectifiedPadding]
+        int rectifiedPadding = ((maximumWidth + 7) / 8) * 8;
+
+        struct {
+            const CImg<uint8_t>* original;
+            CImg<uint8_t>* rectified;
+            int rectifiedPadding;
+            int channel;
+
+            void operator()(
+                    const Eigen::Vector2i& r,
+                    const Eigen::Vector2d& p,
+                    const Eigen::Vector2d& o) {
+                float col = 0;
+
+                (*rectified)(rectifiedPadding + r.x(), r.y(), 0, channel)
+                    =
+                    original->linear_atXY(o.x(), o.y(), 0, channel, col);
+            }
+        } rectCallback = {nullptr, nullptr, rectifiedPadding, 0};
+
+        for (int imgId = 0; imgId < 2; imgId++) {
+            for (int c = 0; c < imgSpectrum; c++) {
+                rectCallback.original = &(imgScaledLab[imgId]);
+
+                rectCallback.rectified = &(rectifiedLab[imgId]);
+
+                rectCallback.channel = c;
+
+                rectifier.evaluateRectificationTransform(
+                        imgId, startRow, numRows, rectCallback);
+            }
+        }
+
+        CVStereo stereo(rectifiedLab[0], rectifiedLab[1], true);
+
+        stereo.matchStereo(
+                -rectifiedPadding,
+                rectifiedPadding);
+
+        stereo.getStereo(disparity);
+
+        disparity.display();
     }
 }
 

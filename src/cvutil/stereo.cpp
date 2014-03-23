@@ -131,7 +131,7 @@ void CVStereo::matchStereo(
         int maxDisparity,
         int windowSize,
         float smoothnessScale) {
-    this->minDisparity = -256;
+    this->minDisparity = minDisparity;
     this->numDisparities = maxDisparity - minDisparity;
     int SADWindowSize = windowSize; // 3 to 11 is recommended
     int P1=8 * 3 * sqr(SADWindowSize) * smoothnessScale;

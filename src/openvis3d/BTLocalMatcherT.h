@@ -111,7 +111,7 @@ bool BTLocalMatcherT<T>::setParams(int nparams, double*params)
 */
 
 template<typename T>
-const OvImageT<double> BTLocalMatcherT<T>::getMatch(int shiftx, int shifty=0)
+const OvImageT<double> BTLocalMatcherT<T>::getMatch(int shiftx, int shifty)
 {
   double tempAlpha;
   tempAlpha = alpha/255.0;
@@ -127,7 +127,7 @@ const OvImageT<double> BTLocalMatcherT<T>::getMatch(int shiftx, int shifty=0)
 * @see getMatch(int shiftx, int shifty)
 */
 template<typename T>
-const OvImageT<double> BTLocalMatcherT<T>::getRawMatch(int shiftx, int shifty=0)
+const OvImageT<double> BTLocalMatcherT<T>::getRawMatch(int shiftx, int shifty)
 {
   int height, width, nchannels;
   int i1,j1,k,i2,j2,jlo,jhi,ilo,ihi;

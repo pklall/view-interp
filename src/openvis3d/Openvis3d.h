@@ -1,5 +1,5 @@
-#include "OvImageAdapter.h"
 #include "OvImageT.h"
+#include "OvImageAdapter.h"
 
 #include "OvImagePairPreprocessorT.h"
 #include "OvLocalMatcherT.h"

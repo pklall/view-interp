@@ -21,6 +21,15 @@ public:
             const Eigen::Matrix3d& _F,
             const  array<Eigen::Vector2d, 2>& _match);
 
+    /**
+     * Compensate for a change in the size of the images.
+     */
+    void scale(
+            int originalWidth,
+            int originalHeight,
+            int finalWidth,
+            int finalHeight);
+
     inline double getEpipolarDistance(
             int imgId,
             const Eigen::Vector2d& pt) {
@@ -289,9 +298,6 @@ class PolarRectification {
 
 class PolarStereo {
     public:
-        PolarStereo(
-                int maxRectificationPixels);
-
         void computeStereo(
                 int numScales,
                 float scaleStep,
@@ -311,11 +317,6 @@ class PolarStereo {
         }
         
     private:
-        const int rectificationBufferSize;
-        
-        // Buffers for storing rectified segments
-        array<unique_ptr<uint8_t[]>, 2> rectificationBuffers;
-
         float scaleStep;
 
         vector<CImg<float>> disparityPyramid;

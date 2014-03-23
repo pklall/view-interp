@@ -19,10 +19,10 @@ int main(int argc, char** argv) {
 
     const int maxFeatures = 4096;
 
-    // Larger patch size is necessary for highe resolution images.
+    // Larger patch size is necessary for high-resolution images.
     // Note that detecting features on full-size images is ideal for greatest
     // precision in computing the fundamental matrix.
-    const int patchSize = 128;
+    const int patchSize = 127;
 
     unique_ptr<CVFeatureMatcher> prevFeat(
             new CVFeatureMatcher(maxFeatures, patchSize));
@@ -33,9 +33,20 @@ int main(int argc, char** argv) {
 
     prevImg->load(argv[1]);
 
+    int originalWidth = prevImg->width();
+    int originalHeight = prevImg->height();
+
+    // More manageable size
+    float scaleFactor = 2.0f * 1000000.0f / (originalWidth * originalHeight);
+
+    int workingWidth = originalWidth * scaleFactor;
+    int workingHeight = originalHeight * scaleFactor;
+
     prevFeat->detectFeatures(prevImg->get_RGBtoLab().channel(0));
 
     PolarFundamentalMatrix F;
+
+    PolarStereo stereo;
 
     PolarRectification rectification;
 
@@ -43,6 +54,8 @@ int main(int argc, char** argv) {
         printf("Processing image #%d\n", imgI);
 
         curImg->load(argv[1 + imgI]);
+        assert(curImg->width() == originalWidth);
+        assert(curImg->height() == originalHeight);
 
         printf("Detecting features...\n");
         curFeat->detectFeatures(curImg->get_RGBtoLab().channel(0));
@@ -76,10 +89,22 @@ int main(int argc, char** argv) {
             continue;
         }
 
+        // Resize to a workable size and adjust the fundamental matrix
+        // accordingly.
+
+        prevImg->resize(workingWidth, workingHeight, 1, 3, 5);
+        curImg->resize(workingWidth, workingHeight, 1, 3, 5);
+
+        F.scale(originalWidth, originalHeight, workingWidth, workingHeight);
+
         printf("Initializing rectification...\n");
         rectification.init(curImg->width(), curImg->height(), F);
         printf("Done\n");
 
+
+        stereo.computeStereo(3, 0.5f, F, *prevImg, *curImg);
+
+        /*
         CImg<uint8_t> rectified;
         CImg<float> reverseMap;
 
@@ -89,6 +114,7 @@ int main(int argc, char** argv) {
         rectification.rectify(1, *curImg, rectified, reverseMap);
 
         rectified.save(("./results/rectified_" + to_string(imgI) + "_right.png").c_str());
+        */
 
         swap(prevImg, curImg);
         swap(prevFeat, curFeat);

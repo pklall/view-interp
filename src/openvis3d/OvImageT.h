@@ -1860,7 +1860,7 @@ const OvImageT<T> meanFilter2D (const OvImageT<T> & input, int filterHeight, int
 * @return image
 */
 template<typename T> 
-const OvImageT<T> mean(const OvImageT<T> & input, int dimension = 3)
+const OvImageT<T> mean(const OvImageT<T> & input, int dimension)
 {
   OvImageT<T> result;
   int i,j,k;
@@ -1919,7 +1919,7 @@ const OvImageT<T> mean(const OvImageT<T> & input, int dimension = 3)
 * @return image
 */
 template<typename T> 
-const OvImageT<T> min(const OvImageT<T> & input, int dimension = 3)
+const OvImageT<T> min(const OvImageT<T> & input, int dimension)
 {
   OvImageT<T> result;
   int i,j,k;
@@ -1978,7 +1978,7 @@ const OvImageT<T> min(const OvImageT<T> & input, int dimension = 3)
 * @return image
 */
 template<typename T> 
-const OvImageT<T> max(const OvImageT<T> & input, int dimension = 3)
+const OvImageT<T> max(const OvImageT<T> & input, int dimension)
 {
   OvImageT<T> result;
   int i,j,k;
@@ -2038,7 +2038,7 @@ const OvImageT<T> max(const OvImageT<T> & input, int dimension = 3)
 * @return summed image
 */
 template<typename T> 
-const OvImageT<T> sum(const OvImageT<T> & input, int dimension = 3)
+const OvImageT<T> sum(const OvImageT<T> & input, int dimension)
 {
   OvImageT<T> result;
   int i,j,k;
@@ -2098,7 +2098,7 @@ const OvImageT<T> sum(const OvImageT<T> & input, int dimension = 3)
 * @return sum
 */
 template<typename T>
-T sumRegion(const OvImageT<T> & input, int rowLo=-1, int rowHi=-1, int columnLo=-1, int columnHi=-1, int channelLo=-1, int channelHi=-1)
+T sumRegion(const OvImageT<T> & input, int rowLo, int rowHi, int columnLo, int columnHi, int channelLo, int channelHi)
 {
   int i,j,k;
   T result;
@@ -2321,7 +2321,7 @@ void OvImageT<T>::setToGray()
 * @return image
 */
 template<typename T> 
-const OvImageT<T> repmat (const OvImageT<T> & input, int height=1, int width=1, int channels=1)
+const OvImageT<T> repmat (const OvImageT<T> & input, int height, int width, int channels)
 {
   OvImageT<T> result;
   int i,j,k;
@@ -2352,7 +2352,7 @@ const OvImageT<T> repmat (const OvImageT<T> & input, int height=1, int width=1, 
 * @return translated image
 */
 template<typename T> 
-const OvImageT<T> shiftImageXY (const OvImageT<T> & input, int columns=0, int rows=0)
+const OvImageT<T> shiftImageXY (const OvImageT<T> & input, int columns, int rows)
 {	
   OvImageT<T> result(input,false);
   int i,j,k, iLow, iHigh, jLow, jHigh;
@@ -2388,7 +2388,7 @@ const OvImageT<T> shiftImageXY (const OvImageT<T> & input, int columns=0, int ro
 * @see resizeBilinear(const OvImageT<T> & input, double scale, bool preSmooth)
 */
 template<typename T> 
-const OvImageT<T> resizeNearestNbr(const OvImageT<T> & input, double scale, bool preSmooth=false)
+const OvImageT<T> resizeNearestNbr(const OvImageT<T> & input, double scale, bool preSmooth)
 {
   int i,j,k;
   OvImageT<T> result, intermediate, kernel;
@@ -2436,7 +2436,7 @@ const OvImageT<T> resizeNearestNbr(const OvImageT<T> & input, double scale, bool
 * @see resizeNearestNbr(const OvImageT<T> & input, double scale, bool preSmooth)
 */
 template<typename T> 
-const OvImageT<T> resizeBilinear(const OvImageT<T> & input, double scale, bool preSmooth=false)
+const OvImageT<T> resizeBilinear(const OvImageT<T> & input, double scale, bool preSmooth)
 {	
   int i,j,k;
   double iInput,jInput;
@@ -2627,7 +2627,7 @@ void OvImageT<T> ::setToGaussian(int size, double sigma)
 * @see gaussian(int size, double sigma)
 */
 template<typename T> 
-void OvImageT<T> ::setToGaborX(int size, double sigma, double period, double phaseshift=0)
+void OvImageT<T> ::setToGaborX(int size, double sigma, double period, double phaseshift)
 {
   double x,y;
   double halfsize, tempVal, normalizer;
@@ -2676,7 +2676,7 @@ void OvImageT<T> ::setToGaborX(int size, double sigma, double period, double pha
 * @see gaussian(int size, double sigma)
 */
 template<typename T> 
-void OvImageT<T> ::setToGaborY(int size, double sigma, double period, double phaseshift=0)
+void OvImageT<T> ::setToGaborY(int size, double sigma, double period, double phaseshift)
 {
   double x,y;
   double halfsize, tempVal, normalizer;
@@ -2872,7 +2872,7 @@ inline const OvImageT<double> gaborY(int size, double sigma, double period, doub
 * @see #gaborY(int size, double sigma, double period, double phaseshift)
 */
 template<typename T> 
-void OvImageT<T>::setToGaborOriented(int size, double sigma, double period, double angle, double phaseshift=0)
+void OvImageT<T>::setToGaborOriented(int size, double sigma, double period, double angle, double phaseshift)
 {
   double x,y;
   double halfsize, tempVal, normalizer;
@@ -2922,7 +2922,7 @@ void OvImageT<T>::setToGaborOriented(int size, double sigma, double period, doub
 * @see OvImageT<T>#setToGaborX(int size, double sigma, double period, double phaseshift)
 * @see #gaborY(int size, double sigma, double period, double phaseshift)
 */
-inline const OvImageT<double> gaborOriented(int size, double sigma, double period, double angle, double phaseshift=0)
+inline const OvImageT<double> gaborOriented(int size, double sigma, double period, double angle, double phaseshift)
 {
   OvImageT<double> result;
   result.setToGaborOriented(size, sigma, period, angle, phaseshift);
