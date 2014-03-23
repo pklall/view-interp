@@ -302,8 +302,8 @@ class PolarStereo {
                 int numScales,
                 float scaleStep,
                 const PolarFundamentalMatrix& F,
-                const CImg<uint8_t>& leftLab,
-                const CImg<uint8_t>& rightLab);
+                const CImg<uint8_t>& leftGray,
+                const CImg<uint8_t>& rightGray);
 
         inline float disparityAt(
                 int scaleIndex,

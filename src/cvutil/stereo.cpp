@@ -4,6 +4,38 @@
 
 #include <cstring>
 
+void CVStereo::stereo(
+        int minDisparity,
+        int numDisparities,
+        int width,
+        int height,
+        const uint8_t* leftGray,
+        const uint8_t* rightGray,
+        int16_t* resultBuf) {
+    int rows = height;
+    int cols = width;
+
+    const cv::Mat left(rows, cols, CV_8U, (void*) leftGray);
+    const cv::Mat right(rows, cols, CV_8U, (void*) rightGray);
+    cv::Mat result(rows, cols, CV_16S, (void*) resultBuf);
+
+    int SADWindowSize = 5; // 3 to 11 is recommended
+    float smoothnessScale = 1.0f;
+    int P1=8 * 3 * sqr(SADWindowSize) * smoothnessScale;
+    int P2=32 * 3 * sqr(SADWindowSize) * smoothnessScale;
+    int disp12MaxDiff=2;
+    int preFilterCap=0;
+    int uniquenessRatio=0;
+    int speckleWindowSize=0;
+    int speckleRange=0;
+    bool fullDP=false;
+
+    cv::StereoSGBM sgbm(minDisparity, numDisparities, SADWindowSize,
+            P1, P2, disp12MaxDiff, preFilterCap, uniquenessRatio, speckleWindowSize,
+            speckleRange, fullDP);
+
+    sgbm(left, right, result);
+}
 
 void CVStereo::rectify() {
     // Find interest points using ORB...

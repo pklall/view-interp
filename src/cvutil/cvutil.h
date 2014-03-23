@@ -21,6 +21,7 @@ void slicSuperpixels(
         int nc,
         CImg<uint16_t>& result);
 
+
 class CVFeatureMatcher {
     private:
         vector<cv::KeyPoint> keypoints;
@@ -100,6 +101,21 @@ class CVFundamentalMatrixEstimator {
 
 class CVStereo {
     public:
+        /**
+         * Computes stereo on a rectified pair of the given dimensions with
+         * pixels provided as grayscale in scanline order.
+         * The resulting disparity, multiplied by a factor of 16 is stored
+         * in resultBuf in scanline order.
+         */
+        static void stereo(
+                int minDisparity,
+                int numDisparities,
+                int width,
+                int height,
+                const uint8_t* leftGray,
+                const uint8_t* rightGray,
+                int16_t* resultBuf);
+
         CVStereo(
                 const CImg<float>& left,
                 const CImg<float>& right,

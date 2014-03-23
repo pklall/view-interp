@@ -697,15 +697,15 @@ void PolarStereo::computeStereo(
         int numScales,
         float scaleStep,
         const PolarFundamentalMatrix& F,
-        const CImg<uint8_t>& leftLab,
-        const CImg<uint8_t>& rightLab) {
-    assert(leftLab.is_sameXYZC(rightLab));
-    assert(leftLab.depth() == 1);
-    assert(leftLab.spectrum() == 3);
+        const CImg<uint8_t>& leftGray,
+        const CImg<uint8_t>& rightGray) {
+    assert(leftGray.is_sameXYZC(rightGray));
+    assert(leftGray.depth() == 1);
+    assert(leftGray.spectrum() == 1);
 
-    int imgWidth = leftLab.width();
-    int imgHeight = leftLab.height();
-    int imgSpectrum = leftLab.spectrum();
+    int imgWidth = leftGray.width();
+    int imgHeight = leftGray.height();
+    int imgSpectrum = leftGray.spectrum();
 
     // Allocate space for the resulting pyramid of disparity images
     disparityPyramid.reserve(numScales);
@@ -715,23 +715,24 @@ void PolarStereo::computeStereo(
 
     PolarFundamentalMatrix curF;
 
-    array<CImg<uint8_t>, 2> imgScaledLab;
-    imgScaledLab[0] = leftLab;
-    imgScaledLab[1] = rightLab;
+    array<CImg<uint8_t>, 2> imgScaledGray;
+    imgScaledGray[0] = leftGray;
+    imgScaledGray[1] = rightGray;
 
-    array<CImg<uint8_t>, 2> rectifiedLab;
+    array<CImg<uint8_t>, 2> rectified;
 
-    CImg<float> disparity;
+    CImg<int16_t> disparity;
 
     disparityPyramid.resize(numScales);
 
     for (int i = 0; i < numScales; i++) {
-        curImgWidth = imgWidth * pow(scaleStep, i);
-        curImgHeight = imgHeight * pow(scaleStep, i);
+        float scale = pow(scaleStep, i);
+        curImgWidth = imgWidth * scale;
+        curImgHeight = imgHeight * scale;
 
-        disparityPyramid[i].resize(curImgWidth, curImgHeight, 1, imgSpectrum, -1);
+        disparityPyramid[i].resize(curImgWidth, curImgHeight, 1, 1, -1);
 
-        for (CImg<uint8_t>& scaledImg : imgScaledLab) {
+        for (CImg<uint8_t>& scaledImg : imgScaledGray) {
             // 3 indicates nearest-neighbor resampling
             scaledImg.resize(curImgWidth, curImgHeight, 1, imgSpectrum, 3);
         }
@@ -750,23 +751,32 @@ void PolarStereo::computeStereo(
                 startRow, numRows, maximumWidth, disparityFactor,
                 disparityOffset);
 
-        // Allocate a width 3 times as much is necessary since OpenCV's stereo
-        // refuses to compute along the image border.
-        for (CImg<uint8_t>& rectImg : rectifiedLab) {
-            rectImg.resize(maximumWidth * 3, numRows, 1, imgSpectrum, -1);
-            rectImg = (uint8_t) 0;
-        }
 
         // Round up to the next multiple of 8 since CVStereo requires
         // a disparity range which is a multiple of 16, and the entire
         // disparity range will be [-rectifiedPadding, rectifiedPadding]
         int rectifiedPadding = ((maximumWidth + 7) / 8) * 8;
 
+        int paddedWidth = maximumWidth + rectifiedPadding * 2;
+        
+        // Allocate a width 3 times as much is necessary since OpenCV's stereo
+        // refuses to compute along the image border.
+        for (auto& rectImg : rectified) {
+            rectImg.resize(paddedWidth, numRows, 1, 1, -1);
+
+            rectImg = (uint8_t) 0;
+        }
+
+        disparity.resize(paddedWidth, numRows, 1, 1, -1);
+
+        disparity = -rectifiedPadding * 16;
+
+        // Rectify...
+        
         struct {
+            int rectifiedPadding;
             const CImg<uint8_t>* original;
             CImg<uint8_t>* rectified;
-            int rectifiedPadding;
-            int channel;
 
             void operator()(
                     const Eigen::Vector2i& r,
@@ -774,34 +784,72 @@ void PolarStereo::computeStereo(
                     const Eigen::Vector2d& o) {
                 float col = 0;
 
-                (*rectified)(rectifiedPadding + r.x(), r.y(), 0, channel)
-                    =
-                    original->linear_atXY(o.x(), o.y(), 0, channel, col);
+                (*rectified)(rectifiedPadding + r.x(), r.y()) =
+                    original->linear_atXY(o.x(), o.y(), 0, 0, col);
             }
-        } rectCallback = {nullptr, nullptr, rectifiedPadding, 0};
+        } rectCallback = {rectifiedPadding,
+            nullptr, nullptr};
 
         for (int imgId = 0; imgId < 2; imgId++) {
-            for (int c = 0; c < imgSpectrum; c++) {
-                rectCallback.original = &(imgScaledLab[imgId]);
+            rectCallback.original = &(imgScaledGray[imgId]);
 
-                rectCallback.rectified = &(rectifiedLab[imgId]);
+            rectCallback.rectified = &(rectified[imgId]);
 
-                rectCallback.channel = c;
-
-                rectifier.evaluateRectificationTransform(
-                        imgId, startRow, numRows, rectCallback);
-            }
+            rectifier.evaluateRectificationTransform(
+                    imgId, startRow, numRows, rectCallback);
         }
 
-        CVStereo stereo(rectifiedLab[0], rectifiedLab[1], true);
+        (rectified[0], rectified[1]).display();
 
-        stereo.matchStereo(
+        // Compute stereo
+        CVStereo::stereo(
                 -rectifiedPadding,
-                rectifiedPadding);
+                rectifiedPadding * 2,
+                paddedWidth,
+                curImgHeight,
+                rectified[0].data(),
+                rectified[1].data(),
+                disparity.data());
 
-        stereo.getStereo(disparity);
+        // Derectify...
+        struct {
+            int width;
+            int height;
+            int rectifiedPadding;
 
-        disparity.display();
+            double disparityFactor;
+            double disparityOffset;
+
+            const CImg<int16_t>* rectified;
+            CImg<float>* unrectified;
+
+            void operator()(
+                    const Eigen::Vector2i& r,
+                    const Eigen::Vector2d& p,
+                    const Eigen::Vector2d& o) {
+                float disparity = (*rectified)(rectifiedPadding + r.x(), r.y());
+
+                disparity /= 16.0f;
+
+                disparity = disparity * disparityFactor + disparityOffset;
+
+                int ox = (o.x() + 0.5);
+                int oy = (o.y() + 0.5);
+
+                if (ox < width && oy < height && ox >= 0 && oy >= 0) {
+                    (*unrectified)(ox, oy) = disparity;
+                }
+            }
+        } unrectCallback = {curImgWidth, curImgHeight, rectifiedPadding,
+            disparityFactor * scale, disparityOffset,
+            &disparity, &(disparityPyramid[i])};
+
+        disparityPyramid[i] = -rectifiedPadding;
+
+        rectifier.evaluateRectificationTransform(
+                0, startRow, numRows, unrectCallback);
+
+        disparityPyramid[i].get_equalize(256).display();
     }
 }
 

@@ -22,7 +22,7 @@ int main(int argc, char** argv) {
     // Larger patch size is necessary for high-resolution images.
     // Note that detecting features on full-size images is ideal for greatest
     // precision in computing the fundamental matrix.
-    const int patchSize = 127;
+    const int patchSize = 63;
 
     unique_ptr<CVFeatureMatcher> prevFeat(
             new CVFeatureMatcher(maxFeatures, patchSize));
@@ -31,7 +31,8 @@ int main(int argc, char** argv) {
 
     CVFundamentalMatrixEstimator fEstimator;
 
-    prevImg->load(argv[1]);
+    // Load a grayscale image from RGB
+    *prevImg = CImg<uint8_t>::get_load(argv[1]).get_RGBtoLab().channel(0);
 
     int originalWidth = prevImg->width();
     int originalHeight = prevImg->height();
@@ -42,7 +43,7 @@ int main(int argc, char** argv) {
     int workingWidth = originalWidth * scaleFactor;
     int workingHeight = originalHeight * scaleFactor;
 
-    prevFeat->detectFeatures(prevImg->get_RGBtoLab().channel(0));
+    prevFeat->detectFeatures(*prevImg);
 
     PolarFundamentalMatrix F;
 
@@ -53,12 +54,12 @@ int main(int argc, char** argv) {
     for (int imgI = 1; imgI < imageCount; imgI++) {
         printf("Processing image #%d\n", imgI);
 
-        curImg->load(argv[1 + imgI]);
+        *curImg = CImg<uint8_t>::get_load(argv[1 + imgI]).get_RGBtoLab().channel(0);
         assert(curImg->width() == originalWidth);
         assert(curImg->height() == originalHeight);
 
         printf("Detecting features...\n");
-        curFeat->detectFeatures(curImg->get_RGBtoLab().channel(0));
+        curFeat->detectFeatures(*curImg);
         printf("Done\n");
 
         printf("Estimating fundamental matrix...\n");
@@ -92,8 +93,8 @@ int main(int argc, char** argv) {
         // Resize to a workable size and adjust the fundamental matrix
         // accordingly.
 
-        prevImg->resize(workingWidth, workingHeight, 1, 3, 5);
-        curImg->resize(workingWidth, workingHeight, 1, 3, 5);
+        prevImg->resize(workingWidth, workingHeight, 1, 1, 5);
+        curImg->resize(workingWidth, workingHeight, 1, 1, 5);
 
         F.scale(originalWidth, originalHeight, workingWidth, workingHeight);
 
@@ -102,7 +103,8 @@ int main(int argc, char** argv) {
         printf("Done\n");
 
 
-        stereo.computeStereo(3, 0.5f, F, *prevImg, *curImg);
+        // 4 scales, downsampling by 0.75 each time
+        stereo.computeStereo(4, 0.75f, F, *prevImg, *curImg);
 
         /*
         CImg<uint8_t> rectified;
