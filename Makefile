@@ -31,6 +31,8 @@ INCLUDES  := -I/usr/include/eigen3 \
              -Iextern/SLIC-Superpixels \
              -Iextern/Halide/include \
              -Iextern/opengm/include \
+             -Iextern/daisy-1.8.1/include \
+			 -Iextern/nanoflann-1.1.7/include \
 			 -Isrc/qpbo \
 
 CXXFLAGS  := $(OPT_LEVEL) \
@@ -47,10 +49,12 @@ CXXFLAGS  := $(OPT_LEVEL) \
 LD_DIRS   := -Lextern/ceres-solver/build/lib \
              -Lextern/SLIC-Superpixels \
              -Lextern/Halide/bin \
+             -Lextern/daisy-1.8.1/lib \
 
 LD_STATIC := -lceres \
              -lslic \
              -lHalide \
+			 -ldaisy \
 
 LD_FLAGS  := $(LD_DIRS) \
              $(LD_ASAN) \
@@ -76,6 +80,7 @@ LD_FLAGS  := $(LD_DIRS) \
              -lopencv_imgproc \
              -lopencv_legacy \
              -lopencv_video \
+			 -lflann \
 
 CXX       := clang++
 LD        := clang++

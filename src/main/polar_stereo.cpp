@@ -1,4 +1,4 @@
-#include "polar_rectification.h"
+#include "polar_stereo.h"
 
 #include "cvutil/cvutil.h"
 
@@ -806,7 +806,7 @@ void PolarStereo::computeStereo(
                 -rectifiedPadding,
                 rectifiedPadding * 2,
                 paddedWidth,
-                curImgHeight,
+                numRows,
                 rectified[0].data(),
                 rectified[1].data(),
                 disparity.data());
@@ -829,8 +829,8 @@ void PolarStereo::computeStereo(
                     const Eigen::Vector2d& o) {
                 float disparity = (*rectified)(rectifiedPadding + r.x(), r.y());
 
+                // FIXME uncomment
                 disparity /= 16.0f;
-
                 disparity = disparity * disparityFactor + disparityOffset;
 
                 int ox = (o.x() + 0.5);
@@ -849,7 +849,7 @@ void PolarStereo::computeStereo(
         rectifier.evaluateRectificationTransform(
                 0, startRow, numRows, unrectCallback);
 
-        disparityPyramid[i].get_equalize(256).display();
+        disparityPyramid[i].display();
     }
 }
 

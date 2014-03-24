@@ -2,7 +2,7 @@
 
 #include "cvutil/cvutil.h"
 
-#include "polar_rectification.h"
+#include "polar_stereo.h"
 
 #include <Eigen/Dense>
 
@@ -22,7 +22,7 @@ int main(int argc, char** argv) {
     // Larger patch size is necessary for high-resolution images.
     // Note that detecting features on full-size images is ideal for greatest
     // precision in computing the fundamental matrix.
-    const int patchSize = 63;
+    const int patchSize = 255;
 
     unique_ptr<CVFeatureMatcher> prevFeat(
             new CVFeatureMatcher(maxFeatures, patchSize));
@@ -125,3 +125,51 @@ int main(int argc, char** argv) {
     return 0;
 }
 
+/*
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        printf("Usage: %s img1.png img2.png ... imgN.png\n", argv[0]);
+        exit(1);
+    }
+
+    const int imageCount = argc - 1;
+
+    unique_ptr<CImg<uint8_t>> prevImg(new CImg<uint8_t>());
+    unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
+
+    // Load a grayscale image from RGB
+    *prevImg = CImg<float>::get_load(argv[1]).get_RGBtoLab().channel(0);
+
+    int originalWidth = prevImg->width();
+    int originalHeight = prevImg->height();
+
+    // More manageable size
+    float scaleFactor = 0.5f * 1000000.0f / (originalWidth * originalHeight);
+
+    int workingWidth = originalWidth * scaleFactor;
+    int workingHeight = originalHeight * scaleFactor;
+
+    PolarStereo stereo;
+
+    PolarRectification rectification;
+
+    for (int imgI = 1; imgI < imageCount; imgI++) {
+        printf("Processing image #%d\n", imgI);
+
+        *curImg = CImg<float>::get_load(argv[1 + imgI]).get_RGBtoLab().channel(0);
+        assert(curImg->width() == originalWidth);
+        assert(curImg->height() == originalHeight);
+
+        prevImg->resize(workingWidth, workingHeight, 1, 1, 5);
+        curImg->resize(workingWidth, workingHeight, 1, 1, 5);
+        
+        DenseFeatureMatch match;
+
+        match.match(*prevImg);
+
+        swap(prevImg, curImg);
+    }
+
+    return 0;
+}
+*/
