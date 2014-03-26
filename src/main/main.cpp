@@ -96,23 +96,43 @@ int main(int argc, char** argv) {
                 matchOther.x() /= max(workingWidth, workingHeight);
                 matchOther.y() /= max(workingWidth, workingHeight);
 
-                reconstruct.addObservation(0, pointI, matchOther);
+                reconstruct.addObservation(imgI, pointI, matchOther);
             }
         }
     }
 
     reconstruct.solve();
 
-    printf("[\n");
+    CImg<uint8_t> depthMap(workingWidth, workingHeight, 1, 1, 5);
 
+    vector<Eigen::Vector3d> reconstruction(klt.featureCount());
+
+    printf("[\n");
     for (int i = 0; i < klt.featureCount(); i++) {
         Eigen::Vector3d p = reconstruct.getCameraSpacePoint(0, i);
+        
+        p.x() *= max(workingWidth, workingHeight);
+        p.y() *= max(workingWidth, workingHeight);
+
+        p.x() += workingWidth / 2.0;
+        p.y() += workingHeight / 2.0;
 
         printf("(%f, %f, %f),\n", p[0], p[1], p[2]);
+        
+        reconstruction[i] = p;
     }
 
     printf("]\n");
-
+    
+    // Sort reconstructed depth samples from back to front
+    std::sort(reconstruction.begin(), reconstruction.end(), [](
+                const Eigen::Vector3d& a,
+                const Eigen::Vector3d& b) {
+            return a[2] < b[2];
+            });
+    
+    const Eigen::Vector3d& medianDepth = reconstruction[reconstruction.size() / 2];
+    
     return 0;
 }
 

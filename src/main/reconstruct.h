@@ -105,8 +105,8 @@ class Reconstruction {
                 const Eigen::Vector2f point) {
             ceres::CostFunction* costFunction =
                 new ceres::AutoDiffCostFunction<
-                ceres::examples::SnavelyReprojectionErrorWithQuaternions, 2, 4, 6, 3>(
-                        new ceres::examples::SnavelyReprojectionErrorWithQuaternions(
+                ceres::examples::SnavelyReprojectionErrorWithQuaternionsNoDistort, 2, 4, 6, 3>(
+                        new ceres::examples::SnavelyReprojectionErrorWithQuaternionsNoDistort(
                             (double) point[0],
                             (double) point[1]));
 
@@ -144,8 +144,11 @@ class Reconstruction {
             double yp = - p[1] / p[2];
 
             // Apply second and fourth order radial distortion.
-            double r2 = xp*xp + yp*yp;
-            double distortion = 1.0 + r2  * (l1 + l2  * r2);
+            // double r2 = xp*xp + yp*yp;
+            // double distortion = 1.0 + r2  * (l1 + l2  * r2);
+            
+            double distortion = 1;
+
 
             // Compute final projected point position.
             p[0] = focal * distortion * xp;
