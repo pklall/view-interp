@@ -153,28 +153,29 @@ struct SnavelyReprojectionErrorWithQuaternions {
 /**
  * Same as original, but ignores radial distortion parameters.
  */
-struct SnavelyReprojectionErrorWithQuaternionsNoDistort {
+struct SnavelyReprojectionErrorNoIntrinsics {
   // (u, v): the position of the observation with respect to the image
   // center point.
-  SnavelyReprojectionErrorWithQuaternionsNoDistort(double observed_x, double observed_y)
+  SnavelyReprojectionErrorNoIntrinsics(double observed_x, double observed_y)
       : observed_x(observed_x), observed_y(observed_y) {}
 
   template <typename T>
   bool operator()(const T* const camera_rotation,
-                  const T* const camera_translation_and_intrinsics,
+                  const T* const camera_translation,
                   const T* const point,
                   T* residuals) const {
-    const T& focal = camera_translation_and_intrinsics[3];
+    // const T& focal = camera_translation_and_intrinsics[3];
 
     // Use a quaternion rotation that doesn't assume the quaternion is
     // normalized, since one of the ways to run the bundler is to let Ceres
     // optimize all 4 quaternion parameters unconstrained.
     T p[3];
-    QuaternionRotatePoint(camera_rotation, point, p);
+    // QuaternionRotatePoint(camera_rotation, point, p);
+    ceres::AngleAxisRotatePoint(camera_rotation, point, p);
 
-    p[0] += camera_translation_and_intrinsics[0];
-    p[1] += camera_translation_and_intrinsics[1];
-    p[2] += camera_translation_and_intrinsics[2];
+    p[0] += camera_translation[0];
+    p[1] += camera_translation[1];
+    p[2] += camera_translation[2];
 
     // Compute the center of distortion. The sign change comes from
     // the camera model that Noah Snavely's Bundler assumes, whereby
@@ -183,8 +184,8 @@ struct SnavelyReprojectionErrorWithQuaternionsNoDistort {
     T yp = - p[1] / p[2];
 
     // Compute final projected point position.
-    T predicted_x = focal * xp;
-    T predicted_y = focal * yp;
+    T predicted_x = xp;
+    T predicted_y = yp;
 
     // The error is the difference between the predicted and observed position.
     residuals[0] = predicted_x - T(observed_x);

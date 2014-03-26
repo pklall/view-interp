@@ -89,24 +89,74 @@ class ChainReconstruction {
                 ostream& result) const;
 };
 
-class Reconstruction {
+class DepthReconstruction {
     private:
-        typedef array<double, 10> CameraParam;
+        typedef array<double, 6> CameraParam;
 
+        struct ReprojectionError {
+            // (u, v): the position of the observation with respect to the image
+            // center point.
+            ReprojectionError(double main_x, double main_y,
+                    double observed_x, double observed_y)
+                : main_x(main_x), main_y(main_y),
+                observed_x(observed_x), observed_y(observed_y) {}
+
+            template <typename T>
+                bool operator()(const T* const camera_rotation,
+                        const T* const camera_translation,
+                        const T* const depth,
+                        T* residuals) const {
+                    Eigen::Matrix<T, 3, 1> p;
+
+                    p << T(main_x) * depth[0],
+                      T(main_y) * depth[0],
+                      depth[0];
+
+                    p[0] += camera_translation[0];
+                    p[1] += camera_translation[1];
+                    p[2] += camera_translation[2];
+
+                    T prot[3];
+
+                    ceres::AngleAxisRotatePoint(camera_rotation, p.data(),
+                            prot);
+
+                    T predicted_x = prot[0] / prot[2];
+                    T predicted_y = prot[1] / prot[2];
+                    
+                    // Compute final projected point position.
+                    residuals[0] = predicted_x - T(observed_x);
+                    residuals[1] = predicted_y - T(observed_y);
+
+                    return true;
+                }
+
+            double main_x;
+            double main_y;
+            double observed_x;
+            double observed_y;
+        };
     public:
         void init(
                 int numCameras,
-                int numPoints,
-                double robustHuberCoeff);
+                int numPoints);
+
+        inline void setMainPoint(
+                int pointIndex,
+                const Eigen::Vector2d& point) {
+            points[pointIndex] = point.homogeneous();
+        }
 
         inline void addObservation(
                 int cameraIndex,
                 int pointIndex,
-                const Eigen::Vector2f point) {
+                const Eigen::Vector2f& point) {
             ceres::CostFunction* costFunction =
                 new ceres::AutoDiffCostFunction<
-                ceres::examples::SnavelyReprojectionErrorWithQuaternionsNoDistort, 2, 4, 6, 3>(
-                        new ceres::examples::SnavelyReprojectionErrorWithQuaternionsNoDistort(
+                ReprojectionError, 1, 3, 3, 2>(
+                        new ReprojectionError(
+                            (double) points[pointIndex][0],
+                            (double) points[pointIndex][1],
                             (double) point[0],
                             (double) point[1]));
 
@@ -114,8 +164,8 @@ class Reconstruction {
                     costFunction,
                     lossFunc.get(),
                     cameras[cameraIndex].data(),
-                    cameras[cameraIndex].data() + 4,
-                    points[pointIndex].data());
+                    cameras[cameraIndex].data() + 3,
+                    &(points[pointIndex][2]));
         }
 
         void solve();
@@ -124,43 +174,16 @@ class Reconstruction {
             return points;
         }
 
-        inline Eigen::Vector3d getCameraSpacePoint(
-                int cameraId,
-                int pointId) {
-            Eigen::Vector3d p;
-
-            const double& focal = cameras[cameraId][7];
-            const double& l1 = cameras[cameraId][8];
-            const double& l2 = cameras[cameraId][9];
-
-            ceres::QuaternionRotatePoint(
-                    &(cameras[cameraId][0]), points[pointId].data(), p.data());
-
-            p[0] += cameras[cameraId][4];
-            p[1] += cameras[cameraId][5];
-            p[2] += cameras[cameraId][6];
-
-            double xp = - p[0] / p[2];
-            double yp = - p[1] / p[2];
-
-            // Apply second and fourth order radial distortion.
-            // double r2 = xp*xp + yp*yp;
-            // double distortion = 1.0 + r2  * (l1 + l2  * r2);
-            
-            double distortion = 1;
-
-
-            // Compute final projected point position.
-            p[0] = focal * distortion * xp;
-            p[1] = focal * distortion * yp;
-
-            return p;
-        }
-
     private:
         vector<CameraParam> cameras;
+        /*
+         * Stores the (x, y) coordates of the observation in the main image
+         * and the depth associated with the point.
+         *
+         * Thus, the 3D point is actually (x * z, y * z, z).
+         */
         vector<Eigen::Vector3d> points;
 
-        unique_ptr<ceres::LossFunction> lossFunc;
+        unique_ptr<ceres::LossFunctionWrapper> lossFunc;
         unique_ptr<ceres::Problem> problem;
 };

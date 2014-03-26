@@ -53,9 +53,9 @@ int main(int argc, char** argv) {
 
     printf("Feature count = %d\n", klt.featureCount());
 
-    Reconstruction reconstruct;
+    DepthReconstruction reconstruct;
 
-    reconstruct.init(imageCount, klt.featureCount(), 1.0);
+    reconstruct.init(imageCount - 1, klt.featureCount());
 
     for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
         Eigen::Vector2f match0;
@@ -66,10 +66,7 @@ int main(int argc, char** argv) {
 
         match0 -= Eigen::Vector2f(workingWidth / 2.0, workingHeight / 2.0);
 
-        match0.x() /= max(workingWidth, workingHeight);
-        match0.y() /= max(workingWidth, workingHeight);
-
-        reconstruct.addObservation(0, pointI, match0);
+        reconstruct.setMainPoint(pointI, match0.cast<double>());
     }
 
     for (int imgI = 1; imgI < imageCount; imgI++) {
@@ -93,33 +90,20 @@ int main(int argc, char** argv) {
             if (klt.getMatch(pointI, match0, matchOther, error)) {
                 matchOther -= Eigen::Vector2f(workingWidth / 2.0, workingHeight / 2.0);
 
-                matchOther.x() /= max(workingWidth, workingHeight);
-                matchOther.y() /= max(workingWidth, workingHeight);
-
-                reconstruct.addObservation(imgI, pointI, matchOther);
+                reconstruct.addObservation(imgI - 1, pointI, matchOther);
             }
         }
     }
 
     reconstruct.solve();
 
-    CImg<uint8_t> depthMap(workingWidth, workingHeight, 1, 1, 5);
-
-    vector<Eigen::Vector3d> reconstruction(klt.featureCount());
+    vector<Eigen::Vector3d> reconstruction = reconstruct.getPoints();
 
     printf("[\n");
-    for (int i = 0; i < klt.featureCount(); i++) {
-        Eigen::Vector3d p = reconstruct.getCameraSpacePoint(0, i);
-        
-        p.x() *= max(workingWidth, workingHeight);
-        p.y() *= max(workingWidth, workingHeight);
-
-        p.x() += workingWidth / 2.0;
-        p.y() += workingHeight / 2.0;
+    for (Eigen::Vector3d& p : reconstruction) {
+        p += Eigen::Vector3d(workingWidth / 2.0, workingHeight / 2.0, 0);
 
         printf("(%f, %f, %f),\n", p[0], p[1], p[2]);
-        
-        reconstruction[i] = p;
     }
 
     printf("]\n");
@@ -132,7 +116,19 @@ int main(int argc, char** argv) {
             });
     
     const Eigen::Vector3d& medianDepth = reconstruction[reconstruction.size() / 2];
-    
+
+    CImg<float> depthMap(workingWidth, workingHeight, 1, 1);
+
+    depthMap  = medianDepth.z();
+
+    for (const Eigen::Vector3d& sample : reconstruction) {
+        depthMap.draw_circle(sample.x() + 0.5, sample.y() + 0.5, 3, &sample.z());
+    }
+
+    depthMap.blur(10);
+
+    depthMap.display();
+
     return 0;
 }
 

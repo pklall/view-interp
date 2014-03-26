@@ -282,30 +282,38 @@ void ChainReconstruction::exportPython(
 }
 
 
-void Reconstruction::init(
+void DepthReconstruction::init(
         int numCameras,
-        int numPoints,
-        double robustHuberCoeff) {
+        int numPoints) {
     cameras.resize(numCameras);
     points.resize(numPoints);
 
     for (CameraParam& cam : cameras) {
+        // Euler angles
+        cam[0] = 0;
+        cam[1] = 0;
+        cam[2] = 0;
+        // Translation
+        cam[3] = 0;
+        cam[4] = 0;
+        // cam[3] = ((double) rand()) / RAND_MAX;
+        // cam[4] = ((double) rand()) / RAND_MAX;
+        cam[5] = 0;
+        /*
         cam[0] = 1;
         cam[1] = 0;
         cam[2] = 0;
         cam[3] = 0;
-        cam[4] = ((double) rand()) / RAND_MAX;
-        cam[5] = ((double) rand()) / RAND_MAX;
-        cam[6] = ((double) rand()) / RAND_MAX;
+        cam[4] = 0;
+        cam[5] = 0;
+        cam[6] = 10;
+        // cam[4] = ((double) rand()) / RAND_MAX;
+        // cam[5] = ((double) rand()) / RAND_MAX;
+        // cam[6] = ((double) rand()) / RAND_MAX;
         cam[7] = 1.0;
         cam[8] = 0.0;
         cam[9] = 0.0;
-    }
-
-    for (auto& p : points) {
-        p[0] = (double) rand() / RAND_MAX + 10;
-        p[1] = (double) rand() / RAND_MAX;
-        p[2] = (double) rand() / RAND_MAX;
+        */
     }
 
     ceres::Problem::Options pOptions;
@@ -314,13 +322,14 @@ void Reconstruction::init(
 
     problem.reset(new ceres::Problem(pOptions));
 
-    lossFunc.reset(new ceres::HuberLoss(robustHuberCoeff));
+    lossFunc.reset(new ceres::LossFunctionWrapper(
+                new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP));
 }
 
-void Reconstruction::solve() {
+void DepthReconstruction::solve() {
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
-    options.max_num_iterations = 10000;
+    options.max_num_iterations = 1000;
     options.minimizer_progress_to_stdout = true;
 
     ceres::Solver::Summary summary;
