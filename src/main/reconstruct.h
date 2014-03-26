@@ -72,13 +72,12 @@ class ChainReconstruction {
          * ceres-solver's SnavelyReprojectionErrorWithQuaternions.
          */
         typedef array<double, 10> CameraParam;
-        typedef array<double, 3> Point3d;
 
         const ChainFeatureMatcher* features;
 
         vector<CameraParam> cameras;
 
-        vector<Point3d> points;
+        vector<Eigen::Vector3d> points;
 
     public:
         ChainReconstruction(
@@ -88,4 +87,77 @@ class ChainReconstruction {
 
         void exportPython(
                 ostream& result) const;
+};
+
+class Reconstruction {
+    private:
+        typedef array<double, 10> CameraParam;
+
+    public:
+        void init(
+                int numCameras,
+                int numPoints,
+                double robustHuberCoeff);
+
+        inline void addObservation(
+                int cameraIndex,
+                int pointIndex,
+                const Eigen::Vector2f point) {
+            ceres::CostFunction* costFunction =
+                new ceres::AutoDiffCostFunction<
+                ceres::examples::SnavelyReprojectionErrorWithQuaternions, 2, 4, 6, 3>(
+                        new ceres::examples::SnavelyReprojectionErrorWithQuaternions(
+                            (double) point[0],
+                            (double) point[1]));
+
+            problem->AddResidualBlock(
+                    costFunction,
+                    lossFunc.get(),
+                    cameras[cameraIndex].data(),
+                    cameras[cameraIndex].data() + 4,
+                    points[pointIndex].data());
+        }
+
+        void solve();
+
+        inline const vector<Eigen::Vector3d>& getPoints() {
+            return points;
+        }
+
+        inline Eigen::Vector3d getCameraSpacePoint(
+                int cameraId,
+                int pointId) {
+            Eigen::Vector3d p;
+
+            const double& focal = cameras[cameraId][7];
+            const double& l1 = cameras[cameraId][8];
+            const double& l2 = cameras[cameraId][9];
+
+            ceres::QuaternionRotatePoint(
+                    &(cameras[cameraId][0]), points[pointId].data(), p.data());
+
+            p[0] += cameras[cameraId][4];
+            p[1] += cameras[cameraId][5];
+            p[2] += cameras[cameraId][6];
+
+            double xp = - p[0] / p[2];
+            double yp = - p[1] / p[2];
+
+            // Apply second and fourth order radial distortion.
+            double r2 = xp*xp + yp*yp;
+            double distortion = 1.0 + r2  * (l1 + l2  * r2);
+
+            // Compute final projected point position.
+            p[0] = focal * distortion * xp;
+            p[1] = focal * distortion * yp;
+
+            return p;
+        }
+
+    private:
+        vector<CameraParam> cameras;
+        vector<Eigen::Vector3d> points;
+
+        unique_ptr<ceres::LossFunction> lossFunc;
+        unique_ptr<ceres::Problem> problem;
 };

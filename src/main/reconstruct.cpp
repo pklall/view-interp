@@ -166,7 +166,7 @@ void ChainReconstruction::solve() {
 
     points.resize(numPoints);
 
-    for (Point3d& p : points) {
+    for (auto& p : points) {
         p[0] = (double) rand() / RAND_MAX;
         p[1] = (double) rand() / RAND_MAX;
         p[2] = (double) rand() / RAND_MAX - 10;
@@ -212,7 +212,7 @@ void ChainReconstruction::exportPython(
 
     result << "points = [\n";
 
-    for (const Point3d& p : points) {
+    for (const auto& p : points) {
         result << "("
             << p[0] << ", " << p[1] << ", " << p[2]
             << "),\n";
@@ -279,5 +279,52 @@ void ChainReconstruction::exportPython(
     }
 
     result << "]\n";
+}
+
+
+void Reconstruction::init(
+        int numCameras,
+        int numPoints,
+        double robustHuberCoeff) {
+    cameras.resize(numCameras);
+    points.resize(numPoints);
+
+    for (CameraParam& cam : cameras) {
+        cam[0] = 1;
+        cam[1] = 0;
+        cam[2] = 0;
+        cam[3] = 0;
+        cam[4] = ((double) rand()) / RAND_MAX;
+        cam[5] = ((double) rand()) / RAND_MAX;
+        cam[6] = ((double) rand()) / RAND_MAX;
+        cam[7] = 1.0;
+        cam[8] = 0.0;
+        cam[9] = 0.0;
+    }
+
+    for (auto& p : points) {
+        p[0] = (double) rand() / RAND_MAX + 10;
+        p[1] = (double) rand() / RAND_MAX;
+        p[2] = (double) rand() / RAND_MAX;
+    }
+
+    ceres::Problem::Options pOptions;
+    // pOptions.cost_function_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
+    pOptions.loss_function_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
+
+    problem.reset(new ceres::Problem(pOptions));
+
+    lossFunc.reset(new ceres::HuberLoss(robustHuberCoeff));
+}
+
+void Reconstruction::solve() {
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+    options.max_num_iterations = 10000;
+    options.minimizer_progress_to_stdout = true;
+
+    ceres::Solver::Summary summary;
+    ceres::Solve(options, problem.get(), &summary);
+    cout << summary.FullReport() << endl;
 }
 

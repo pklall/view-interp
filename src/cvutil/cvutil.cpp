@@ -99,6 +99,10 @@ void CVOpticalFlow::init(
 
     cv::buildOpticalFlowPyramid(baseCV, basePyr, cv::Size(wndSize, wndSize),
             pyrLevels);
+
+    matches.resize(goodFeatures.size());
+    matchMask.resize(goodFeatures.size());
+    matchError.resize(goodFeatures.size());
 }
 
 void CVOpticalFlow::compute(
