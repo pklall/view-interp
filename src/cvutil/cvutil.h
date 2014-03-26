@@ -21,6 +21,56 @@ void slicSuperpixels(
         int nc,
         CImg<uint16_t>& result);
 
+class CVOpticalFlow {
+    public:
+        CVOpticalFlow(
+                int _wndSize,
+                int _pyrLevels);
+
+        void init(
+                const CImg<uint8_t>& base,
+                int maxFeatures,
+                double minDistance);
+
+        void compute(
+                const CImg<uint8_t>& other);
+
+        inline int featureCount() {
+            return goodFeatures.size();
+        }
+
+        inline bool getMatch(
+                int i,
+                Eigen::Vector2f& base,
+                Eigen::Vector2f& match,
+                float& error) {
+            if (matchMask[i]) {
+                base = Eigen::Vector2f(
+                        goodFeatures[i].x,
+                        goodFeatures[i].y);
+
+                match = Eigen::Vector2f(
+                        matches[i].x,
+                        matches[i].y);
+
+                error = matchError[i];
+
+                return true;
+            } else {
+                return false;
+            }
+        }
+
+    private:
+        int wndSize;
+        int pyrLevels;
+        vector<cv::Mat> basePyr;
+        vector<cv::Point2f> goodFeatures;
+        vector<cv::Point2f> matches;
+        vector<uint8_t> matchMask;
+        vector<float> matchError;
+};
+
 
 class CVFeatureMatcher {
     private:
@@ -68,9 +118,16 @@ class CVFeatureMatcher {
 
 class CVFundamentalMatrixEstimator {
     public:
-        void estimateFundamentalMatrix(
+        void init(
                 CVFeatureMatcher& left,
-                CVFeatureMatcher& right,
+                CVFeatureMatcher& right);
+
+        void estimateFundamentalMatrix(
+                Eigen::Matrix3d& fundMat);
+
+        void estimateRefinedFundamentalMatrix(
+                Eigen::Vector2f e0,
+                float percentage,
                 Eigen::Matrix3d& fundMat);
 
         inline int getMatchCount() {

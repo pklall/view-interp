@@ -305,6 +305,15 @@ class PolarStereo {
                 const CImg<uint8_t>& leftGray,
                 const CImg<uint8_t>& rightGray);
 
+        inline int getNumScales() {
+            return disparityPyramid.size();
+        }
+
+        inline const CImg<float>& getDisparityAtScale(
+                int scale) {
+            return disparityPyramid[scale];
+        }
+
         inline float disparityAt(
                 int scaleIndex,
                 int x,

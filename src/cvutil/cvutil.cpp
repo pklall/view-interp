@@ -3,6 +3,7 @@
 #include "common.h"
 
 #include <opencv2/core/eigen.hpp>
+#include <opencv2/video/tracking.hpp>
 
 #include "slic.h"
 
@@ -77,19 +78,54 @@ void slicSuperpixels(
     }
 }
 
-void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
+CVOpticalFlow::CVOpticalFlow(
+        int _wndSize,
+        int _pyrLevels) :
+    wndSize(_wndSize),
+    pyrLevels(_pyrLevels) {
+}
+
+void CVOpticalFlow::init(
+        const CImg<uint8_t>& base,
+        int maxFeatures,
+        double minDistance) {
+    cv::Mat baseCV = cv::Mat(base.height(), base.width(), CV_8UC1,
+            (void*) base.data());
+
+    cv::goodFeaturesToTrack(baseCV, goodFeatures, maxFeatures, 0.01, minDistance); 
+    
+    // Sub-pixel precision probably unnecessary
+    // cv::cornerSubPix(baseCV, goodFeatures, 
+
+    cv::buildOpticalFlowPyramid(baseCV, basePyr, cv::Size(wndSize, wndSize),
+            pyrLevels);
+}
+
+void CVOpticalFlow::compute(
+        const CImg<uint8_t>& other) {
+    cv::Mat otherCV = cv::Mat(other.height(), other.width(), CV_8UC1,
+            (void*) other.data());
+
+    cv::calcOpticalFlowPyrLK(basePyr, otherCV, goodFeatures, matches, matchMask,
+            matchError);
+}
+
+void CVFundamentalMatrixEstimator::init(
         CVFeatureMatcher& left,
-        CVFeatureMatcher& right,
-        Eigen::Matrix3d& fundMat) {
+        CVFeatureMatcher& right) {
     points[0].clear();
     points[1].clear();
 
     inlierMask.clear();
 
     left.match(right, false, points);
+}
 
+
+void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
+        Eigen::Matrix3d& fundMat) {
     float inlierEpipolarMaxDist = 3;
-    float targetConfidence = 0.999;
+    float targetConfidence = 0.9999;
 
     cv::Mat cvFundMat = cv::findFundamentalMat(points[0], points[1],
             cv::FM_LMEDS, inlierEpipolarMaxDist, targetConfidence,

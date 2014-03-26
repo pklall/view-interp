@@ -27,6 +27,7 @@ LD_ASAN   :=
 endif
 
 INCLUDES  := -I/usr/include/eigen3 \
+			 -Iextern/ \
              -Iextern/ceres-solver/include \
              -Iextern/SLIC-Superpixels \
              -Iextern/Halide/include \
@@ -50,11 +51,13 @@ LD_DIRS   := -Lextern/ceres-solver/build/lib \
              -Lextern/SLIC-Superpixels \
              -Lextern/Halide/bin \
              -Lextern/daisy-1.8.1/lib \
+             -Lextern/klt \
 
 LD_STATIC := -lceres \
              -lslic \
              -lHalide \
 			 -ldaisy \
+			 -lklt \
 
 LD_FLAGS  := $(LD_DIRS) \
              $(LD_ASAN) \

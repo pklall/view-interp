@@ -9,8 +9,8 @@ CVFeatureMatcher::CVFeatureMatcher(
     // Parameters for ORB features
     int nfeatures=_maxPoints;
     float scaleFactor=1.2f;
-    int nlevels=8;
-    int edgeThreshold=31;
+    int nlevels=16;
+    int edgeThreshold=patchSize;
     int firstLevel=0;
     int WTA_K=2;
     int scoreType=cv::ORB::HARRIS_SCORE;

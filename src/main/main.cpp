@@ -2,7 +2,11 @@
 
 #include "cvutil/cvutil.h"
 
+// #include "dense_feature_warp.h"
+
 #include "polar_stereo.h"
+
+#include "klt_feature_warp.h"
 
 #include <Eigen/Dense>
 
@@ -14,15 +18,92 @@ int main(int argc, char** argv) {
 
     const int imageCount = argc - 1;
 
-    unique_ptr<CImg<uint8_t>> prevImg(new CImg<uint8_t>());
+    unique_ptr<CImg<uint8_t>> initImg(new CImg<uint8_t>());
     unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
 
-    const int maxFeatures = 4096;
+    // Load a grayscale image from RGB
+    *initImg = CImg<float>::get_load(argv[1]);
+    if (initImg->spectrum() > 1) {
+        *initImg = initImg->get_RGBtoLab().channel(0);
+    }
+
+    int originalWidth = initImg->width();
+    int originalHeight = initImg->height();
+
+    // More manageable size
+    float scaleFactor = 4.0f * 1000000.0f / ((float) originalWidth * originalHeight);
+
+    // Don't increase image size
+    scaleFactor = min(1.0f, scaleFactor);
+
+    int workingWidth = originalWidth * scaleFactor;
+    int workingHeight = originalHeight * scaleFactor;
+
+    printf("Image size = %d x %d\n", workingWidth, workingHeight);
+
+    initImg->resize(workingWidth, workingHeight, 1, 1, 5);
+
+    const int numPoints = 10000;
+
+    CVOpticalFlow klt(31, 2);
+
+    klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.01);
+
+    printf("Feature count = %d\n", klt.featureCount());
+
+    for (int imgI = 1; imgI < imageCount; imgI++) {
+        printf("Processing image #%d\n", imgI);
+
+        *curImg = CImg<float>::get_load(argv[1 + imgI]);
+        if (curImg->spectrum() > 1) {
+            *curImg = curImg->get_RGBtoLab().channel(0);
+        }
+        assert(curImg->width() == originalWidth);
+        assert(curImg->height() == originalHeight);
+        curImg->resize(workingWidth, workingHeight, 1, 1, 5);
+
+        klt.compute(*curImg);
+
+        CImg<uint8_t> visualization = *initImg;
+
+        visualization.resize(-100, -100, -100, 3);
+
+        for (int i = 0; i < klt.featureCount(); i++) {
+            Eigen::Vector2f initPt;
+            Eigen::Vector2f matchPt;
+            float error;
+
+            if (klt.getMatch(i, initPt, matchPt, error)) {
+                uint8_t color[] = {255, 0, 0};
+
+                visualization.draw_arrow(matchPt.x(), matchPt.y(), initPt.x(), initPt.y(), color, 30, 5);
+            }
+        }
+
+        visualization.display();
+    }
+
+    return 0;
+}
+
+/*
+int main(int argc, char** argv) {
+    if (argc < 3) {
+        printf("Usage: %s img1.png img2.png ... imgN.png\n", argv[0]);
+        exit(1);
+    }
+
+    const int imageCount = argc - 1;
+
+    unique_ptr<CImg<uint8_t>> initImg(new CImg<uint8_t>());
+    unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
+
+    const int maxFeatures = 8096;
 
     // Larger patch size is necessary for high-resolution images.
     // Note that detecting features on full-size images is ideal for greatest
     // precision in computing the fundamental matrix.
-    const int patchSize = 255;
+    const int patchSize = 31;
 
     unique_ptr<CVFeatureMatcher> prevFeat(
             new CVFeatureMatcher(maxFeatures, patchSize));
@@ -32,18 +113,18 @@ int main(int argc, char** argv) {
     CVFundamentalMatrixEstimator fEstimator;
 
     // Load a grayscale image from RGB
-    *prevImg = CImg<uint8_t>::get_load(argv[1]).get_RGBtoLab().channel(0);
+    *initImg = CImg<uint8_t>::get_load(argv[1]).get_RGBtoLab().channel(0);
 
-    int originalWidth = prevImg->width();
-    int originalHeight = prevImg->height();
+    int originalWidth = initImg->width();
+    int originalHeight = initImg->height();
 
-    // More manageable size
-    float scaleFactor = 2.0f * 1000000.0f / (originalWidth * originalHeight);
+    // More manageable size of 1 megapixel
+    float scaleFactor = 1.0f * 1000000.0f / (originalWidth * originalHeight);
 
     int workingWidth = originalWidth * scaleFactor;
     int workingHeight = originalHeight * scaleFactor;
 
-    prevFeat->detectFeatures(*prevImg);
+    prevFeat->detectFeatures(*initImg);
 
     PolarFundamentalMatrix F;
 
@@ -64,7 +145,8 @@ int main(int argc, char** argv) {
 
         printf("Estimating fundamental matrix...\n");
         Eigen::Matrix3d fundMat;
-        fEstimator.estimateFundamentalMatrix(*prevFeat, *curFeat, fundMat);
+        fEstimator.init(*prevFeat, *curFeat);
+        fEstimator.estimateFundamentalMatrix(fundMat);
         printf("Done\n");
 
         cout << "F = " << endl;
@@ -93,7 +175,7 @@ int main(int argc, char** argv) {
         // Resize to a workable size and adjust the fundamental matrix
         // accordingly.
 
-        prevImg->resize(workingWidth, workingHeight, 1, 1, 5);
+        initImg->resize(workingWidth, workingHeight, 1, 1, 5);
         curImg->resize(workingWidth, workingHeight, 1, 1, 5);
 
         F.scale(originalWidth, originalHeight, workingWidth, workingHeight);
@@ -102,28 +184,21 @@ int main(int argc, char** argv) {
         rectification.init(curImg->width(), curImg->height(), F);
         printf("Done\n");
 
+        // Multiple scales, downsampling by 0.75 each time
+        stereo.computeStereo(1, 0.75f, F, *initImg, *curImg);
 
-        // 4 scales, downsampling by 0.75 each time
-        stereo.computeStereo(4, 0.75f, F, *prevImg, *curImg);
+        const auto& disp = stereo.getDisparityAtScale(0);
 
-        /*
-        CImg<uint8_t> rectified;
-        CImg<float> reverseMap;
+        disp.display();
 
-        rectification.rectify(0, *prevImg, rectified, reverseMap);
-        rectified.save(("./results/rectified_" + to_string(imgI) + "_left.png").c_str());
+        // disp.get_equalize(255).get_map(CImg<float>::cube_LUT256()).display();
 
-        rectification.rectify(1, *curImg, rectified, reverseMap);
-
-        rectified.save(("./results/rectified_" + to_string(imgI) + "_right.png").c_str());
-        */
-
-        swap(prevImg, curImg);
-        swap(prevFeat, curFeat);
+        // (((disp - disp.median()) / (1.96f * pow(disp.variance(3), 2.0f))) * 127.0f + 127.0f).display();//.get_map(CImg<float>::cube_LUT256()).display();
     }
 
     return 0;
 }
+*/
 
 /*
 int main(int argc, char** argv) {

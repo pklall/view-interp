@@ -24,6 +24,7 @@ void DenseFeatureMatch::match(
     printf("Initializing single descriptor mode\n");
     featureDetector.initialize_single_descriptor_mode();
 
+    /*
     printf("Creating KD Tree\n");
 
     const int maxLeaf = 10;
@@ -34,5 +35,6 @@ void DenseFeatureMatch::match(
     printf("Building index\n");
 
     printf("Done\n");
+    */
 }
 

@@ -19,7 +19,7 @@ void CVStereo::stereo(
     const cv::Mat right(rows, cols, CV_8U, (void*) rightGray);
     cv::Mat result(rows, cols, CV_16S, (void*) resultBuf);
 
-    int SADWindowSize = 5; // 3 to 11 is recommended
+    int SADWindowSize = 3; // 3 to 11 is recommended
     float smoothnessScale = 1.0f;
     int P1=8 * 3 * sqr(SADWindowSize) * smoothnessScale;
     int P2=32 * 3 * sqr(SADWindowSize) * smoothnessScale;
