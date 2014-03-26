@@ -125,6 +125,33 @@ void CVFundamentalMatrixEstimator::init(
     left.match(right, false, points);
 }
 
+void CVFundamentalMatrixEstimator::init(
+        const CVOpticalFlow& correspondence,
+        double imgCenterX,
+        double imgCenterY,
+        double imgSize) {
+    points[0].clear();
+    points[1].clear();
+
+    inlierMask.clear();
+
+    for (int pointI = 0; pointI < correspondence.featureCount(); pointI++) {
+        Eigen::Vector2f pt0;
+        Eigen::Vector2f pt1;
+        float error;
+
+        if (correspondence.getMatch(pointI, pt0, pt1, error)) {
+            points[0].push_back(
+                    cv::Point2f(
+                        (pt0.x() - imgCenterX) / imgSize,
+                        (pt0.y() - imgCenterY) / imgSize));
+            points[1].push_back(
+                    cv::Point2f(
+                        (pt1.x() - imgCenterX) / imgSize,
+                        (pt1.y() - imgCenterY) / imgSize));
+        }
+    }
+}
 
 void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
         Eigen::Matrix3d& fundMat) {

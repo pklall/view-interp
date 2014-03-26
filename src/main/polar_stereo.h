@@ -19,7 +19,7 @@ public:
      */
     bool init(
             const Eigen::Matrix3d& _F,
-            const  array<Eigen::Vector2d, 2>& _match);
+            const array<Eigen::Vector2d, 2>& _match);
 
     /**
      * Compensate for a change in the size of the images.

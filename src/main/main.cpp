@@ -38,8 +38,11 @@ int main(int argc, char** argv) {
     // Don't increase image size
     scaleFactor = min(1.0f, scaleFactor);
 
-    int workingWidth = originalWidth * scaleFactor;
-    int workingHeight = originalHeight * scaleFactor;
+    const int workingWidth = originalWidth * scaleFactor;
+    const int workingHeight = originalHeight * scaleFactor;
+
+    const Eigen::Vector2d imageCenter(workingWidth / 2.0, workingHeight / 2.0);
+    const double imageSize = max(workingWidth, workingHeight);
 
     printf("Image size = %d x %d\n", workingWidth, workingHeight);
 
@@ -55,6 +58,8 @@ int main(int argc, char** argv) {
 
     DepthReconstruction reconstruct;
 
+    CVFundamentalMatrixEstimator fundMatEst;
+
     reconstruct.init(imageCount - 1, klt.featureCount());
 
     for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
@@ -64,7 +69,8 @@ int main(int argc, char** argv) {
 
         klt.getMatch(pointI, match0, matchOther, error);
 
-        match0 -= Eigen::Vector2f(workingWidth / 2.0, workingHeight / 2.0);
+        match0 -= imageCenter.cast<float>();
+        match0 /= imageSize;
 
         reconstruct.setMainPoint(pointI, match0.cast<double>());
     }
@@ -82,17 +88,82 @@ int main(int argc, char** argv) {
 
         klt.compute(*curImg);
 
-        for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
-            Eigen::Vector2f match0;
-            Eigen::Vector2f matchOther;
-            float error;
+        // Prune KLT matches with the epipolar constraint by estimating the
+        // fundamental matrix and rejecting outliers.
+        fundMatEst.init(klt, imageCenter[0], imageCenter[1], imageSize);
 
-            if (klt.getMatch(pointI, match0, matchOther, error)) {
-                matchOther -= Eigen::Vector2f(workingWidth / 2.0, workingHeight / 2.0);
+        Eigen::Matrix3d F;
+
+        PolarFundamentalMatrix polarF;
+        bool polarFInit = false;
+
+        for (int pointI = 0; pointI < fundMatEst.getMatchCount(); pointI++) {
+            array<Eigen::Vector2d, 2> match;
+
+            if (fundMatEst.getMatch(pointI, match[0], match[1])) {
+                polarF.init(F, match);
+                polarFInit = true;
+                break;
+            }
+        }
+
+        fundMatEst.estimateFundamentalMatrix(F);
+
+        // For visualizing matches
+        CImg<uint8_t> mainMatchVis = *initImg;
+        CImg<uint8_t> otherMatchVis = *curImg;
+        mainMatchVis.resize(-100, -100, -100, 3);
+        otherMatchVis.resize(-100, -100, -100, 3);
+        CImg<uint8_t> colors = CImg<uint8_t>::lines_LUT256();
+
+        CImg<float> depthVis(workingWidth, workingHeight);
+        depthVis.fill(0);
+
+        int successfulMatches = 0;
+
+        for (int pointI = 0; pointI < fundMatEst.getMatchCount(); pointI++) {
+            Eigen::Vector2d match0;
+            Eigen::Vector2d matchOther;
+
+            if (fundMatEst.getMatch(pointI, match0, matchOther)) {
+                successfulMatches++;
+
+                // printf("Match = (%f, %f) -> (%f, %f)\n", match0[0], match0[1], matchOther[0], matchOther[1]);
+
+                // visualize matches
+                {
+                    uint8_t color[3];
+
+                    color[0] = colors(pointI % 256, 0);
+                    color[1] = colors(pointI % 256, 1);
+                    color[2] = colors(pointI % 256, 2);
+
+                    Eigen::Vector2d match0Screen = match0 * imageSize + imageCenter;
+                    Eigen::Vector2d matchOtherScreen = matchOther * imageSize + imageCenter;
+
+                    mainMatchVis.draw_circle(match0Screen.x() + 0.5, match0Screen.y() + 0.5, 3, color);
+                    otherMatchVis.draw_circle(matchOtherScreen.x() + 0.5, matchOtherScreen.y() + 0.5, 3, color);
+
+                    double epipoleDistance0 = polarF.getEpipolarDistance(0, match0);
+                    double epipoleDistance1 = polarF.getEpipolarDistance(1, matchOther);
+                    float disparity = epipoleDistance1 - epipoleDistance0;
+
+                    depthVis.draw_circle(match0Screen.x() + 0.5, match0Screen.y() + 0.5, 3, &disparity);
+                }
+
+                // fundmatEst does this normalization already
+                // matchOther -= Eigen::Vector2f(workingWidth / 2.0, workingHeight / 2.0);
+                // matchOther /= max(workingWidth / 2.0, workingHeight / 2.0);
 
                 reconstruct.addObservation(imgI - 1, pointI, matchOther);
             }
         }
+
+        printf("Found %d final matches from %d initial klt matches\n",
+                successfulMatches, fundMatEst.getMatchCount());
+
+        (mainMatchVis, otherMatchVis).display();
+        depthVis.display();
     }
 
     reconstruct.solve();
@@ -101,6 +172,8 @@ int main(int argc, char** argv) {
 
     printf("[\n");
     for (Eigen::Vector3d& p : reconstruction) {
+        p.x() *= max(workingWidth / 2.0, workingHeight / 2.0);
+        p.y() *= max(workingWidth / 2.0, workingHeight / 2.0);
         p += Eigen::Vector3d(workingWidth / 2.0, workingHeight / 2.0, 0);
 
         printf("(%f, %f, %f),\n", p[0], p[1], p[2]);

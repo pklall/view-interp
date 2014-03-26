@@ -35,7 +35,7 @@ class CVOpticalFlow {
         void compute(
                 const CImg<uint8_t>& other);
 
-        inline int featureCount() {
+        inline int featureCount() const {
             return goodFeatures.size();
         }
 
@@ -43,7 +43,7 @@ class CVOpticalFlow {
                 int i,
                 Eigen::Vector2f& base,
                 Eigen::Vector2f& match,
-                float& error) {
+                float& error) const {
             if (matchMask[i]) {
                 base = Eigen::Vector2f(
                         goodFeatures[i].x,
@@ -122,12 +122,13 @@ class CVFundamentalMatrixEstimator {
                 CVFeatureMatcher& left,
                 CVFeatureMatcher& right);
 
-        void estimateFundamentalMatrix(
-                Eigen::Matrix3d& fundMat);
+        void init(
+                const CVOpticalFlow& correspondence,
+                double imgCenterX,
+                double imgCenterY,
+                double imgSize);
 
-        void estimateRefinedFundamentalMatrix(
-                Eigen::Vector2f e0,
-                float percentage,
+        void estimateFundamentalMatrix(
                 Eigen::Matrix3d& fundMat);
 
         inline int getMatchCount() {

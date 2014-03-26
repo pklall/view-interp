@@ -144,16 +144,20 @@ class DepthReconstruction {
         inline void setMainPoint(
                 int pointIndex,
                 const Eigen::Vector2d& point) {
-            points[pointIndex] = point.homogeneous();
+            points[pointIndex] = Eigen::Vector3d(point[0], point[1], 1.0);
         }
 
         inline void addObservation(
                 int cameraIndex,
                 int pointIndex,
-                const Eigen::Vector2f& point) {
+                const Eigen::Vector2d& point) {
             ceres::CostFunction* costFunction =
                 new ceres::AutoDiffCostFunction<
-                ReprojectionError, 1, 3, 3, 2>(
+                // 2 residuals
+                // 3 parameters in block 1 (rotation)
+                // 3 parameters in block 2 (translation)
+                // 1 parameter in block 3 (depth)
+                ReprojectionError, 2, 3, 3, 1>(
                         new ReprojectionError(
                             (double) points[pointIndex][0],
                             (double) points[pointIndex][1],
