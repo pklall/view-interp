@@ -289,31 +289,8 @@ void DepthReconstruction::init(
     points.resize(numPoints);
 
     for (CameraParam& cam : cameras) {
-        // Euler angles
-        cam[0] = 0;
-        cam[1] = 0;
-        cam[2] = 0;
-        // Translation
-        cam[3] = 0;
-        cam[4] = 0;
-        // cam[3] = ((double) rand()) / RAND_MAX;
-        // cam[4] = ((double) rand()) / RAND_MAX;
-        cam[5] = 0;
-        /*
-        cam[0] = 1;
-        cam[1] = 0;
-        cam[2] = 0;
-        cam[3] = 0;
-        cam[4] = 0;
-        cam[5] = 0;
-        cam[6] = 10;
-        // cam[4] = ((double) rand()) / RAND_MAX;
-        // cam[5] = ((double) rand()) / RAND_MAX;
-        // cam[6] = ((double) rand()) / RAND_MAX;
-        cam[7] = 1.0;
-        cam[8] = 0.0;
-        cam[9] = 0.0;
-        */
+        get<0>(cam) = Eigen::Quaterniond(1, 0, 0, 0);
+        get<1>(cam) = Eigen::Vector3d(0, 0, 0);
     }
 
     ceres::Problem::Options pOptions;
@@ -326,7 +303,15 @@ void DepthReconstruction::init(
                 new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP));
 }
 
-void DepthReconstruction::solve() {
+void DepthReconstruction::solve(
+        bool robustify) {
+
+    if (robustify) {
+        lossFunc->Reset(new ceres::HuberLoss(0.01), ceres::TAKE_OWNERSHIP);
+    } else {
+        lossFunc->Reset(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP);
+    }
+
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_SCHUR;
     options.max_num_iterations = 1000;

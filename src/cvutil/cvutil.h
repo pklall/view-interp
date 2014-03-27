@@ -6,6 +6,7 @@
 
 #include <opencv/cv.h>
 #include <opencv/ml.h>
+#include <opencv2/core/eigen.hpp>
 
 void convertCImgToMat(
         const CImg<float>& in,
@@ -20,6 +21,29 @@ void slicSuperpixels(
         int numSuperpixels,
         int nc,
         CImg<uint16_t>& result);
+
+inline void triangulate(
+        const Eigen::Matrix<double, 3, 4>& cam0,
+        const Eigen::Matrix<double, 3, 4>& cam1,
+        const Eigen::Vector2d& match0,
+        const Eigen::Vector2d& match1,
+        Eigen::Vector4d& triangulated) {
+    cv::Mat cam0CV(cam0.rows(), cam0.cols(), CV_64FC1, (void*) cam0.data());
+    cv::Mat cam1CV(cam1.rows(), cam1.cols(), CV_64FC1, (void*) cam1.data());
+
+    cv::Mat match0CV(1, 1, CV_64FC2, (void*) match0.data());
+    cv::Mat match1CV(1, 1, CV_64FC2, (void*) match1.data());
+
+    cv::Mat triCV(1, 1, CV_64FC4);
+
+    cv::triangulatePoints(cam0CV, cam1CV, match0CV, match1CV, triCV);
+
+    triangulated[0] = triCV.at<double>(1);
+    triangulated[1] = triCV.at<double>(2);
+    triangulated[2] = triCV.at<double>(3);
+    triangulated[3] = triCV.at<double>(4);
+}
+
 
 class CVOpticalFlow {
     public:
@@ -44,21 +68,17 @@ class CVOpticalFlow {
                 Eigen::Vector2f& base,
                 Eigen::Vector2f& match,
                 float& error) const {
-            if (matchMask[i]) {
-                base = Eigen::Vector2f(
-                        goodFeatures[i].x,
-                        goodFeatures[i].y);
+            base = Eigen::Vector2f(
+                    goodFeatures[i].x,
+                    goodFeatures[i].y);
 
-                match = Eigen::Vector2f(
-                        matches[i].x,
-                        matches[i].y);
+            match = Eigen::Vector2f(
+                    matches[i].x,
+                    matches[i].y);
 
-                error = matchError[i];
+            error = matchError[i];
 
-                return true;
-            } else {
-                return false;
-            }
+            return matchMask[i];
         }
 
     private:
@@ -130,6 +150,11 @@ class CVFundamentalMatrixEstimator {
 
         void estimateFundamentalMatrix(
                 Eigen::Matrix3d& fundMat);
+
+        void estimateEssentialMatrix(
+                Eigen::Matrix3d& essentialMat,
+                Eigen::Matrix3d& rotation,
+                Eigen::Vector3d& translation);
 
         inline int getMatchCount() {
             return inlierMask.size();

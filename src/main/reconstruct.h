@@ -91,7 +91,7 @@ class ChainReconstruction {
 
 class DepthReconstruction {
     private:
-        typedef array<double, 6> CameraParam;
+        typedef tuple<Eigen::Quaterniond, Eigen::Vector3d> CameraParam;
 
         struct ReprojectionError {
             // (u, v): the position of the observation with respect to the image
@@ -107,22 +107,24 @@ class DepthReconstruction {
                         const T* const depth,
                         T* residuals) const {
                     Eigen::Matrix<T, 3, 1> p;
-
                     p << T(main_x) * depth[0],
                       T(main_y) * depth[0],
                       depth[0];
 
-                    p[0] += camera_translation[0];
-                    p[1] += camera_translation[1];
-                    p[2] += camera_translation[2];
+                    p[0] -= camera_translation[0];
+                    p[1] -= camera_translation[1];
+                    p[2] -= camera_translation[2];
 
-                    T prot[3];
+                    Eigen::Quaternion<T> rotation(
+                            camera_rotation[0],
+                            camera_rotation[1],
+                            camera_rotation[2],
+                            camera_rotation[3]);
 
-                    ceres::AngleAxisRotatePoint(camera_rotation, p.data(),
-                            prot);
+                    p = rotation * p;
 
-                    T predicted_x = prot[0] / prot[2];
-                    T predicted_y = prot[1] / prot[2];
+                    T predicted_x = p[0] / p[2];
+                    T predicted_y = p[1] / p[2];
                     
                     // Compute final projected point position.
                     residuals[0] = predicted_x - T(observed_x);
@@ -147,6 +149,20 @@ class DepthReconstruction {
             points[pointIndex] = Eigen::Vector3d(point[0], point[1], 1.0);
         }
 
+        inline void setDepth(
+                int pointIndex,
+                double depth) {
+            points[pointIndex][2] = depth;
+        }
+
+        inline void setCamera(
+                int cameraIndex,
+                const Eigen::Quaterniond rotation,
+                const Eigen::Vector3d translation) {
+            get<0>(cameras[cameraIndex]) = rotation;
+            get<1>(cameras[cameraIndex]) = translation;
+        }
+
         inline void addObservation(
                 int cameraIndex,
                 int pointIndex,
@@ -154,10 +170,10 @@ class DepthReconstruction {
             ceres::CostFunction* costFunction =
                 new ceres::AutoDiffCostFunction<
                 // 2 residuals
-                // 3 parameters in block 1 (rotation)
+                // 4 parameters in block 1 (rotation)
                 // 3 parameters in block 2 (translation)
                 // 1 parameter in block 3 (depth)
-                ReprojectionError, 2, 3, 3, 1>(
+                ReprojectionError, 2, 4, 3, 1>(
                         new ReprojectionError(
                             (double) points[pointIndex][0],
                             (double) points[pointIndex][1],
@@ -167,12 +183,13 @@ class DepthReconstruction {
             problem->AddResidualBlock(
                     costFunction,
                     lossFunc.get(),
-                    cameras[cameraIndex].data(),
-                    cameras[cameraIndex].data() + 3,
+                    get<0>(cameras[cameraIndex]).coeffs().data(),
+                    get<1>(cameras[cameraIndex]).data(),
                     &(points[pointIndex][2]));
         }
 
-        void solve();
+        void solve(
+                bool robustify);
 
         inline const vector<Eigen::Vector3d>& getPoints() {
             return points;
