@@ -1,5 +1,35 @@
 #include "reconstruct.h"
 
+#include "Eigen/SVD"
+
+void ReconstructUtil::computeCanonicalPose(
+        const Eigen::Matrix3d& E,
+        array<Eigen::Matrix<double, 3, 4>, 4>& candidates) {
+    // See http://www.robots.ox.ac.uk/~vgg/hzbook/hzbook2/HZepipolar.pdf
+    // (Multiple View Geometry in Computer Vision, Second Edition,
+    //  Richard Hartley and Andrew Zisserman, 2004)
+    Eigen::Matrix3d W;
+    W <<
+        0, -1, 0,
+        1, 0, 0,
+        0, 0, 1;
+
+    Eigen::JacobiSVD<Eigen::Matrix3d> ESVD(E);
+
+    ESVD.computeU();
+    ESVD.computeV();
+
+    const Eigen::Matrix3d& U = ESVD.matrixU();
+    const Eigen::Matrix3d& V = ESVD.matrixV();
+
+    const Eigen::Vector3d& u3 = U.col(3);
+
+    candidates[0] << U * W             * V.transpose(),  u3;
+    candidates[1] << U * W             * V.transpose(), -u3;
+    candidates[2] << U * W.transpose() * V.transpose(),  u3;
+    candidates[3] << U * W.transpose() * V.transpose(), -u3;
+}
+
 ChainFeatureMatcher::ChainFeatureMatcher(
         float _maxFeatureCount,
         float _maxMatchCount) :

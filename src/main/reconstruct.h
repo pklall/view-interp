@@ -13,6 +13,54 @@
 
 #include "cvutil/cvutil.h"
 
+class ReconstructUtil {
+    public:
+        /**
+         * Computes the camera matrix for the second camera, assuming the
+         * first camera has the identity rotation and zero translation.
+         *
+         * Since this is ambiguous, all 4 possible candidates are returned.
+         */
+        static void computeCanonicalPose(
+                const Eigen::Matrix3d& E,
+                array<Eigen::Matrix<double, 3, 4>, 4>& candidates);
+
+        static inline double triangulateDepth(
+                const Eigen::Vector2d& pt0,
+                const Eigen::Vector2d& pt1,
+                const Eigen::Matrix<double, 3, 4>& P1) {
+            // The following was derived by considering the correspondence
+            // pt0 = (x, y) -> pt1 = (x', y')
+            // and assuming the camera transformations are [I|0] and P1.
+            // Consider (xi, yi, zi) = P1 * (x * depth, y * depth, depth).
+            // Then, set x' = xi / zi and y' = yi / zi.
+            // Solve for depth in both expansions, resulting in rational
+            // expressions.  When the denominator of one of these is
+            // near 0, the other should be used.
+
+            const double& x = pt0(0);
+            const double& y = pt0(1);
+
+            double VX = P1(0, 0) * x + P1(0, 1) * y + P1(0, 2);
+            double VY = P1(1, 0) * x + P1(1, 1) * y + P1(1, 2);
+            double VZ = P1(2, 0) * x + P1(2, 1) * y + P1(2, 2);
+
+            // Solution using x'
+            double numX = P1(0, 3) - P1(2, 3) * pt1(0);
+            double denX = VZ * pt1(0) - VX;
+            // Solution using y'
+            double numY = P1(0, 3) - P1(2, 3) * pt1(0);
+            double denY = VZ * pt1(0) - VY;
+
+            // Choose the better-conditioned rational expression
+            if (fabs(denX) > fabs(denY)) {
+                return numX / denX;
+            } else {
+                return numY / denY;
+            }
+        }
+};
+
 /**
  * Matches features in each new image to the image before it.
  * 
