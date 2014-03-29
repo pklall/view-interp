@@ -22,9 +22,6 @@ bool PolarFundamentalMatrix::init(
     epipoles[0] = epipole0.hnormalized();
     epipoles[1] = epipole1.hnormalized();
 
-    cout << "Epipole 0:\n" << epipoles[0] << endl;
-    cout << "Epipole 1:\n" << epipoles[1] << endl;
-
     for (int i = 0; i < 2; i++) {
         for (int j = 0; j < 2; j++) {
             if (!isfinite(epipoles[i][j])) {

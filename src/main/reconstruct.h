@@ -25,6 +25,43 @@ class ReconstructUtil {
                 const Eigen::Matrix3d& E,
                 array<Eigen::Matrix<double, 3, 4>, 4>& candidates);
 
+        static inline void triangulate(
+                const Eigen::Vector2d& pt0,
+                const Eigen::Vector2d& pt1,
+                const Eigen::Matrix<double, 3, 4>& P0,
+                const Eigen::Matrix<double, 3, 4>& P1,
+                Eigen::Vector3d& tri) {
+            // See http://www.morethantechnical.com/2012/01/04/simple-triangulation-with-opencv-from-harley-zisserman-w-code/
+            Eigen::Matrix<double, 4, 3> A;
+            A <<
+                (pt0.x() * P0(2, 0) - P0(0, 0)), 
+                (pt0.x() * P0(2, 1) - P0(0, 1)),
+                (pt0.x() * P0(2, 2) - P0(0, 2)),
+
+                (pt0.y() * P0(2, 0) - P0(1, 0)),
+                (pt0.y() * P0(2, 1) - P0(1, 1)),
+                (pt0.y() * P0(2, 2) - P0(1, 2)),
+
+                (pt1.x() * P1(2, 0) - P1(0, 0)), 
+                (pt1.x() * P1(2, 1) - P1(0, 1)),
+                (pt1.x() * P1(2, 2) - P1(0, 2)),
+
+                (pt1.y() * P1(2, 0) - P1(1, 0)), 
+                (pt1.y() * P1(2, 1) - P1(1, 1)),
+                (pt1.y() * P1(2, 2) - P1(1, 2));
+
+            Eigen::Vector4d B;
+            B <<
+                -(pt0.x() * P0(2, 3) - P0(0, 3)),
+                -(pt0.y() * P0(2, 3) - P0(1, 3)),
+                -(pt1.x() * P1(2, 3) - P1(0, 3)),
+                -(pt1.y() * P1(2, 3) - P1(1, 3));
+
+            Eigen::Vector3d x = A.fullPivLu().solve(B);
+
+            tri = x;
+        }
+
         static inline double triangulateDepth(
                 const Eigen::Vector2d& pt0,
                 const Eigen::Vector2d& pt1,
@@ -36,7 +73,9 @@ class ReconstructUtil {
             // Then, set x' = xi / zi and y' = yi / zi.
             // Solve for depth in both expansions, resulting in rational
             // expressions.  When the denominator of one of these is
-            // near 0, the other should be used.
+            // near 0, the other should be used (this may happen if, e.g., 
+            // the epipolar line is horizontal and there is no change
+            // in the y-coordinate of the matched point).
 
             const double& x = pt0(0);
             const double& y = pt0(1);
@@ -49,15 +88,43 @@ class ReconstructUtil {
             double numX = P1(0, 3) - P1(2, 3) * pt1(0);
             double denX = VZ * pt1(0) - VX;
             // Solution using y'
-            double numY = P1(0, 3) - P1(2, 3) * pt1(0);
-            double denY = VZ * pt1(0) - VY;
+            double numY = P1(1, 3) - P1(2, 3) * pt1(1);
+            double denY = VZ * pt1(1) - VY;
 
             // Choose the better-conditioned rational expression
-            if (fabs(denX) > fabs(denY)) {
-                return numX / denX;
-            } else {
+            //if (fabs(denX) > fabs(denY)) {
+                // return numX / denX;
+            //} else {
                 return numY / denY;
+            //}
+        }
+
+        static inline int selectCandidatePose(
+                const Eigen::Vector2d& pt0,
+                const Eigen::Vector2d& pt1,
+                const array<Eigen::Matrix<double, 3, 4>, 4>& candidates) {
+            // FIXME use regular triangulation instead of possibly-buggy depth one
+            for (int i = 0; i < 4; i++) {
+                // double z = triangulateDepth(pt0, pt1, candidates[i]);
+                
+                Eigen::Vector3d tri;
+                Eigen::Matrix<double, 3, 4> P0;
+                P0 <<
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0;
+                triangulate(pt0, pt1, P0, candidates[i], tri);
+
+                if (tri.z() > 0) {
+                    Eigen::Vector3d transTri = candidates[i] * tri.homogeneous();
+
+                    if (transTri.z() > 0) {
+                        return i;
+                    }
+                }
             }
+
+            return -1;
         }
 };
 
@@ -237,7 +304,7 @@ class DepthReconstruction {
         }
 
         void solve(
-                bool robustify);
+                double huberCoeff);
 
         inline const vector<Eigen::Vector3d>& getPoints() {
             return points;

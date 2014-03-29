@@ -22,6 +22,21 @@ void slicSuperpixels(
         int nc,
         CImg<uint16_t>& result);
 
+inline void decomposeProjectionMatrix(
+        const Eigen::Matrix<double, 3, 4>& P,
+        Eigen::Matrix3d R,
+        Eigen::Vector3d T) {
+    cv::Mat cvP(P.rows(), P.cols(), CV_64FC1, (void*) P.data());
+    cv::Mat cvK, cvR, cvT;
+
+    cv::decomposeProjectionMatrix(cvP, cvK, cvR, cvT);
+
+    cv::cv2eigen(cvR, R);
+    cv::cv2eigen(cvT, T);
+}
+
+/*
+ * Don't use this!  It's buggy!
 inline void triangulate(
         const Eigen::Matrix<double, 3, 4>& cam0,
         const Eigen::Matrix<double, 3, 4>& cam1,
@@ -43,6 +58,7 @@ inline void triangulate(
     triangulated[2] = triCV.at<double>(3);
     triangulated[3] = triCV.at<double>(4);
 }
+*/
 
 
 class CVOpticalFlow {

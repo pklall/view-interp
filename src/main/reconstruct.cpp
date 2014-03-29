@@ -14,20 +14,30 @@ void ReconstructUtil::computeCanonicalPose(
         1, 0, 0,
         0, 0, 1;
 
-    Eigen::JacobiSVD<Eigen::Matrix3d> ESVD(E);
-
-    ESVD.computeU();
-    ESVD.computeV();
+    Eigen::JacobiSVD<Eigen::Matrix3d> ESVD(E,
+            Eigen::ComputeFullU | Eigen::ComputeFullV);
 
     const Eigen::Matrix3d& U = ESVD.matrixU();
     const Eigen::Matrix3d& V = ESVD.matrixV();
 
-    const Eigen::Vector3d& u3 = U.col(3);
+    const Eigen::Vector3d& u3 = U.col(2);
 
-    candidates[0] << U * W             * V.transpose(),  u3;
-    candidates[1] << U * W             * V.transpose(), -u3;
-    candidates[2] << U * W.transpose() * V.transpose(),  u3;
-    candidates[3] << U * W.transpose() * V.transpose(), -u3;
+    for (int i = 0; i < 4; i++) {
+        Eigen::Vector3d su3 = u3 * (((i & 0x1) == 0) ? -1 : 1);
+
+        Eigen::Matrix3d r;
+        
+        if ((i & 0x2) == 0) {
+            r = U * W.transpose() * V.transpose();
+        } else {
+            r = U * W * V.transpose();
+        }
+
+        candidates[i] <<
+            r(0, 0), r(0, 1), r(0, 2), su3(0),
+            r(1, 0), r(1, 1), r(1, 2), su3(1),
+            r(2, 0), r(2, 1), r(2, 2), su3(2);
+    }
 }
 
 ChainFeatureMatcher::ChainFeatureMatcher(
@@ -334,12 +344,12 @@ void DepthReconstruction::init(
 }
 
 void DepthReconstruction::solve(
-        bool robustify) {
+        double huberCoeff) {
 
-    if (robustify) {
-        lossFunc->Reset(new ceres::HuberLoss(0.01), ceres::TAKE_OWNERSHIP);
-    } else {
+    if (huberCoeff < 0) {
         lossFunc->Reset(new ceres::TrivialLoss(), ceres::TAKE_OWNERSHIP);
+    } else {
+        lossFunc->Reset(new ceres::HuberLoss(huberCoeff), ceres::TAKE_OWNERSHIP);
     }
 
     ceres::Solver::Options options;

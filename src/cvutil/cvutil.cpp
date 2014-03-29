@@ -97,7 +97,8 @@ void CVOpticalFlow::init(
     cv::goodFeaturesToTrack(baseCV, goodFeatures, maxFeatures, 0.01, minDistance); 
     
     // Sub-pixel precision probably unnecessary
-    // cv::cornerSubPix(baseCV, goodFeatures, 
+    cv::cornerSubPix(baseCV, goodFeatures, cv::Size(11, 11), cv::Size(-1, -1),
+            cv::TermCriteria(cv::TermCriteria::COUNT, 10, 2));
 
     cv::buildOpticalFlowPyramid(baseCV, basePyr, cv::Size(wndSize, wndSize),
             pyrLevels);
@@ -157,8 +158,8 @@ void CVFundamentalMatrixEstimator::init(
 
 void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
         Eigen::Matrix3d& fundMat) {
-    float inlierEpipolarMaxDist = 3;
-    float targetConfidence = 0.9999;
+    float inlierEpipolarMaxDist = 1;
+    float targetConfidence = 0.99999;
 
     cv::Mat cvFundMat = cv::findFundamentalMat(points[0], points[1],
             cv::FM_LMEDS, inlierEpipolarMaxDist, targetConfidence,
