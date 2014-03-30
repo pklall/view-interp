@@ -362,3 +362,98 @@ void DepthReconstruction::solve(
     cout << summary.FullReport() << endl;
 }
 
+void DepthReconstruction::estimateNewCamera(
+        int cameraIndex,
+        const vector<tuple<int, Eigen::Vector2d>>& observations,
+        double inlierThreshold) {
+    typedef ceres::AutoDiffCostFunction<CameraReprojectionError, 2, 3, 4>
+        CamCostFunction;
+
+    // Create a new cost function for each observation
+    vector<unique_ptr<CamCostFunction>> costFunctions;
+
+    for (const tuple<int, Eigen::Vector2d>& observation : observations) {
+        CamCostFunction* costFunction =
+            new ceres::AutoDiffCostFunction<
+            // 2 residuals
+            // 3 parameters in block 1 (translation)
+            // 4 parameters in block 2 (rotation)
+            CameraReprojectionError, 2, 3, 4>(
+                    new CameraReprojectionError(
+                        this,
+                        get<0>(observation),
+                        (double) get<1>(observation)[0],
+                        (double) get<1>(observation)[1]));
+
+        costFunctions.push_back(unique_ptr<CamCostFunction>(costFunction));
+    }
+
+    std::random_shuffle(costFunctions.begin(), costFunctions.end());
+
+    // Keep track of the currently-optimal score and value
+    int optimalInlierCount = 0;
+    CameraParam optimalParam;
+
+    ceres::Problem::Options pOptions;
+    // This ensure sthat 
+    pOptions.cost_function_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
+
+    // Perform 10 iterations of RANSAC
+    // FIXME compute this based on acceptable probability of success
+    const int max_iters = 10;
+
+    for (int iter = 0; iter < max_iters; iter++) {
+        ceres::Problem problem(pOptions);
+
+        CameraParam curParam;
+
+        // Use 7 correspondences to solve for camera orientation
+        for (int i = 0; i < 7; i++) {
+            ceres::CostFunction* cf =
+                costFunctions[(iter * 7 + i) % costFunctions.size()].get();
+            problem.AddResidualBlock(
+                    cf,   
+                    NULL, // least-squares
+                    // translation
+                    get<1>(curParam).data(),
+                    // rotation
+                    get<0>(curParam).coeffs().data());
+        }
+
+        ceres::Solver::Options options;
+        // options.linear_solver_type = ???;
+        options.max_num_iterations = 10;
+        options.minimizer_progress_to_stdout = true;
+
+        ceres::Solver::Summary summary;
+        ceres::Solve(options, &problem, &summary);
+        cout << summary.FullReport() << endl;
+
+        int inlierCount = 0;
+
+        for (const tuple<int, Eigen::Vector2d>& obs : observations) {
+            double residuals[2];
+
+            Eigen::Vector3d point3 = get3DPoint(get<0>(obs));
+
+            computeError(
+                    get<1>(curParam).data(),
+                    get<0>(curParam).coeffs().data(),
+                    point3.data(),
+                    get<1>(obs).data(),
+                    residuals);
+
+            if (residuals[0] * residuals[0] + residuals[1] * residuals[1] < 
+                    inlierThreshold * inlierThreshold) {
+                inlierCount++;
+            }
+        }
+
+        if (inlierCount > optimalInlierCount) {
+            optimalInlierCount = inlierCount;
+            optimalParam = curParam;
+        }
+    }
+
+    cameras[cameraIndex] = optimalParam;
+}

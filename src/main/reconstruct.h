@@ -92,11 +92,12 @@ class ReconstructUtil {
             double denY = VZ * pt1(1) - VY;
 
             // Choose the better-conditioned rational expression
-            //if (fabs(denX) > fabs(denY)) {
-                // return numX / denX;
-            //} else {
+            // FIXME try to combine these for a better estimate?
+            if (fabs(denX) > fabs(denY)) {
+                return numX / denX;
+            } else {
                 return numY / denY;
-            //}
+            }
         }
 
         static inline int selectCandidatePose(
@@ -208,42 +209,56 @@ class DepthReconstruction {
     private:
         typedef tuple<Eigen::Quaterniond, Eigen::Vector3d> CameraParam;
 
-        struct ReprojectionError {
+        template<typename T>
+        static inline void computeError(
+                const T* const camera_translation,
+                const T* const camera_rotation,
+                const T* const point3,
+                const T* const projectedPoint2,
+                T* residuals) {
+            Eigen::Map<const Eigen::Matrix<T, 3, 1>> translation(camera_translation);
+            Eigen::Map<const Eigen::Matrix<T, 3, 1>> p3(point3);
+            Eigen::Map<const Eigen::Matrix<T, 2, 1>> p2(projectedPoint2);
+
+            Eigen::Quaternion<T> rotation(camera_rotation);
+
+            Eigen::Matrix<T, 3, 1> p3Trans = rotation * (p3 + translation);
+
+            T predicted_x = p3Trans[0] / p3Trans[2];
+            T predicted_y = p3Trans[1] / p3Trans[2];
+
+            residuals[0] = predicted_x - projectedPoint2[0];
+            residuals[1] = predicted_y - projectedPoint2[1];
+        }
+
+        struct CamDepthReprojectionError {
             // (u, v): the position of the observation with respect to the image
             // center point.
-            ReprojectionError(double main_x, double main_y,
+            CamDepthReprojectionError(double main_x, double main_y,
                     double observed_x, double observed_y)
                 : main_x(main_x), main_y(main_y),
                 observed_x(observed_x), observed_y(observed_y) {}
 
             template <typename T>
-                bool operator()(const T* const camera_rotation,
+                bool operator()(
                         const T* const camera_translation,
+                        const T* const camera_rotation,
                         const T* const depth,
                         T* residuals) const {
                     Eigen::Matrix<T, 3, 1> p;
-                    p << T(main_x) * depth[0],
-                      T(main_y) * depth[0],
-                      depth[0];
 
-                    p[0] -= camera_translation[0];
-                    p[1] -= camera_translation[1];
-                    p[2] -= camera_translation[2];
+                    p << T(main_x) * depth[0], T(main_y) * depth[0], depth[0];
 
-                    Eigen::Quaternion<T> rotation(
-                            camera_rotation[0],
-                            camera_rotation[1],
-                            camera_rotation[2],
-                            camera_rotation[3]);
+                    T projectedPoint2[2];
+                    projectedPoint2[0] = T(observed_x);
+                    projectedPoint2[1] = T(observed_y);
 
-                    p = rotation * p;
-
-                    T predicted_x = p[0] / p[2];
-                    T predicted_y = p[1] / p[2];
-                    
-                    // Compute final projected point position.
-                    residuals[0] = predicted_x - T(observed_x);
-                    residuals[1] = predicted_y - T(observed_y);
+                    computeError(
+                            camera_translation,
+                            camera_rotation,
+                            p.data(),
+                            projectedPoint2,
+                            residuals);
 
                     return true;
                 }
@@ -253,6 +268,46 @@ class DepthReconstruction {
             double observed_x;
             double observed_y;
         };
+
+        struct CameraReprojectionError {
+            CameraReprojectionError(
+                    const DepthReconstruction* _self,
+                    int _pointIndex,
+                    double _observed_x,
+                    double _observed_y)
+                : self(_self), pointIndex(_pointIndex),
+                observed_x(_observed_x), observed_y(_observed_y) {}
+
+            template <typename T>
+                bool operator()(
+                        const T* const camera_translation,
+                        const T* const camera_rotation,
+                        T* residuals) const {
+                    Eigen::Vector3d point3 = self->get3DPoint(pointIndex);
+
+                    Eigen::Matrix<T, 3, 1> p;
+                    p << T(point3.x()), T(point3.y()), T(point3.z());
+
+                    T projectedPoint2[2];
+                    projectedPoint2[0] = T(observed_x);
+                    projectedPoint2[1] = T(observed_y);
+
+                    computeError(
+                            camera_translation,
+                            camera_rotation,
+                            p.data(),
+                            projectedPoint2,
+                            residuals);
+
+                    return true;
+                }
+
+            const DepthReconstruction* self;
+            int pointIndex;
+            double observed_x;
+            double observed_y;
+        };
+
     public:
         void init(
                 int numCameras,
@@ -285,11 +340,11 @@ class DepthReconstruction {
             ceres::CostFunction* costFunction =
                 new ceres::AutoDiffCostFunction<
                 // 2 residuals
-                // 4 parameters in block 1 (rotation)
-                // 3 parameters in block 2 (translation)
+                // 3 parameters in block 1 (translation)
+                // 4 parameters in block 2 (rotation)
                 // 1 parameter in block 3 (depth)
-                ReprojectionError, 2, 4, 3, 1>(
-                        new ReprojectionError(
+                CamDepthReprojectionError, 2, 3, 4, 1>(
+                        new CamDepthReprojectionError(
                             (double) points[pointIndex][0],
                             (double) points[pointIndex][1],
                             (double) point[0],
@@ -298,17 +353,40 @@ class DepthReconstruction {
             problem->AddResidualBlock(
                     costFunction,
                     lossFunc.get(),
-                    get<0>(cameras[cameraIndex]).coeffs().data(),
+                    // translation
                     get<1>(cameras[cameraIndex]).data(),
+                    // rotation
+                    get<0>(cameras[cameraIndex]).coeffs().data(),
                     &(points[pointIndex][2]));
         }
 
         void solve(
                 double huberCoeff);
 
-        inline const vector<Eigen::Vector3d>& getPoints() {
+        /**
+         * Points are stored according to their (x, y) coordinates in the
+         * reference/main camera's normalized image-space.
+         * Z-coordinates specify depth.
+         * Thus, the actual point in R3 is (x * z, y * z, z).
+         */
+        inline const vector<Eigen::Vector3d>& getOrthoPoints() const {
             return points;
         }
+
+        inline Eigen::Vector3d get3DPoint(
+                int pointIndex) const {
+            const Eigen::Vector3d& pt = points[pointIndex];
+
+            return Eigen::Vector3d(
+                    pt.x() * pt.z(),
+                    pt.y() * pt.z(),
+                    pt.z());
+        }
+
+        void estimateNewCamera(
+                int cameraIndex,
+                const vector<tuple<int, Eigen::Vector2d>>& observations,
+                double inlierThreshold);
 
     private:
         vector<CameraParam> cameras;

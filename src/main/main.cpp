@@ -188,6 +188,7 @@ int main(int argc, char** argv) {
 
             if (fundMatEst.getMatch(pointI, match0, matchOther)) {
                 // If our estimate for this match results in negative depth, ignore it
+                /*
                 Eigen::Vector3d tri;
                 Eigen::Matrix<double, 3, 4> P0;
                 P0 <<
@@ -196,11 +197,12 @@ int main(int argc, char** argv) {
                     0, 0, 1, 0;
 
                 ReconstructUtil::triangulate(match0, matchOther, P0, P1, tri);
+                */
 
                 // printf("(%f, %f, %f),\n", tri.x(), tri.y(), tri.z());
 
-                double depth = tri.z();
-                // double depth = ReconstructUtil::triangulateDepth(match0, matchOther, P1);
+                // double depth = tri.z();
+                double depth = ReconstructUtil::triangulateDepth(match0, matchOther, P1);
 
                 if (depth <= 0) {
                     continue;
@@ -239,7 +241,7 @@ int main(int argc, char** argv) {
                     // double epipoleDistance0 = polarF.getEpipolarDistance(0, match0);
                     // double epipoleDistance1 = polarF.getEpipolarDistance(1, matchOther);
                     // float disparity = 1.0 / (epipoleDistance1 - epipoleDistance0);
-                    float disparity = tri.z();
+                    float disparity = depth;
 
                     if (disparity > 0) {
                         totalDisp += disparity;
@@ -268,7 +270,7 @@ int main(int argc, char** argv) {
     }
 
 
-    vector<Eigen::Vector3d> reconstruction = reconstruct.getPoints();
+    vector<Eigen::Vector3d> reconstruction = reconstruct.getOrthoPoints();
 
     printf("[\n");
     for (int pointI = 0; pointI < reconstruction.size(); pointI++) {
