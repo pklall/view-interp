@@ -96,9 +96,9 @@ void CVOpticalFlow::init(
 
     cv::goodFeaturesToTrack(baseCV, goodFeatures, maxFeatures, 0.01, minDistance); 
     
-    // Sub-pixel precision probably unnecessary
     cv::cornerSubPix(baseCV, goodFeatures, cv::Size(11, 11), cv::Size(-1, -1),
-            cv::TermCriteria(cv::TermCriteria::COUNT, 10, 2));
+            cv::TermCriteria(
+                cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 5));
 
     cv::buildOpticalFlowPyramid(baseCV, basePyr, cv::Size(wndSize, wndSize),
             pyrLevels);

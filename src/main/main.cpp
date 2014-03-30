@@ -8,7 +8,7 @@
 
 #include "klt_feature_warp.h"
 
-#include "reconstruct.h"
+#include "depth_reconstruction.h"
 
 #include <Eigen/Dense>
 

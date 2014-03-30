@@ -104,10 +104,7 @@ class ReconstructUtil {
                 const Eigen::Vector2d& pt0,
                 const Eigen::Vector2d& pt1,
                 const array<Eigen::Matrix<double, 3, 4>, 4>& candidates) {
-            // FIXME use regular triangulation instead of possibly-buggy depth one
             for (int i = 0; i < 4; i++) {
-                // double z = triangulateDepth(pt0, pt1, candidates[i]);
-                
                 Eigen::Vector3d tri;
                 Eigen::Matrix<double, 3, 4> P0;
                 P0 <<
@@ -130,83 +127,21 @@ class ReconstructUtil {
 };
 
 /**
- * Matches features in each new image to the image before it.
- * 
- * Note that feature points are transformed to image space [-1, 1] x [-1, 1].
+ * Reconstructs a sparse depth map at keypoints matched in a predetermined
+ * reference frame.
  */
-class ChainFeatureMatcher {
-    private:
-        float maxFeatureCount;
-        float maxMatchCount;
-
-        unique_ptr<CVFeatureMatcher> prevMatcher;
-        unique_ptr<CVFeatureMatcher> curMatcher;
-
-        // Maps points from their index in prevMatcher/curMatcher
-        // to global point indices.
-        unique_ptr<map<int, int>> prevPtGlobalPt;
-        unique_ptr<map<int, int>> curPtGlobalPt;
-
-        // The total number of points with at least 2 matches
-        int numPoints;
-
-        // matches[i] contains the set of matches (p, x, y) such that
-        // point p appears at (x, y) in image i.
-        vector<vector<tuple<int, Eigen::Vector2f>>> matches;
-
-    public:
-        inline int getNumPoints() const {
-            return numPoints;
-        }
-
-        inline const vector<vector<tuple<int, Eigen::Vector2f>>>& getObservations() const {
-            return matches;
-        }
-
-        ChainFeatureMatcher(
-                float maxFeatureCount = 8192,
-                float maxMatchCount = 4096);
-
-        void processNext(
-                const CImg<uint8_t>& gray);
-
-        void visualizeFeatureMatches(
-                function<const CImg<uint8_t>&(int)> imgLoader) const;
-};
-
-
-class ChainReconstruction {
-    private:
-        /**
-         * A camera is parameterized by the following (in this order):
-         *  - Rotation quaternion (4 parameters)
-         *  - Translation (3 parameters)
-         *  - Focal length (1 parameter)
-         *  - Radial distortion (2 parameters)
-         *
-         * Note that this parameter ordering is compatible with
-         * ceres-solver's SnavelyReprojectionErrorWithQuaternions.
-         */
-        typedef array<double, 10> CameraParam;
-
-        const ChainFeatureMatcher* features;
-
-        vector<CameraParam> cameras;
-
-        vector<Eigen::Vector3d> points;
-
-    public:
-        ChainReconstruction(
-                const ChainFeatureMatcher* features);
-
-        void solve();
-
-        void exportPython(
-                ostream& result) const;
-};
-
 class DepthReconstruction {
     private:
+        /**
+         * Cameras are paramterized by a translation followed by a rotation.
+         *
+         * Note that the camera pose in world space is related to the inverse
+         * of these.  That is, the eye point is -get<1>(cameraParam) and is
+         * oriented relative to the standard basis with the rotation specified
+         * by get<0>(cameraParam).inverse() (this reduces computation in the
+         * inner loop of the solver by not performing unnecessary quaternion
+         * inverseion).
+         */
         typedef tuple<Eigen::Quaterniond, Eigen::Vector3d> CameraParam;
 
         template<typename T>
@@ -234,9 +169,11 @@ class DepthReconstruction {
         struct CamDepthReprojectionError {
             // (u, v): the position of the observation with respect to the image
             // center point.
-            CamDepthReprojectionError(double main_x, double main_y,
+            CamDepthReprojectionError(
+                    const DepthReconstruction* _self,
+                    int _pointIndex,
                     double observed_x, double observed_y)
-                : main_x(main_x), main_y(main_y),
+                : self(_self), pointIndex(_pointIndex),
                 observed_x(observed_x), observed_y(observed_y) {}
 
             template <typename T>
@@ -245,9 +182,13 @@ class DepthReconstruction {
                         const T* const camera_rotation,
                         const T* const depth,
                         T* residuals) const {
-                    Eigen::Matrix<T, 3, 1> p;
+                    const Eigen::Vector3d& point3 = self->getOrthoPoints()[pointIndex];
 
-                    p << T(main_x) * depth[0], T(main_y) * depth[0], depth[0];
+                    Eigen::Matrix<T, 3, 1> p;
+                    p <<
+                        T(point3.x()) * depth[0],
+                        T(point3.y()) * depth[0],
+                        depth[0];
 
                     T projectedPoint2[2];
                     projectedPoint2[0] = T(observed_x);
@@ -263,8 +204,8 @@ class DepthReconstruction {
                     return true;
                 }
 
-            double main_x;
-            double main_y;
+            const DepthReconstruction* self;
+            int pointIndex;
             double observed_x;
             double observed_y;
         };
@@ -345,8 +286,8 @@ class DepthReconstruction {
                 // 1 parameter in block 3 (depth)
                 CamDepthReprojectionError, 2, 3, 4, 1>(
                         new CamDepthReprojectionError(
-                            (double) points[pointIndex][0],
-                            (double) points[pointIndex][1],
+                            this,
+                            pointIndex,
                             (double) point[0],
                             (double) point[1]));
 
