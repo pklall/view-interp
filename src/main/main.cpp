@@ -32,25 +32,15 @@ int main(int argc, char** argv) {
     int originalWidth = initImg->width();
     int originalHeight = initImg->height();
 
-    // More manageable size
-    float scaleFactor = 4.0f * 1000000.0f / ((float) originalWidth * originalHeight);
-
-    // Don't increase image size
-    // scaleFactor = min(1.0f, scaleFactor);
-    // Process entire images
-    scaleFactor = 1.0f;
-
-    const int workingWidth = originalWidth * scaleFactor;
-    const int workingHeight = originalHeight * scaleFactor;
+    const int workingWidth = originalWidth;
+    const int workingHeight = originalHeight;
 
     const Eigen::Vector2d imageCenter(workingWidth / 2.0, workingHeight / 2.0);
     const double imageSize = max(workingWidth / 2.0, workingHeight / 2.0);
 
     printf("Image size = %d x %d\n", workingWidth, workingHeight);
 
-    initImg->resize(workingWidth, workingHeight, 1, 1, 5);
-
-    const int numPoints = 2000;
+    const int numPoints = 3000;
 
     CVOpticalFlow klt(31, 7);
 
@@ -88,9 +78,9 @@ int main(int argc, char** argv) {
         if (curImg->spectrum() > 1) {
             *curImg = curImg->get_RGBtoLab().channel(0);
         }
+
         assert(curImg->width() == originalWidth);
         assert(curImg->height() == originalHeight);
-        curImg->resize(workingWidth, workingHeight, 1, 1, 5);
 
         printf("Computing KLT\n");
         klt.compute(*curImg);
@@ -145,7 +135,7 @@ int main(int argc, char** argv) {
             double depth;
             const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth);
 
-            if (pt.z() > 0) {
+            if (depth > 0) {
                 printf("(%f, %f, %f),", pt.x(), pt.y(), depth);
             }
         }
@@ -154,97 +144,6 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-
-/*
-        // For visualizing matches
-        CImg<uint8_t> mainMatchVis = *initImg;
-        CImg<uint8_t> otherMatchVis = *curImg;
-        mainMatchVis.resize(-100, -100, -100, 3);
-        otherMatchVis.resize(-100, -100, -100, 3);
-        CImg<uint8_t> colors = CImg<uint8_t>::lines_LUT256();
-
-
-        for (int pointI = 0; pointI < fundMatEst.getMatchCount(); pointI++) {
-            Eigen::Vector2d match0;
-            Eigen::Vector2d matchOther;
-
-            if (fundMatEst.getMatch(pointI, match0, matchOther)) {
-                // If our estimate for this match results in negative depth, ignore it
-
-                // printf("(%f, %f, %f),\n", tri.x(), tri.y(), tri.z());
-
-                // double depth = tri.z();
-                double depth = ReconstructUtil::triangulateDepth(match0, matchOther, P1);
-
-                if (depth <= 0) {
-                    continue;
-                }
-
-                reconstruct.addObservation(imgI - 1, pointI, matchOther);
-
-                // If this is the first time we've seen this point, then
-                // triangulate it and the resulting depth as an initial
-                // estimate.
-                if (matchCount[pointI] == 0) {
-                    // FIXME this may need to be scaled?
-                    reconstruct.setDepth(pointI, depth);
-                }
-
-                matchCount[pointI]++;
-
-                successfulMatches++;
-
-                // printf("Match = (%f, %f) -> (%f, %f)\n", match0[0], match0[1], matchOther[0], matchOther[1]);
-
-                // visualize matches
-                {
-                    uint8_t color[3];
-
-                    color[0] = colors(pointI % 256, 0);
-                    color[1] = colors(pointI % 256, 1);
-                    color[2] = colors(pointI % 256, 2);
-
-                    Eigen::Vector2d match0Screen = match0 * imageSize + imageCenter;
-                    Eigen::Vector2d matchOtherScreen = matchOther * imageSize + imageCenter;
-
-                    mainMatchVis.draw_circle(match0Screen.x() + 0.5, match0Screen.y() + 0.5, 3, color);
-                    otherMatchVis.draw_circle(matchOtherScreen.x() + 0.5, matchOtherScreen.y() + 0.5, 3, color);
-
-                    // double epipoleDistance0 = polarF.getEpipolarDistance(0, match0);
-                    // double epipoleDistance1 = polarF.getEpipolarDistance(1, matchOther);
-                    // float disparity = 1.0 / (epipoleDistance1 - epipoleDistance0);
-                    float disparity = depth;
-
-                    if (disparity > 0) {
-                        totalDisp += disparity;
-
-                        depthVis.draw_circle(match0Screen.x() + 0.5, match0Screen.y() + 0.5, 3, &disparity);
-                    }
-                }
-            }
-        }
-
-        printf("Found %d final matches from %d initial klt matches\n",
-                successfulMatches, fundMatEst.getMatchCount());
-
-        (mainMatchVis, otherMatchVis).display();
-        float avgDisp = totalDisp / successfulMatches;
-        depthVis -= (depthVis.get_sign().abs() - 1) * avgDisp;
-        depthVis.display();
-
-        if (imgI == 2) {
-            reconstruct.solve(false);
-        } 
-
-        if (imgI >= 2) {
-            reconstruct.solve(1.0);
-        }
-    }
-
-
-    return 0;
-}
-*/
 
 /*
    int main(int argc, char** argv) {
