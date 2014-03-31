@@ -35,32 +35,6 @@ inline void decomposeProjectionMatrix(
     cv::cv2eigen(cvT, T);
 }
 
-/*
- * Don't use this!  It's buggy!
-inline void triangulate(
-        const Eigen::Matrix<double, 3, 4>& cam0,
-        const Eigen::Matrix<double, 3, 4>& cam1,
-        const Eigen::Vector2d& match0,
-        const Eigen::Vector2d& match1,
-        Eigen::Vector4d& triangulated) {
-    cv::Mat cam0CV(cam0.rows(), cam0.cols(), CV_64FC1, (void*) cam0.data());
-    cv::Mat cam1CV(cam1.rows(), cam1.cols(), CV_64FC1, (void*) cam1.data());
-
-    cv::Mat match0CV(1, 1, CV_64FC2, (void*) match0.data());
-    cv::Mat match1CV(1, 1, CV_64FC2, (void*) match1.data());
-
-    cv::Mat triCV(1, 1, CV_64FC4);
-
-    cv::triangulatePoints(cam0CV, cam1CV, match0CV, match1CV, triCV);
-
-    triangulated[0] = triCV.at<double>(1);
-    triangulated[1] = triCV.at<double>(2);
-    triangulated[2] = triCV.at<double>(3);
-    triangulated[3] = triCV.at<double>(4);
-}
-*/
-
-
 class CVOpticalFlow {
     public:
         CVOpticalFlow(
@@ -167,6 +141,7 @@ class CVFundamentalMatrixEstimator {
         inline void init() {
             points[0].clear();
             points[1].clear();
+            inlierMask.clear();
         }
 
         inline void addMatch(
@@ -179,18 +154,17 @@ class CVFundamentalMatrixEstimator {
         void estimateFundamentalMatrix(
                 Eigen::Matrix3d& fundMat);
 
-        void estimateEssentialMatrix(
-                Eigen::Matrix3d& essentialMat,
-                Eigen::Matrix3d& rotation,
-                Eigen::Vector3d& translation);
-
         inline int getMatchCount() {
             return inlierMask.size();
         }
 
         inline bool isInlier(
                 size_t index) {
-            return inlierMask[index];
+            if (inlierMask[index] == 0) {
+                return false;
+            } else {
+                return true;
+            }
         }
 
         inline bool getMatch(

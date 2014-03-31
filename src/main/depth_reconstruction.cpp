@@ -68,8 +68,15 @@ void DepthReconstruction::solve() {
     size_t bestCamera = 0;
     
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
+        cout << "Estimating camera " << cameraI << endl;
+
         size_t fInlierCount = estimateFUsingObs(cameraI);
+
+        cout << "Inliers after computing F = " << fInlierCount << endl;
+
         size_t poseInlierCount = estimatePoseUsingF(cameraI);
+
+        cout << "Inliers after computing Pose = " << poseInlierCount << endl;
 
         // If the pose estimated from F results in many more outliers,
         // due to negatively-facing points, it's probably a bad fit.
@@ -164,16 +171,12 @@ size_t DepthReconstruction::estimatePoseUsingF(
 
     const Eigen::Matrix<double, 3, 4>& pose = candidateP[winner];
 
-    Eigen::Matrix3d rot;
-    Eigen::Vector3d center;
+    const auto rotation = pose.block<3, 3>(0, 0);
 
-    decomposeProjectionMatrix(pose, rot, center);
+    const auto translation = pose.block<3, 1>(0, 3);
 
-    // Invert translation and rotation
-    center *= -1;
-    rot = rot.transpose();
-
-    cameras[cameraIndex].rotation = Eigen::Quaterniond(rot).vec();
+    cameras[cameraIndex].rotation = Eigen::Quaterniond(rotation).normalized();
+    cameras[cameraIndex].translation = translation;
 
     // Count inliers and mark new outliers
 
@@ -199,7 +202,19 @@ size_t DepthReconstruction::estimatePoseUsingF(
 
 void DepthReconstruction::triangulateDepthUsingCamera(
         int cameraIndex) {
-    // TODO
+    const auto& P = cameras[cameraIndex].getProjection();
+
+    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+        const Observation& obs = observations[cameraIndex][obsI];
+
+        if (observationInlierMask[cameraIndex][obsI] &&
+                depth[obs.pointIndex] == 0) {
+            double d = ReconstructUtil::triangulateDepth(
+                    keypoints[obs.pointIndex], obs.point, P);
+
+            depth[obs.pointIndex] = d;
+        }
+    }
 }
 
 size_t DepthReconstruction::estimatePoseUsingDepth(
@@ -259,7 +274,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
                     cf,   
                     NULL, // least-squares
                     curParam.translation.data(),
-                    curParam.rotation.data());
+                    curParam.rotation.coeffs().data());
         }
 
         ceres::Solver::Options options;
@@ -281,7 +296,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
             computeError(
                     curParam.translation.data(),
-                    curParam.rotation.data(),
+                    curParam.rotation.coeffs().data(),
                     point3.data(),
                     keypoints[obs.pointIndex].data(),
                     residuals);

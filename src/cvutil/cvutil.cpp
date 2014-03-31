@@ -161,33 +161,12 @@ void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
     float inlierEpipolarMaxDist = 1;
     float targetConfidence = 0.99999;
 
+    inlierMask.resize(points[0].size());
+
     cv::Mat cvFundMat = cv::findFundamentalMat(points[0], points[1],
             cv::FM_LMEDS, inlierEpipolarMaxDist, targetConfidence,
             inlierMask);
 
     cv::cv2eigen(cvFundMat, fundMat);
-}
-
-void CVFundamentalMatrixEstimator::estimateEssentialMatrix(
-        Eigen::Matrix3d& essentialMat,
-        Eigen::Matrix3d& rotation,
-        Eigen::Vector3d& translation) {
-    /*
-    // cv::Mat E = findEssentialMat(
-            // points[0], points[1],
-            // 1.0, cv::Point2d(0, 0), CV_RANSAC, 0.999, 1.0,
-            // inlierMask);
-    cv::Mat E = cv::findFundamentalMat(points[0], points[1],
-            cv::FM_LMEDS, 3.0, 0.999, inlierMask);
-
-    cv::cv2eigen(E, essentialMat);
-
-    cv::Mat rotationCV, translationCV;
-
-    cv::recoverPose(E, points[0], points[1], rotationCV, translationCV, inlierMask);
-
-    cv::cv2eigen(rotationCV, rotation);
-    cv::cv2eigen(translationCV, translation);
-    */
 }
 

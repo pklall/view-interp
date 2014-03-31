@@ -100,86 +100,46 @@ int main(int argc, char** argv) {
 
             klt.getMatch(pointI, match0, matchOther, error);
 
-            match0 -= imageCenter.cast<float>();
-            match0 /= imageSize;
+            matchOther -= imageCenter.cast<float>();
+            matchOther /= imageSize;
 
-            reconstruct.addObservation(imgI - 1, pointI, match0.cast<double>());
+            reconstruct.addObservation(imgI - 1, pointI, matchOther.cast<double>());
         }
     }
 
     reconstruct.solve();
 
-    // Don't forget to scale by imageSize!
+    // Visualize the result
+    CImg<float> depthVis(workingWidth, workingHeight);
+    depthVis.fill(0);
+    float totalDepth = 0;
+
+    int successfulMatches = 0;
+
+    for (size_t i = 0; i < reconstruct.getPointCount(); i++) {
+        double depth;
+        const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth);
+
+        if (depth > 0) {
+            Eigen::Vector2d ptImg = (pt * imageSize) + imageCenter;
+
+            totalDepth += depth;
+            successfulMatches++;
+
+            depthVis.draw_circle(ptImg.x() + 0.5, ptImg.y() + 0.5, 3, &depth);
+        }
+    }
+
+    // Fill the background with the average depth
+    float avgDepth = totalDepth / successfulMatches;
+    depthVis -= (depthVis.get_sign().abs() - 1) * avgDepth;
+
+    depthVis.display();
 
     return 0;
 }
 
-
-        /*
-        // Prune KLT matches with the epipolar constraint by estimating the
-        // fundamental matrix and rejecting outliers.
-        // Note that this actually estimates a scaled version of the essential
-        // matrix.
-        printf("Estimating fundamental matrix\n");
-        fundMatEst.init(klt, imageCenter[0], imageCenter[1], imageSize);
-
-        Eigen::Matrix3d F;
-
-        fundMatEst.estimateFundamentalMatrix(F);
-
-        // Use F (which is actually the essential matrix) to compute the
-        // camera matrix for the "other" image.
-        //
-        // Compute all 4 possible camera matrices, and choose the one
-        // which results in positive z-values in both cameras, after triangulation.
-        //
-        array<Eigen::Matrix<double, 3, 4>, 4> p1Candidates;
-
-        printf("Computing pose candidates\n");
-        ReconstructUtil::computeCanonicalPose(F, p1Candidates);
-
-        array<int, 5> p1CandidateVotes;
-        p1CandidateVotes.fill(0);
-
-        printf("Testing pose candidates\n");
-        for (int pointI = 0; pointI < fundMatEst.getMatchCount(); pointI++) {
-            Eigen::Vector2d match0;
-            Eigen::Vector2d matchOther;
-
-            if (fundMatEst.getMatch(pointI, match0, matchOther)) {
-                int vote = ReconstructUtil::selectCandidatePose(match0,
-                        matchOther, p1Candidates);
-
-                if (vote > 0) {
-                    p1CandidateVotes[vote]++;
-                } else {
-                    p1CandidateVotes[4]++;
-                }
-            }
-        }
-
-        printf("Votes = [%d, %d, %d, %d], ill-posed = %d\n",
-                p1CandidateVotes[0],
-                p1CandidateVotes[1],
-                p1CandidateVotes[2],
-                p1CandidateVotes[3],
-                p1CandidateVotes[4]);
-
-        const auto bestCandidate = std::max_element(p1CandidateVotes.begin(), p1CandidateVotes.end());
-
-        const Eigen::Matrix<double, 3, 4>& P1 = p1Candidates[bestCandidate - p1CandidateVotes.begin()];
-
-        cout << "Optimal pose = \n" << P1 << endl;
-
-        Eigen::Matrix3d P1rot;
-        Eigen::Vector3d P1center;
-
-        decomposeProjectionMatrix(P1, P1rot, P1center);
-
-        Eigen::Quaterniond P1rotationQ(P1rot);
-
-        reconstruct.setCamera(imgI - 1, P1rotationQ, P1center);
-
+/*
         // For visualizing matches
         CImg<uint8_t> mainMatchVis = *initImg;
         CImg<uint8_t> otherMatchVis = *curImg;
@@ -187,11 +147,6 @@ int main(int argc, char** argv) {
         otherMatchVis.resize(-100, -100, -100, 3);
         CImg<uint8_t> colors = CImg<uint8_t>::lines_LUT256();
 
-        CImg<float> depthVis(workingWidth, workingHeight);
-        depthVis.fill(0);
-        float totalDisp = 0;
-
-        int successfulMatches = 0;
 
         for (int pointI = 0; pointI < fundMatEst.getMatchCount(); pointI++) {
             Eigen::Vector2d match0;
@@ -270,49 +225,6 @@ int main(int argc, char** argv) {
         }
     }
 
-
-    vector<Eigen::Vector3d> reconstruction = reconstruct.getOrthoPoints();
-
-    printf("[\n");
-    for (int pointI = 0; pointI < reconstruction.size(); pointI++) {
-        Eigen::Vector3d& p = reconstruction[pointI];
-
-        p.x() *= imageSize;
-        p.y() *= imageSize;
-        p.z() *= imageSize;
-        p += Eigen::Vector3d(imageCenter.x(), imageCenter.y(), 0);
-
-        if (matchCount[pointI] >= 3 && p.z() > 0) {
-            printf("(%f, %f, %f),\n", p[0], p[1], p[2]);
-        }
-    }
-
-    printf("]\n");
-    
-    // Sort reconstructed depth samples from back to front
-    std::sort(reconstruction.begin(), reconstruction.end(), [](
-                const Eigen::Vector3d& a,
-                const Eigen::Vector3d& b) {
-            return a[2] < b[2];
-            });
-    
-    const Eigen::Vector3d& medianDepth = reconstruction[reconstruction.size() / 2];
-
-    CImg<float> depthMap(workingWidth, workingHeight, 1, 1);
-
-    depthMap  = medianDepth.z();
-
-    for (int pointI = 0; pointI < reconstruction.size(); pointI++) {
-        const Eigen::Vector3d& sample = reconstruction[pointI];
-
-        if (matchCount[pointI] > 0) {
-            depthMap.draw_circle(sample.x() + 0.5, sample.y() + 0.5, 10, &sample.z());
-        }
-    }
-
-    // depthMap.blur(10);
-
-    depthMap.display();
 
     return 0;
 }

@@ -133,23 +133,27 @@ class ReconstructUtil {
 class DepthReconstruction {
     private:
         /**
-         * Cameras are paramterized by a translation and a rotation.
+         * Cameras are paramterized by a rotation followed by a translation.
          *
          * That is, world coordinates are transformed by the camera by
-         * first translating and *then* rotating.
-         *
-         * Note that the camera pose in world space is related to the inverse
-         * of these.  That is, the eye point is -get<1>(cameraParam) and is
-         * oriented relative to the standard basis with the rotation specified
-         * by get<0>(cameraParam).inverse() (this reduces computation in the
-         * inner loop of the solver by not performing unnecessary quaternion
-         * inversion).
+         * first rotation and *then* translating.
          */
         struct CameraParam {
-            // Stores the imaginary components of a normalized rotation
-            // quaternion
-            Eigen::Vector3d rotation;
+            Eigen::Quaterniond rotation;
             Eigen::Vector3d translation;
+
+            inline Eigen::Matrix<double, 3, 4> getProjection() {
+                Eigen::Matrix3d R = rotation.toRotationMatrix();
+
+                Eigen::Matrix<double, 3, 4> P;
+
+                P <<
+                    R(0, 0), R(0, 1), R(0, 2), translation.x(),
+                    R(1, 0), R(1, 1), R(1, 2), translation.y(),
+                    R(2, 0), R(2, 1), R(2, 2), translation.z();
+
+                return P;
+            }
         };
 
         struct Observation {
@@ -159,9 +163,7 @@ class DepthReconstruction {
 
         template<typename T>
         static inline void computeError(
-                // x, y, z
                 const T* const camera_translation,
-                // x, y, z imaginary components of a quaternion
                 const T* const camera_rotation,
                 const T* const point3,
                 const T* const projectedPoint2,
@@ -170,15 +172,11 @@ class DepthReconstruction {
             Eigen::Map<const Eigen::Matrix<T, 3, 1>> p3(point3);
             Eigen::Map<const Eigen::Matrix<T, 2, 1>> p2(projectedPoint2);
 
-            Eigen::Quaternion<T> rotation(
-                    T(1),
-                    camera_rotation[0],
-                    camera_rotation[1],
-                    camera_rotation[2]);
+            Eigen::Quaternion<T> rotation(camera_rotation);
 
             rotation.normalize();
 
-            Eigen::Matrix<T, 3, 1> p3Trans = rotation * (p3 + translation);
+            Eigen::Matrix<T, 3, 1> p3Trans = (rotation * p3) + translation;
 
             T predicted_x = p3Trans[0] / p3Trans[2];
             T predicted_y = p3Trans[1] / p3Trans[2];
@@ -330,6 +328,14 @@ class DepthReconstruction {
             const double& d = depth[pointIndex];
 
             return Eigen::Vector3d(pt.x() * d, pt.y() * d, d);
+        }
+
+        inline Eigen::Vector2d& getDepthSample(
+                int pointIndex,
+                double& depthVal) {
+            depthVal = depth[pointIndex];
+
+            return keypoints[pointIndex];
         }
 
     private:
