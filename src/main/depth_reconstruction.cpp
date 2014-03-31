@@ -104,9 +104,11 @@ void DepthReconstruction::solve() {
 
         cout << "Inliers after computing Pose = " << poseInlierCount << endl;
 
-        size_t triCount = triangulateDepthUsingPose(cameraI);
+        if (poseInlierCount > 200) {
+            size_t triCount = triangulateDepthUsingPose(cameraI);
 
-        cout << "Triangulation count = " << triCount << endl;
+            cout << "Triangulation count = " << triCount << endl;
+        }
     }
 }
 
@@ -184,16 +186,8 @@ size_t DepthReconstruction::estimatePoseUsingF(
         }
     }
 
-    int winner = std::max_element(poseBallots.begin(), poseBallots.end()) -
+    int winner = std::max_element(poseBallots.begin(), poseBallots.end() - 1) -
         poseBallots.begin();
-
-    if (winner == 4) {
-        for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
-            observationInlierMask[cameraIndex][obsI] = false;
-        }
-
-        return 0;
-    }
 
     const Eigen::Matrix<double, 3, 4>& pose = candidateP[winner];
 
@@ -241,7 +235,7 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
             double d = ReconstructUtil::triangulateDepth(
                     keypoints[obs.pointIndex], obs.point, P);
 
-            if (d > 0) {
+            if (d > 0 && isfinite(d)) {
                 depth[obs.pointIndex] = d;
 
                 newSampleCount++;
@@ -282,6 +276,10 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
             costFunctions.push_back(unique_ptr<CamCostFunction>(costFunction));
         }
+    }
+
+    if (costFunctions.size() == 0) {
+        return 0;
     }
 
     // Perform RANSAC by randomly selecting cost function terms, solving for
