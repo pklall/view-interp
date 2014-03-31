@@ -136,7 +136,7 @@ class DepthReconstruction {
          * Cameras are paramterized by a rotation followed by a translation.
          *
          * That is, world coordinates are transformed by the camera by
-         * first rotation and *then* translating.
+         * first rotating and *then* translating.
          */
         struct CameraParam {
             Eigen::Vector3d translation;
@@ -153,6 +153,16 @@ class DepthReconstruction {
                     R(2, 0), R(2, 1), R(2, 2), translation.z();
 
                 return P;
+            }
+
+            inline Eigen::Matrix3d getE() {
+                Eigen::Matrix3d tx;
+                tx <<
+                    0, translation.z(), -translation.y(),
+                    -translation.z(), 0, translation.x(),
+                    translation.y(), -translation.x(), 0;
+
+                return tx * rotation.toRotationMatrix().transpose();
             }
         };
 

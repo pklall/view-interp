@@ -88,11 +88,13 @@ void DepthReconstruction::solve() {
         }
     }
 
-    triangulateDepthUsingPose(bestCamera);
+    size_t triCount = triangulateDepthUsingPose(bestCamera);
+
+    cout << "Triangulation count = " << triCount << endl;
 
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
         if (cameraI == bestCamera) {
-            // We already processed this
+            // Don't re-process the initial camera
             continue;
         }
 
@@ -102,7 +104,9 @@ void DepthReconstruction::solve() {
 
         cout << "Inliers after computing Pose = " << poseInlierCount << endl;
 
-        triangulateDepthUsingPose(cameraI);
+        size_t triCount = triangulateDepthUsingPose(cameraI);
+
+        cout << "Triangulation count = " << triCount << endl;
     }
 }
 
@@ -227,6 +231,7 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
     const auto& P = cameras[cameraIndex].getP();
     
     size_t newSampleCount = 0;
+    size_t reverseCount = 0;
 
     for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
@@ -240,9 +245,13 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
                 depth[obs.pointIndex] = d;
 
                 newSampleCount++;
+            } else {
+                reverseCount++;
             }
         }
     }
+
+    cout << "Reverse = " << reverseCount << endl;
 
     return newSampleCount;
 }
@@ -361,8 +370,6 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         }
     }
 
-    cameras[cameraIndex] = optimalParam;
-
     // Update inlier masks
     for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
@@ -382,13 +389,16 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
             if (residuals[0] * residuals[0] + residuals[1] * residuals[1] < 
                     inlierThreshold * inlierThreshold) {
-                observationInlierMask[cameraIndex][obsI] = true;
             } else {
                 observationInlierMask[cameraIndex][obsI] = false;
             }
         }
     }
 
-    return optimalInlierCount;
+    // Since we may have solved for an incorrect (i.e. backwards-facing)
+    // pose, we must have another "election" to find the correct one.
+    Fmatrices[cameraIndex] = optimalParam.getE();
+
+    return estimatePoseUsingF(cameraIndex);
 }
 
