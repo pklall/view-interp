@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
         match0 -= imageCenter.cast<float>();
         match0 /= imageSize;
 
-        reconstruct.setMainPoint(pointI, match0.cast<double>());
+        reconstruct.setKeypoint(pointI, match0.cast<double>());
     }
 
     vector<int> matchCount(klt.featureCount());
@@ -93,6 +93,29 @@ int main(int argc, char** argv) {
         printf("Computing KLT\n");
         klt.compute(*curImg);
 
+        for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
+            Eigen::Vector2f match0;
+            Eigen::Vector2f matchOther;
+            float error;
+
+            klt.getMatch(pointI, match0, matchOther, error);
+
+            match0 -= imageCenter.cast<float>();
+            match0 /= imageSize;
+
+            reconstruct.addObservation(imgI - 1, pointI, match0.cast<double>());
+        }
+    }
+
+    reconstruct.solve();
+
+    // Don't forget to scale by imageSize!
+
+    return 0;
+}
+
+
+        /*
         // Prune KLT matches with the epipolar constraint by estimating the
         // fundamental matrix and rejecting outliers.
         // Note that this actually estimates a scaled version of the essential
@@ -103,18 +126,6 @@ int main(int argc, char** argv) {
         Eigen::Matrix3d F;
 
         fundMatEst.estimateFundamentalMatrix(F);
-
-        /*
-        PolarFundamentalMatrix polarF;
-
-        for (int pointI = 0; pointI < fundMatEst.getMatchCount(); pointI++) {
-            array<Eigen::Vector2d, 2> match;
-
-            if (fundMatEst.getMatch(pointI, match[0], match[1])) {
-                polarF.init(F, match);
-            }
-        }
-        */
 
         // Use F (which is actually the essential matrix) to compute the
         // camera matrix for the "other" image.
@@ -188,16 +199,6 @@ int main(int argc, char** argv) {
 
             if (fundMatEst.getMatch(pointI, match0, matchOther)) {
                 // If our estimate for this match results in negative depth, ignore it
-                /*
-                Eigen::Vector3d tri;
-                Eigen::Matrix<double, 3, 4> P0;
-                P0 <<
-                    1, 0, 0, 0,
-                    0, 1, 0, 0,
-                    0, 0, 1, 0;
-
-                ReconstructUtil::triangulate(match0, matchOther, P0, P1, tri);
-                */
 
                 // printf("(%f, %f, %f),\n", tri.x(), tri.y(), tri.z());
 
@@ -315,6 +316,7 @@ int main(int argc, char** argv) {
 
     return 0;
 }
+*/
 
 /*
    int main(int argc, char** argv) {

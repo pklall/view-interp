@@ -128,25 +128,40 @@ class ReconstructUtil {
 
 /**
  * Reconstructs a sparse depth map at keypoints matched in a predetermined
- * reference frame.
+ * reference image.
  */
 class DepthReconstruction {
     private:
         /**
-         * Cameras are paramterized by a translation followed by a rotation.
+         * Cameras are paramterized by a translation and a rotation.
+         *
+         * That is, world coordinates are transformed by the camera by
+         * first translating and *then* rotating.
          *
          * Note that the camera pose in world space is related to the inverse
          * of these.  That is, the eye point is -get<1>(cameraParam) and is
          * oriented relative to the standard basis with the rotation specified
          * by get<0>(cameraParam).inverse() (this reduces computation in the
          * inner loop of the solver by not performing unnecessary quaternion
-         * inverseion).
+         * inversion).
          */
-        typedef tuple<Eigen::Quaterniond, Eigen::Vector3d> CameraParam;
+        struct CameraParam {
+            // Stores the imaginary components of a normalized rotation
+            // quaternion
+            Eigen::Vector3d rotation;
+            Eigen::Vector3d translation;
+        };
+
+        struct Observation {
+            size_t pointIndex;
+            Eigen::Vector2d point;
+        };
 
         template<typename T>
         static inline void computeError(
+                // x, y, z
                 const T* const camera_translation,
+                // x, y, z imaginary components of a quaternion
                 const T* const camera_rotation,
                 const T* const point3,
                 const T* const projectedPoint2,
@@ -155,7 +170,13 @@ class DepthReconstruction {
             Eigen::Map<const Eigen::Matrix<T, 3, 1>> p3(point3);
             Eigen::Map<const Eigen::Matrix<T, 2, 1>> p2(projectedPoint2);
 
-            Eigen::Quaternion<T> rotation(camera_rotation);
+            Eigen::Quaternion<T> rotation(
+                    T(1),
+                    camera_rotation[0],
+                    camera_rotation[1],
+                    camera_rotation[2]);
+
+            rotation.normalize();
 
             Eigen::Matrix<T, 3, 1> p3Trans = rotation * (p3 + translation);
 
@@ -171,10 +192,8 @@ class DepthReconstruction {
             // center point.
             CamDepthReprojectionError(
                     const DepthReconstruction* _self,
-                    int _pointIndex,
-                    double observed_x, double observed_y)
-                : self(_self), pointIndex(_pointIndex),
-                observed_x(observed_x), observed_y(observed_y) {}
+                    const Observation* _obs)
+                : self(_self), obs(_obs) {}
 
             template <typename T>
                 bool operator()(
@@ -182,17 +201,19 @@ class DepthReconstruction {
                         const T* const camera_rotation,
                         const T* const depth,
                         T* residuals) const {
-                    const Eigen::Vector3d& point3 = self->getOrthoPoints()[pointIndex];
+                    size_t pointIndex = obs->pointIndex;
+
+                    const Eigen::Vector2d& keypoint = self->keypoints[pointIndex];
 
                     Eigen::Matrix<T, 3, 1> p;
                     p <<
-                        T(point3.x()) * depth[0],
-                        T(point3.y()) * depth[0],
+                        T(keypoint.x()) * depth[0],
+                        T(keypoint.y()) * depth[0],
                         depth[0];
 
                     T projectedPoint2[2];
-                    projectedPoint2[0] = T(observed_x);
-                    projectedPoint2[1] = T(observed_y);
+                    projectedPoint2[0] = T(obs->point[0]);
+                    projectedPoint2[1] = T(obs->point[1]);
 
                     computeError(
                             camera_translation,
@@ -205,33 +226,35 @@ class DepthReconstruction {
                 }
 
             const DepthReconstruction* self;
-            int pointIndex;
-            double observed_x;
-            double observed_y;
+            const Observation* obs;
         };
 
         struct CameraReprojectionError {
             CameraReprojectionError(
                     const DepthReconstruction* _self,
-                    int _pointIndex,
-                    double _observed_x,
-                    double _observed_y)
-                : self(_self), pointIndex(_pointIndex),
-                observed_x(_observed_x), observed_y(_observed_y) {}
+                    const Observation* _obs)
+                : self(_self), obs(_obs) {}
 
             template <typename T>
                 bool operator()(
                         const T* const camera_translation,
                         const T* const camera_rotation,
                         T* residuals) const {
-                    Eigen::Vector3d point3 = self->get3DPoint(pointIndex);
+                    size_t pointIndex = obs->pointIndex;
+
+                    const Eigen::Vector2d& keypoint = self->keypoints[pointIndex];
+
+                    double depth = self->depth[pointIndex];
 
                     Eigen::Matrix<T, 3, 1> p;
-                    p << T(point3.x()), T(point3.y()), T(point3.z());
+                    p <<
+                        T(keypoint.x() * depth),
+                        T(keypoint.y() * depth),
+                        T(depth);
 
                     T projectedPoint2[2];
-                    projectedPoint2[0] = T(observed_x);
-                    projectedPoint2[1] = T(observed_y);
+                    projectedPoint2[0] = T(obs->point[0]);
+                    projectedPoint2[1] = T(obs->point[1]);
 
                     computeError(
                             camera_translation,
@@ -244,9 +267,7 @@ class DepthReconstruction {
                 }
 
             const DepthReconstruction* self;
-            int pointIndex;
-            double observed_x;
-            double observed_y;
+            const Observation* obs;
         };
 
     public:
@@ -254,26 +275,22 @@ class DepthReconstruction {
                 int numCameras,
                 int numPoints);
 
-        inline void setMainPoint(
-                int pointIndex,
+        inline void setKeypoint(
+                size_t pointIndex,
                 const Eigen::Vector2d& point) {
-            points[pointIndex] = Eigen::Vector3d(point[0], point[1], 1.0);
+            keypoints[pointIndex] = point;
         }
 
-        inline void setDepth(
-                int pointIndex,
-                double depth) {
-            points[pointIndex][2] = depth;
+        inline void addObservation(
+                size_t cameraIndex,
+                size_t pointIndex,
+                const Eigen::Vector2d& point) {
+            observations[cameraIndex].push_back({pointIndex, point});
         }
 
-        inline void setCamera(
-                int cameraIndex,
-                const Eigen::Quaterniond rotation,
-                const Eigen::Vector3d translation) {
-            get<0>(cameras[cameraIndex]) = rotation;
-            get<1>(cameras[cameraIndex]) = translation;
-        }
+        void solve();
 
+        /*
         inline void addObservation(
                 int cameraIndex,
                 int pointIndex,
@@ -300,45 +317,105 @@ class DepthReconstruction {
                     get<0>(cameras[cameraIndex]).coeffs().data(),
                     &(points[pointIndex][2]));
         }
+        */
 
-        void solve(
-                double huberCoeff);
-
-        /**
-         * Points are stored according to their (x, y) coordinates in the
-         * reference/main camera's normalized image-space.
-         * Z-coordinates specify depth.
-         * Thus, the actual point in R3 is (x * z, y * z, z).
-         */
-        inline const vector<Eigen::Vector3d>& getOrthoPoints() const {
-            return points;
+        inline size_t getPointCount() const {
+            return keypoints.size();
         }
 
         inline Eigen::Vector3d get3DPoint(
                 int pointIndex) const {
-            const Eigen::Vector3d& pt = points[pointIndex];
+            const Eigen::Vector2d& pt = keypoints[pointIndex];
 
-            return Eigen::Vector3d(
-                    pt.x() * pt.z(),
-                    pt.y() * pt.z(),
-                    pt.z());
+            const double& d = depth[pointIndex];
+
+            return Eigen::Vector3d(pt.x() * d, pt.y() * d, d);
         }
 
-        void estimateNewCamera(
+    private:
+        void resetSolutionState();
+
+        /**
+         * Estimates the specified camera's fundamental matrix using its
+         * observations alone.
+         */
+        size_t estimateFUsingObs(
+                int cameraIndex);
+
+        /**
+         * Estimates camera pose from the fundamental matrix.
+         *
+         * Futher prunes the set of inlier observations to those which fit
+         * with the resulting pose.
+         *
+         * Returns the number of inliers.
+         */
+        size_t estimatePoseUsingF(
+                int cameraIndex);
+
+        /**
+         * Uses the specified camera to triangulate depth from inlier observations.
+         *
+         * Note that only inliers (based on observationInlierMask) for depth values
+         * which are uninitialized (0) are modified.
+         */
+        void triangulateDepthUsingCamera(
+                int cameraIndex);
+
+        /**
+         * Estimates the given camera's parameters by considering that camera's
+         * observations as well as any existing depth estimates.
+         *
+         * Note that this obeys the observationInlierMask and will toggle
+         * (logical AND) additional observations as outliers if they don't fit
+         * the estimated camera pose.
+         *
+         * Returns the number of inliers.
+         */
+        size_t estimatePoseUsingDepth(
                 int cameraIndex,
-                const vector<tuple<int, Eigen::Vector2d>>& observations,
                 double inlierThreshold);
 
-    private:
-        vector<CameraParam> cameras;
+        /**
+         * Refines estimates of all cameras (for which cameraMask is true) and
+         * depths using sparse bundle adjustment.
+         *
+         * Note that this obeys the observationInlierMask.
+         */
+        void bundleAdjustCamerasAndDepth(
+                const vector<bool>& cameraMask);
+
+        /**
+         * Fundamental matrix estimate for each camera relative to the main
+         * viewpoint.
+         *
+         * Note that, since keypoints and observations must already be in
+         * normalized device coordinates, these are also essential matrices.
+         */
+        vector<Eigen::Matrix3d> Fmatrices;
+
         /*
          * Stores the (x, y) coordates of the observation in the main image
-         * and the depth associated with the point.
+         * as normalized device coordinates (origin is at the center of the
+         * image).
          *
-         * Thus, the 3D point is actually (x * z, y * z, z).
+         * Thus, the 3D point is actually (x * depth, y * depth, depth).
          */
-        vector<Eigen::Vector3d> points;
+        vector<Eigen::Vector2d> keypoints;
 
-        unique_ptr<ceres::LossFunctionWrapper> lossFunc;
-        unique_ptr<ceres::Problem> problem;
+        /**
+         * Stores each observation made from each camera.
+         */
+        vector<vector<Observation>> observations;
+        vector<vector<bool>> observationInlierMask;
+
+        /**
+         * A value of 0 for depth indicates an uninitialized value.
+         */
+        vector<double> depth;
+
+        vector<CameraParam> cameras;
+
+        CVFundamentalMatrixEstimator fundMatEstimator;
 };
+

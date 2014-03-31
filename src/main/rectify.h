@@ -9,7 +9,7 @@
 
 #include "common.h"
 
-#include "reconstruct.h"
+#include "chain_reconstruct.h"
 
 template<typename T>
 inline void radialUndistort(

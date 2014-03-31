@@ -164,6 +164,18 @@ class CVFundamentalMatrixEstimator {
                 double imgCenterY,
                 double imgSize);
 
+        inline void init() {
+            points[0].clear();
+            points[1].clear();
+        }
+
+        inline void addMatch(
+                const Eigen::Vector2d& left,
+                const Eigen::Vector2d& right) {
+            points[0].push_back(cv::Point2f(left.x(), left.y()));
+            points[1].push_back(cv::Point2f(right.x(), right.y()));
+        }
+
         void estimateFundamentalMatrix(
                 Eigen::Matrix3d& fundMat);
 
@@ -176,8 +188,13 @@ class CVFundamentalMatrixEstimator {
             return inlierMask.size();
         }
 
+        inline bool isInlier(
+                size_t index) {
+            return inlierMask[index];
+        }
+
         inline bool getMatch(
-                int index,
+                size_t index,
                 Eigen::Vector2d& left,
                 Eigen::Vector2d& right) {
             if (inlierMask[index] == 0) {
