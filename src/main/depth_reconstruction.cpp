@@ -222,9 +222,11 @@ size_t DepthReconstruction::estimatePoseUsingF(
     return inlierCount;
 }
 
-void DepthReconstruction::triangulateDepthUsingPose(
+size_t DepthReconstruction::triangulateDepthUsingPose(
         int cameraIndex) {
     const auto& P = cameras[cameraIndex].getP();
+    
+    size_t newSampleCount = 0;
 
     for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
@@ -234,9 +236,15 @@ void DepthReconstruction::triangulateDepthUsingPose(
             double d = ReconstructUtil::triangulateDepth(
                     keypoints[obs.pointIndex], obs.point, P);
 
-            depth[obs.pointIndex] = d;
+            if (d > 0) {
+                depth[obs.pointIndex] = d;
+
+                newSampleCount++;
+            }
         }
     }
+
+    return newSampleCount;
 }
 
 size_t DepthReconstruction::estimatePoseUsingDepth(
@@ -319,25 +327,31 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
-        // cout << summary.FullReport() << endl;
+        // cout << summary.BriefReport() << endl;
 
         int inlierCount = 0;
 
-        for (const Observation& obs : observations[cameraIndex]) {
-            double residuals[2];
+        // Compute the number of inliers among those samples we care about
+        for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+            const Observation& obs = observations[cameraIndex][obsI];
 
-            Eigen::Vector3d point3 = get3DPoint(obs.pointIndex);
+            if (observationInlierMask[cameraIndex][obsI] &&
+                    depth[obs.pointIndex] > 0) {
+                double residuals[2];
 
-            computeError(
-                    curParam.translation.data(),
-                    curParam.rotation.coeffs().data(),
-                    point3.data(),
-                    keypoints[obs.pointIndex].data(),
-                    residuals);
+                Eigen::Vector3d point3 = get3DPoint(obs.pointIndex);
 
-            if (residuals[0] * residuals[0] + residuals[1] * residuals[1] < 
-                    inlierThreshold * inlierThreshold) {
-                inlierCount++;
+                computeError(
+                        curParam.translation.data(),
+                        curParam.rotation.coeffs().data(),
+                        point3.data(),
+                        keypoints[obs.pointIndex].data(),
+                        residuals);
+
+                if (residuals[0] * residuals[0] + residuals[1] * residuals[1] < 
+                        inlierThreshold * inlierThreshold) {
+                    inlierCount++;
+                }
             }
         }
 
@@ -348,6 +362,32 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
     }
 
     cameras[cameraIndex] = optimalParam;
+
+    // Update inlier masks
+    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+        const Observation& obs = observations[cameraIndex][obsI];
+
+        if (observationInlierMask[cameraIndex][obsI] &&
+                depth[obs.pointIndex] > 0) {
+            double residuals[2];
+
+            Eigen::Vector3d point3 = get3DPoint(obs.pointIndex);
+
+            computeError(
+                    optimalParam.translation.data(),
+                    optimalParam.rotation.coeffs().data(),
+                    point3.data(),
+                    keypoints[obs.pointIndex].data(),
+                    residuals);
+
+            if (residuals[0] * residuals[0] + residuals[1] * residuals[1] < 
+                    inlierThreshold * inlierThreshold) {
+                observationInlierMask[cameraIndex][obsI] = true;
+            } else {
+                observationInlierMask[cameraIndex][obsI] = false;
+            }
+        }
+    }
 
     return optimalInlierCount;
 }

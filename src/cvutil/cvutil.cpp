@@ -96,7 +96,7 @@ void CVOpticalFlow::init(
 
     cv::goodFeaturesToTrack(baseCV, goodFeatures, maxFeatures, 0.01, minDistance); 
     
-    cv::cornerSubPix(baseCV, goodFeatures, cv::Size(11, 11), cv::Size(-1, -1),
+    cv::cornerSubPix(baseCV, goodFeatures, cv::Size(31, 31), cv::Size(-1, -1),
             cv::TermCriteria(
                 cv::TermCriteria::COUNT + cv::TermCriteria::EPS, 30, 5));
 

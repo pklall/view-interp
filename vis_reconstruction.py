@@ -6,10 +6,8 @@ import matplotlib.pyplot as plt
 import sys
 import os
 
-points = [
-]
+points = 
 
-# points = [(x, y, z) for (x, y, z) in points if z > 0 and z < 8]
 
 points = n.array(points)
 

@@ -367,8 +367,10 @@ class DepthReconstruction {
          *
          * Note that only inliers (based on observationInlierMask) for depth values
          * which are uninitialized (0) are modified.
+         *
+         * Returns the number of new depth samples resulting from triangulation.
          */
-        void triangulateDepthUsingPose(
+        size_t triangulateDepthUsingPose(
                 int cameraIndex);
 
         /**

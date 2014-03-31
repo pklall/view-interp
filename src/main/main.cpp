@@ -36,7 +36,9 @@ int main(int argc, char** argv) {
     float scaleFactor = 4.0f * 1000000.0f / ((float) originalWidth * originalHeight);
 
     // Don't increase image size
-    scaleFactor = min(1.0f, scaleFactor);
+    // scaleFactor = min(1.0f, scaleFactor);
+    // Process entire images
+    scaleFactor = 1.0f;
 
     const int workingWidth = originalWidth * scaleFactor;
     const int workingHeight = originalHeight * scaleFactor;
@@ -50,7 +52,7 @@ int main(int argc, char** argv) {
 
     const int numPoints = 2000;
 
-    CVOpticalFlow klt(31, 3);
+    CVOpticalFlow klt(31, 7);
 
     klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.01);
 
@@ -136,6 +138,18 @@ int main(int argc, char** argv) {
         depthVis -= (depthVis.get_sign().abs() - 1) * avgDepth;
 
         depthVis.display();
+
+        
+        printf("\n\n[");
+        for (size_t i = 0; i < reconstruct.getPointCount(); i++) {
+            double depth;
+            const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth);
+
+            if (pt.z() > 0) {
+                printf("(%f, %f, %f),", pt.x(), pt.y(), depth);
+            }
+        }
+        printf("]\n\n");
     }
 
     return 0;
