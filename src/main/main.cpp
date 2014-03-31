@@ -110,31 +110,33 @@ int main(int argc, char** argv) {
     reconstruct.solve();
 
     // Visualize the result
-    CImg<float> depthVis(workingWidth, workingHeight);
-    depthVis.fill(0);
-    float totalDepth = 0;
+    {
+        CImg<float> depthVis(workingWidth, workingHeight);
+        depthVis.fill(0);
+        float totalDepth = 0;
 
-    int successfulMatches = 0;
+        int successfulMatches = 0;
 
-    for (size_t i = 0; i < reconstruct.getPointCount(); i++) {
-        double depth;
-        const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth);
+        for (size_t i = 0; i < reconstruct.getPointCount(); i++) {
+            double depth;
+            const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth);
 
-        if (depth > 0) {
-            Eigen::Vector2d ptImg = (pt * imageSize) + imageCenter;
+            if (depth > 0) {
+                Eigen::Vector2d ptImg = (pt * imageSize) + imageCenter;
 
-            totalDepth += depth;
-            successfulMatches++;
+                totalDepth += depth;
+                successfulMatches++;
 
-            depthVis.draw_circle(ptImg.x() + 0.5, ptImg.y() + 0.5, 3, &depth);
+                depthVis.draw_circle(ptImg.x() + 0.5, ptImg.y() + 0.5, 3, &depth);
+            }
         }
+
+        // Fill the background with the average depth
+        float avgDepth = totalDepth / successfulMatches;
+        depthVis -= (depthVis.get_sign().abs() - 1) * avgDepth;
+
+        depthVis.display();
     }
-
-    // Fill the background with the average depth
-    float avgDepth = totalDepth / successfulMatches;
-    depthVis -= (depthVis.get_sign().abs() - 1) * avgDepth;
-
-    depthVis.display();
 
     return 0;
 }

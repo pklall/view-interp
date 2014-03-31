@@ -88,7 +88,22 @@ void DepthReconstruction::solve() {
         }
     }
 
-    triangulateDepthUsingCamera(bestCamera);
+    triangulateDepthUsingPose(bestCamera);
+
+    for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
+        if (cameraI == bestCamera) {
+            // We already processed this
+            continue;
+        }
+
+        resetInlierMask(cameraI);
+
+        size_t poseInlierCount = estimatePoseUsingDepth(cameraI, 0.01);
+
+        cout << "Inliers after computing Pose = " << poseInlierCount << endl;
+
+        triangulateDepthUsingPose(cameraI);
+    }
 }
 
 void DepthReconstruction::resetSolutionState() {
@@ -102,6 +117,13 @@ void DepthReconstruction::resetSolutionState() {
         // Mark all observations as inliers
         std::fill(inlierMask.begin(), inlierMask.end(), true);
     }
+}
+
+void DepthReconstruction::resetInlierMask(
+        int cameraIndex) {
+    vector<bool>& inlierMask = observationInlierMask[cameraIndex];
+
+    std::fill(inlierMask.begin(), inlierMask.end(), true);
 }
 
 size_t DepthReconstruction::estimateFUsingObs(
@@ -200,9 +222,9 @@ size_t DepthReconstruction::estimatePoseUsingF(
     return inlierCount;
 }
 
-void DepthReconstruction::triangulateDepthUsingCamera(
+void DepthReconstruction::triangulateDepthUsingPose(
         int cameraIndex) {
-    const auto& P = cameras[cameraIndex].getProjection();
+    const auto& P = cameras[cameraIndex].getP();
 
     for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
@@ -254,38 +276,50 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
     CameraParam optimalParam;
 
     ceres::Problem::Options pOptions;
-    // This ensure sthat 
+    // This ensures that ceres don't delete our cost functions
     pOptions.cost_function_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
+    pOptions.local_parameterization_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
 
     // Perform 10 iterations of RANSAC
-    // FIXME compute this based on acceptable probability of success
-    const int max_iters = 10;
+    // TODO compute this based on acceptable probability of success
+    const int max_iters = 1000;
+
+    unique_ptr<ceres::LocalParameterization> quatParameterization(
+            new ceres::QuaternionParameterization());
 
     for (int iter = 0; iter < max_iters; iter++) {
         ceres::Problem problem(pOptions);
 
         CameraParam curParam;
 
+        curParam.translation = Eigen::Vector3d(0, 0, 0);
+        curParam.rotation = Eigen::Quaterniond(1, 0, 0, 0);
+
         // Use 7 correspondences to solve for camera orientation
-        for (int i = 0; i < 7; i++) {
+        // TODO What's the correct amount to use here?
+        for (int i = 0; i < 5; i++) {
             ceres::CostFunction* cf =
-                costFunctions[(iter * 7 + i) % costFunctions.size()].get();
+                costFunctions[(iter * 5 + i) % costFunctions.size()].get();
+
             problem.AddResidualBlock(
-                    cf,   
+                    cf,
                     NULL, // least-squares
                     curParam.translation.data(),
                     curParam.rotation.coeffs().data());
+
+            problem.SetParameterization(curParam.rotation.coeffs().data(),
+                    quatParameterization.get());
         }
 
         ceres::Solver::Options options;
         // Use default solver
         // options.linear_solver_type = ???;
         options.max_num_iterations = 100;
-        options.minimizer_progress_to_stdout = true;
+        options.minimizer_progress_to_stdout = false;
 
         ceres::Solver::Summary summary;
         ceres::Solve(options, &problem, &summary);
-        cout << summary.FullReport() << endl;
+        // cout << summary.FullReport() << endl;
 
         int inlierCount = 0;
 

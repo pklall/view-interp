@@ -139,10 +139,10 @@ class DepthReconstruction {
          * first rotation and *then* translating.
          */
         struct CameraParam {
-            Eigen::Quaterniond rotation;
             Eigen::Vector3d translation;
+            Eigen::Quaterniond rotation;
 
-            inline Eigen::Matrix<double, 3, 4> getProjection() {
+            inline Eigen::Matrix<double, 3, 4> getP() {
                 Eigen::Matrix3d R = rotation.toRotationMatrix();
 
                 Eigen::Matrix<double, 3, 4> P;
@@ -341,6 +341,9 @@ class DepthReconstruction {
     private:
         void resetSolutionState();
 
+        void resetInlierMask(
+                int cameraIndex);
+
         /**
          * Estimates the specified camera's fundamental matrix using its
          * observations alone.
@@ -365,7 +368,7 @@ class DepthReconstruction {
          * Note that only inliers (based on observationInlierMask) for depth values
          * which are uninitialized (0) are modified.
          */
-        void triangulateDepthUsingCamera(
+        void triangulateDepthUsingPose(
                 int cameraIndex);
 
         /**
