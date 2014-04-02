@@ -71,6 +71,8 @@ void DepthReconstruction::solve() {
     // FIXME debugging code
     CImg<float> depthVis(512, 512);
     
+    vector<tuple<float, size_t>> camInlierCount;
+    
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
         cout << "Estimating camera " << cameraI << endl;
 
@@ -84,37 +86,80 @@ void DepthReconstruction::solve() {
 
         // If the pose estimated from F results in many more outliers,
         // due to negatively-facing points, it's probably a bad fit.
-        float inlierRatio = poseInlierCount / fInlierCount;
+        float inlierRatio = poseInlierCount; // / fInlierCount;
 
-        if (poseInlierCount > minInliers && inlierRatio > bestInlierRatio) {
-            bestInlierRatio = inlierRatio;
-            bestCamera = cameraI;
+        if (poseInlierCount > minInliers) { 
+            camInlierCount.push_back(make_tuple(inlierRatio, cameraI));
         }
     }
 
-    /*
-    size_t triCount = triangulateDepthUsingPose(bestCamera);
+    std::sort(camInlierCount.begin(), camInlierCount.end());
+
+    size_t bestCameraI = get<1>(camInlierCount[camInlierCount.size() - 1]);
+
+    size_t triCount = triangulateDepthUsingPose(bestCameraI);
 
     cout << "Triangulation count = " << triCount << endl;
 
-    // cout << "\n\nInitial triangulation via RANSASC-estimated F" << endl;
-    // visualize(depthVis, 0, 0.75f, 2.0f, false);
-    // depthVis.display();
-
+    cout << "\n\nInitial triangulation via RANSASC-estimated F" << endl;
+    visualize(depthVis, 0, 0.75f, 2.0f, false);
+    depthVis.display();
+    
     vector<bool> cameraMask(cameras.size());
-
     fill(cameraMask.begin(), cameraMask.end(), false);
-
-    cameraMask[bestCamera] = true;
+    cameraMask[bestCameraI] = true;
 
     refineCamerasAndDepth(cameraMask);
-    */
+
+    cout << "\n\nAfter 2-camera bundle adjustment" << endl;
+    visualize(depthVis, 0, 0.75f, 2.0f, false);
+    depthVis.display();
+
+    std::fill(depth.begin(), depth.end(), 0);
+    triCount = triangulateDepthUsingPose(bestCameraI);
+    cout << "Triangulation count = " << triCount << endl;
+
+    cout << "\n\nAfter triangulation with post-bundle adjustment pose" << endl;
+    visualize(depthVis, 0, 0.75f, 2.0f, false);
+    depthVis.display();
+
+    for (int i = camInlierCount.size() - 2; i >= 0; i--) {
+        size_t cameraI = get<1>(camInlierCount[i]);
+
+        std::fill(
+                observationInlierMask[cameraI].begin(),
+                observationInlierMask[cameraI].end(),
+                true);
+
+        // Prune outliers from estimation of F
+        estimateFUsingObs(cameraI);
+
+        size_t inlierCount = estimatePoseUsingDepth(cameraI, 0.001f);
+
+        printf("Depth-based pose estimation inliers = %d\n", inlierCount);
+
+        size_t triCount = triangulateDepthUsingPose(cameraI);
+
+        cout << "\nNew camera depth-based pose estimation and triangulation\n";
+        visualize(depthVis, 0, 0.75f, 2.0f, false);
+        depthVis.display();
+
+        cameraMask[cameraI] = true;
+
+        refineCamerasAndDepth(cameraMask);
+
+        cout << "\nAfter bundle adjustment\n";
+        visualize(depthVis, 0, 0.75f, 2.0f, false);
+        depthVis.display();
+    }
+
+
+    // refineCamerasAndDepth(cameraMask);
 
     // cout << "\n\nAfter refinement" << endl;
     // visualize(depthVis, 0, 0.75f, 2.0f, false);
     // depthVis.display();
 
-    // FIXME don't use this testing code
     /*
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
         std::fill(
@@ -123,23 +168,22 @@ void DepthReconstruction::solve() {
                 true);
         size_t poseInlierCount = estimatePoseUsingDepth(cameraI, 0.0005);
     }
+    */
 
+    /*
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
         printf("Camera %d\n", cameraI);
 
         std::fill(depth.begin(), depth.end(), 0);
 
+        std::fill(
+                observationInlierMask[cameraI].begin(),
+                observationInlierMask[cameraI].end(),
+                true);
+
         size_t triCount = triangulateDepthUsingPose(cameraI);
 
-        cout << "\n\nTriangulation after depth-based pose estimation" << endl;
-        visualize(depthVis, 0, 0.75f, 2.0f, false);
-        depthVis.display();
-
-        cameraMask[cameraI] = true;
-
-        refineCamerasAndDepth(cameraMask);
-
-        cout << "\n\nAfter refinement" << endl;
+        cout << "\n\nTriangulation without depth-based pose estimation" << endl;
         visualize(depthVis, 0, 0.75f, 2.0f, false);
         depthVis.display();
     }
@@ -431,6 +475,7 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
 
         if (observationInlierMask[cameraIndex][obsI] &&
                 depth[obs.pointIndex] == 0) {
+
             double d = ReconstructUtil::triangulateDepth(
                     keypoints[obs.pointIndex], obs.point, P);
 
@@ -440,6 +485,8 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
                 newSampleCount++;
             } else {
                 reverseCount++;
+
+                observationInlierMask[cameraIndex][obsI] = false;
             }
         }
     }
@@ -494,7 +541,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
     pOptions.cost_function_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
     pOptions.local_parameterization_ownership = ceres::Ownership::DO_NOT_TAKE_OWNERSHIP;
 
-    // Perform 10 iterations of RANSAC
+    // Perform several iterations of RANSAC
     // TODO compute this based on acceptable probability of success
     const int max_iters = 1000;
 

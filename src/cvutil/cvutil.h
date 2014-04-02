@@ -96,11 +96,15 @@ class CVFeatureMatcher {
         
     public:
         inline void getKeypoint(
-                int index,
+                size_t index,
                 float& x,
                 float& y) const {
             x = keypoints[index].pt.x;
             y = keypoints[index].pt.y;
+        }
+
+        inline size_t numKeypoints() {
+            return keypoints.size();
         }
 
         CVFeatureMatcher(
@@ -123,7 +127,6 @@ class CVFeatureMatcher {
                 const CVFeatureMatcher& other,
                 bool sortByMatchScore,
                 array<vector<cv::Point2f>, 2>& matchedPoints);
-
 };
 
 class CVFundamentalMatrixEstimator {

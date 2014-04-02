@@ -13,38 +13,6 @@
 #include <Eigen/Dense>
 
 int main(int argc, char** argv) {
-    // FIXME
-    /*
-    {
-        CImg<float> vertices(100, 3);
-
-        CImgList<unsigned int> primitives(1);
-        CImgList<unsigned int> colors(1);
-
-        // 100 points
-        primitives(0) = CImg<unsigned int>(1, 100);
-        colors(0) = CImg<unsigned int>(3, 100);
-        
-        for (int x = 0; x < 10; x++) {
-            for (int y = 0; y < 10; y++) {
-                vertices(x + 10 * y, 0) = x;
-                vertices(x + 10 * y, 1) = y;
-                vertices(x + 10 * y, 2) = 0;
-
-                primitives(0)(0, x + 10 * y) = x + 10 * y;
-
-                colors(0)(x + 10 * y, 0) = 255;
-                colors(0)(x + 10 * y, 1) = 255;
-                colors(0)(x + 10 * y, 2) = 255;
-            }
-        }
-        
-        CImgDisplay disp;
-
-        vertices.display_object3d(disp, vertices, primitives, CImg<float>(), CImg<float>());
-    }
-    */
-
     if (argc < 3) {
         printf("Usage: %s img1.png img2.png ... imgN.png\n", argv[0]);
         exit(1);
@@ -56,7 +24,7 @@ int main(int argc, char** argv) {
     unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
 
     // Load a grayscale image from RGB
-    *initImg = CImg<float>::get_load(argv[1]);
+    *initImg = CImg<uint8_t>::get_load(argv[1]);
     if (initImg->spectrum() > 1) {
         *initImg = initImg->get_RGBtoLab().channel(0);
     }
@@ -74,8 +42,10 @@ int main(int argc, char** argv) {
 
     const int numPoints = 5000;
 
+    // CVFeatureMatcher orb(numPoints, 127);
     CVOpticalFlow klt(31, 7);
 
+    // orb.detectFeatures(*initImg);
     klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.01);
 
     printf("Feature count = %d\n", klt.featureCount());
@@ -84,29 +54,36 @@ int main(int argc, char** argv) {
 
     CVFundamentalMatrixEstimator fundMatEst;
 
+    // reconstruct.init(imageCount - 1, orb.numKeypoints());
     reconstruct.init(imageCount - 1, klt.featureCount());
 
+    // for (int pointI = 0; pointI < orb.numKeypoints(); pointI++) {
     for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
         Eigen::Vector2f match0;
         Eigen::Vector2f matchOther;
         float error;
 
         klt.getMatch(pointI, match0, matchOther, error);
+        // float x, y;
+        // orb.getKeypoint(pointI, x, y);
 
+        // Eigen::Vector2f match0(x, y);
+        
         match0 -= imageCenter.cast<float>();
         match0 /= imageSize;
 
         reconstruct.setKeypoint(pointI, match0.cast<double>());
     }
 
-    vector<int> matchCount(klt.featureCount());
 
-    std::fill(matchCount.begin(), matchCount.end(), 0);
+    // CVFeatureMatcher curOrb(numPoints, 31);
+    // vector<tuple<int, int>> matches(numPoints);
 
     for (int imgI = 1; imgI < imageCount; imgI++) {
         printf("Processing image #%d\n", imgI);
 
-        *curImg = CImg<float>::get_load(argv[1 + imgI]);
+        *curImg = CImg<uint8_t>::get_load(argv[1 + imgI]);
+
         if (curImg->spectrum() > 1) {
             *curImg = curImg->get_RGBtoLab().channel(0);
         }
@@ -116,14 +93,23 @@ int main(int argc, char** argv) {
 
         printf("Computing KLT\n");
         klt.compute(*curImg);
+        // curOrb.detectFeatures(*curImg);
+        // matches.clear();
+        // orb.match(curOrb, matches, numPoints);
         printf("Done\n");
 
+        // for (const tuple<int, int> match : matches) {
         for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
             Eigen::Vector2f match0;
             Eigen::Vector2f matchOther;
             float error;
 
             klt.getMatch(pointI, match0, matchOther, error);
+
+            // float x, y;
+            // curOrb.getKeypoint(get<1>(match), x, y);
+            // int pointI = get<0>(match);
+            // Eigen::Vector2f matchOther(x, y);
 
             matchOther -= imageCenter.cast<float>();
             matchOther /= imageSize;
@@ -141,61 +127,65 @@ int main(int argc, char** argv) {
 
     // depthVis.display();
 
-    CImg<uint8_t> initDown(*initImg);
-    CImg<uint8_t> curDown;
+    const bool display_rectification = true;
 
-    float scaleFactor = (1024.0f * 1024.0f) / ((float) originalWidth * originalHeight);
-    int scaledWidth = scaleFactor * originalWidth;
-    int scaledHeight = scaleFactor * originalHeight; 
+    if (display_rectification) {
+        CImg<uint8_t> initDown(*initImg);
+        CImg<uint8_t> curDown;
 
-    // Resize with moving-average interpolation
-    initDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
+        float scaleFactor = (1024.0f * 1024.0f) / ((float) originalWidth * originalHeight);
+        int scaledWidth = scaleFactor * originalWidth;
+        int scaledHeight = scaleFactor * originalHeight; 
 
-    for (int imgI = 1; imgI < imageCount; imgI++) {
-        printf("Rectifying image #%d\n", imgI);
+        // Resize with moving-average interpolation
+        initDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
 
-        curDown = CImg<uint8_t>::get_load(argv[1 + imgI]);
+        for (int imgI = 1; imgI < imageCount; imgI++) {
+            printf("Rectifying image #%d\n", imgI);
 
-        if (curDown.spectrum() > 1) {
-            curDown = curDown.get_RGBtoLab().channel(0);
+            curDown = CImg<uint8_t>::get_load(argv[1 + imgI]);
+
+            if (curDown.spectrum() > 1) {
+                curDown = curDown.get_RGBtoLab().channel(0);
+            }
+
+            curDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
+
+            PolarFundamentalMatrix polarF;
+            PolarRectification polarR;
+            PolarStereo polarS;
+
+            bool rectificationPossible = reconstruct.getPolarFundamentalMatrix(
+                    imgI - 1,
+                    Eigen::Vector2d(scaledWidth / 2.0, scaledHeight / 2.0),
+                    max(scaledWidth / 2.0, scaledHeight / 2.0),
+                    polarF);
+
+            if (!rectificationPossible) {
+                printf("Rectification not possible, epipoles at infinity.\n");
+                continue;
+            }
+
+            // Resize to a workable size and adjust the fundamental matrix
+            // accordingly.
+
+            printf("Initializing rectification...\n");
+            polarR.init(curDown.width(), curDown.height(), polarF);
+            printf("Done\n");
+
+            // Multiple scales, downsampling by 0.75 each time
+            CImg<uint8_t> rectified0;
+            CImg<uint8_t> rectified1;
+            CImg<float> revMap;
+            polarR.rectify(0, initDown, rectified0, revMap);
+            polarR.rectify(1, curDown, rectified1, revMap);
+
+            (rectified0, rectified1).display();
+
+            // polarS.computeStereo(1, 0.75f, polarF, initDown, curDown);
+            // const auto& disp = polarS.getDisparityAtScale(0);
+            // disp.display();
         }
-
-        curDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
-
-        PolarFundamentalMatrix polarF;
-        PolarRectification polarR;
-        PolarStereo polarS;
-
-        bool rectificationPossible = reconstruct.getPolarFundamentalMatrix(
-                imgI - 1,
-                Eigen::Vector2d(scaledWidth / 2.0, scaledHeight / 2.0),
-                max(scaledWidth / 2.0, scaledHeight / 2.0),
-                polarF);
-
-        if (!rectificationPossible) {
-            printf("Rectification not possible, epipoles at infinity.\n");
-            continue;
-        }
-
-        // Resize to a workable size and adjust the fundamental matrix
-        // accordingly.
-
-        printf("Initializing rectification...\n");
-        polarR.init(curDown.width(), curDown.height(), polarF);
-        printf("Done\n");
-
-        // Multiple scales, downsampling by 0.75 each time
-        CImg<uint8_t> rectified0;
-        CImg<uint8_t> rectified1;
-        CImg<float> revMap;
-        polarR.rectify(0, initDown, rectified0, revMap);
-        polarR.rectify(1, curDown, rectified1, revMap);
-
-        (rectified0, rectified1).display();
-        
-        // polarS.computeStereo(1, 0.75f, polarF, initDown, curDown);
-        // const auto& disp = polarS.getDisparityAtScale(0);
-        // disp.display();
     }
 
     return 0;
