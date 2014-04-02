@@ -13,6 +13,8 @@
 
 #include "cvutil/cvutil.h"
 
+#include "polar_stereo.h"
+
 class ReconstructUtil {
     public:
         /**
@@ -156,6 +158,7 @@ class DepthReconstruction {
             }
 
             inline Eigen::Matrix3d getE() {
+                // See wikipedia for Essential matrix for details
                 Eigen::Matrix3d tx;
                 tx <<
                     0, translation.z(), -translation.y(),
@@ -298,34 +301,12 @@ class DepthReconstruction {
 
         void solve();
 
-        /*
-        inline void addObservation(
-                int cameraIndex,
-                int pointIndex,
-                const Eigen::Vector2d& point) {
-            ceres::CostFunction* costFunction =
-                new ceres::AutoDiffCostFunction<
-                // 2 residuals
-                // 3 parameters in block 1 (translation)
-                // 4 parameters in block 2 (rotation)
-                // 1 parameter in block 3 (depth)
-                CamDepthReprojectionError, 2, 3, 4, 1>(
-                        new CamDepthReprojectionError(
-                            this,
-                            pointIndex,
-                            (double) point[0],
-                            (double) point[1]));
-
-            problem->AddResidualBlock(
-                    costFunction,
-                    lossFunc.get(),
-                    // translation
-                    get<1>(cameras[cameraIndex]).data(),
-                    // rotation
-                    get<0>(cameras[cameraIndex]).coeffs().data(),
-                    &(points[pointIndex][2]));
-        }
-        */
+        void visualize(
+                CImg<float>& depthVis,
+                int minInlierCount,
+                float outlierPercentile,
+                float inlierRangeMultiplier,
+                bool printToStdout);
 
         inline size_t getPointCount() const {
             return keypoints.size();
@@ -342,11 +323,25 @@ class DepthReconstruction {
 
         inline Eigen::Vector2d& getDepthSample(
                 int pointIndex,
-                double& depthVal) {
+                double& depthVal,
+                size_t& inlierObsCount) {
             depthVal = depth[pointIndex];
+
+            inlierObsCount = inlierCount[pointIndex];
 
             return keypoints[pointIndex];
         }
+
+        inline Eigen::Matrix3d getEssentialMatrix(
+                int cameraIndex) {
+            return cameras[cameraIndex].getE();
+        }
+
+        bool getPolarFundamentalMatrix(
+                int cameraIndex,
+                const Eigen::Vector2d& imageCenter,
+                double imageSize,
+                PolarFundamentalMatrix& polarF);
 
     private:
         void resetSolutionState();
@@ -403,7 +398,7 @@ class DepthReconstruction {
          *
          * Note that this obeys the observationInlierMask.
          */
-        void bundleAdjustCamerasAndDepth(
+        void refineCamerasAndDepth(
                 const vector<bool>& cameraMask);
 
         /**
@@ -423,6 +418,7 @@ class DepthReconstruction {
          * Thus, the 3D point is actually (x * depth, y * depth, depth).
          */
         vector<Eigen::Vector2d> keypoints;
+        vector<size_t> inlierCount;
 
         /**
          * Stores each observation made from each camera.

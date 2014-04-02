@@ -13,6 +13,38 @@
 #include <Eigen/Dense>
 
 int main(int argc, char** argv) {
+    // FIXME
+    /*
+    {
+        CImg<float> vertices(100, 3);
+
+        CImgList<unsigned int> primitives(1);
+        CImgList<unsigned int> colors(1);
+
+        // 100 points
+        primitives(0) = CImg<unsigned int>(1, 100);
+        colors(0) = CImg<unsigned int>(3, 100);
+        
+        for (int x = 0; x < 10; x++) {
+            for (int y = 0; y < 10; y++) {
+                vertices(x + 10 * y, 0) = x;
+                vertices(x + 10 * y, 1) = y;
+                vertices(x + 10 * y, 2) = 0;
+
+                primitives(0)(0, x + 10 * y) = x + 10 * y;
+
+                colors(0)(x + 10 * y, 0) = 255;
+                colors(0)(x + 10 * y, 1) = 255;
+                colors(0)(x + 10 * y, 2) = 255;
+            }
+        }
+        
+        CImgDisplay disp;
+
+        vertices.display_object3d(disp, vertices, primitives, CImg<float>(), CImg<float>());
+    }
+    */
+
     if (argc < 3) {
         printf("Usage: %s img1.png img2.png ... imgN.png\n", argv[0]);
         exit(1);
@@ -40,7 +72,7 @@ int main(int argc, char** argv) {
 
     printf("Image size = %d x %d\n", workingWidth, workingHeight);
 
-    const int numPoints = 3000;
+    const int numPoints = 5000;
 
     CVOpticalFlow klt(31, 7);
 
@@ -84,6 +116,7 @@ int main(int argc, char** argv) {
 
         printf("Computing KLT\n");
         klt.compute(*curImg);
+        printf("Done\n");
 
         for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
             Eigen::Vector2f match0;
@@ -102,44 +135,67 @@ int main(int argc, char** argv) {
     reconstruct.solve();
 
     // Visualize the result
-    {
-        CImg<float> depthVis(workingWidth, workingHeight);
-        depthVis.fill(0);
-        float totalDepth = 0;
+    // CImg<float> depthVis(workingWidth, workingHeight);
 
-        int successfulMatches = 0;
+    // reconstruct.visualize(depthVis, 1, 0.75f, 2.0f, true);
 
-        for (size_t i = 0; i < reconstruct.getPointCount(); i++) {
-            double depth;
-            const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth);
+    // depthVis.display();
 
-            if (depth > 0) {
-                Eigen::Vector2d ptImg = (pt * imageSize) + imageCenter;
+    CImg<uint8_t> initDown(*initImg);
+    CImg<uint8_t> curDown;
 
-                totalDepth += depth;
-                successfulMatches++;
+    float scaleFactor = (1024.0f * 1024.0f) / ((float) originalWidth * originalHeight);
+    int scaledWidth = scaleFactor * originalWidth;
+    int scaledHeight = scaleFactor * originalHeight; 
 
-                depthVis.draw_circle(ptImg.x() + 0.5, ptImg.y() + 0.5, 3, &depth);
-            }
+    // Resize with moving-average interpolation
+    initDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
+
+    for (int imgI = 1; imgI < imageCount; imgI++) {
+        printf("Rectifying image #%d\n", imgI);
+
+        curDown = CImg<uint8_t>::get_load(argv[1 + imgI]);
+
+        if (curDown.spectrum() > 1) {
+            curDown = curDown.get_RGBtoLab().channel(0);
         }
 
-        // Fill the background with the average depth
-        float avgDepth = totalDepth / successfulMatches;
-        depthVis -= (depthVis.get_sign().abs() - 1) * avgDepth;
+        curDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
 
-        depthVis.display();
+        PolarFundamentalMatrix polarF;
+        PolarRectification polarR;
+        PolarStereo polarS;
 
+        bool rectificationPossible = reconstruct.getPolarFundamentalMatrix(
+                imgI - 1,
+                Eigen::Vector2d(scaledWidth / 2.0, scaledHeight / 2.0),
+                max(scaledWidth / 2.0, scaledHeight / 2.0),
+                polarF);
+
+        if (!rectificationPossible) {
+            printf("Rectification not possible, epipoles at infinity.\n");
+            continue;
+        }
+
+        // Resize to a workable size and adjust the fundamental matrix
+        // accordingly.
+
+        printf("Initializing rectification...\n");
+        polarR.init(curDown.width(), curDown.height(), polarF);
+        printf("Done\n");
+
+        // Multiple scales, downsampling by 0.75 each time
+        CImg<uint8_t> rectified0;
+        CImg<uint8_t> rectified1;
+        CImg<float> revMap;
+        polarR.rectify(0, initDown, rectified0, revMap);
+        polarR.rectify(1, curDown, rectified1, revMap);
+
+        (rectified0, rectified1).display();
         
-        printf("\n\n[");
-        for (size_t i = 0; i < reconstruct.getPointCount(); i++) {
-            double depth;
-            const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth);
-
-            if (depth > 0) {
-                printf("(%f, %f, %f),", pt.x(), pt.y(), depth);
-            }
-        }
-        printf("]\n\n");
+        // polarS.computeStereo(1, 0.75f, polarF, initDown, curDown);
+        // const auto& disp = polarS.getDisparityAtScale(0);
+        // disp.display();
     }
 
     return 0;

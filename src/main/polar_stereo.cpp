@@ -797,7 +797,7 @@ void PolarStereo::computeStereo(
         }
 
         // Display the rectified images
-        // (rectified[0], rectified[1]).display();
+        (rectified[0], rectified[1]).display();
 
         // Compute stereo
         CVStereo::stereo(
@@ -846,8 +846,8 @@ void PolarStereo::computeStereo(
         rectifier.evaluateRectificationTransform(
                 0, startRow, numRows, unrectCallback);
 
-        // (((disparityPyramid[i] + disparityPyramid[i].min()) * (256.0f * 50.0f / (rectifiedPadding * 2.0f)))
-         // % 256).get_map(CImg<float>::cube_LUT256()).display();
+        (((disparityPyramid[i] + disparityPyramid[i].min()) * (256.0f * 50.0f / (rectifiedPadding * 2.0f)))
+        % 256).get_map(CImg<float>::cube_LUT256()).display();
     }
 }
 

@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 import sys
 import os
 
-points = 
-
+points =
 
 points = n.array(points)
 

@@ -158,8 +158,8 @@ void CVFundamentalMatrixEstimator::init(
 
 void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
         Eigen::Matrix3d& fundMat) {
-    float inlierEpipolarMaxDist = 1;
-    float targetConfidence = 0.999;
+    float inlierEpipolarMaxDist = 1.0f;
+    float targetConfidence = 0.9999f;
 
     inlierMask.resize(points[0].size());
 
