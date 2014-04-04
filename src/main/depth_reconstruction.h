@@ -282,6 +282,8 @@ class DepthReconstruction {
         };
 
     public:
+        DepthReconstruction();
+
         void init(
                 int numCameras,
                 int numPoints);
@@ -307,6 +309,9 @@ class DepthReconstruction {
                 float outlierPercentile,
                 float inlierRangeMultiplier,
                 bool printToStdout);
+
+        void getAllDepthSamples(
+                vector<tuple<Eigen::Vector2d, vector<double>>>& depthSamples);
 
         inline size_t getPointCount() const {
             return keypoints.size();
@@ -400,6 +405,10 @@ class DepthReconstruction {
          */
         void refineCamerasAndDepth(
                 const vector<bool>& cameraMask);
+
+        const double robustLossHuberParam;
+
+        const double inlierThreshold;
 
         /**
          * Fundamental matrix estimate for each camera relative to the main

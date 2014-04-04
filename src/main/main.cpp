@@ -40,13 +40,13 @@ int main(int argc, char** argv) {
 
     printf("Image size = %d x %d\n", workingWidth, workingHeight);
 
-    const int numPoints = 5000;
+    const int numPoints = 10000;
 
     // CVFeatureMatcher orb(numPoints, 127);
-    CVOpticalFlow klt(31, 7);
+    CVOpticalFlow klt(31, 10);
 
     // orb.detectFeatures(*initImg);
-    klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.01);
+    klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.0075);
 
     printf("Feature count = %d\n", klt.featureCount());
 
@@ -121,13 +121,46 @@ int main(int argc, char** argv) {
     reconstruct.solve();
 
     // Visualize the result
-    // CImg<float> depthVis(workingWidth, workingHeight);
+    vector<tuple<Eigen::Vector2d, vector<double>>> depthSamples;
 
-    // reconstruct.visualize(depthVis, 1, 0.75f, 2.0f, true);
+    reconstruct.getAllDepthSamples(depthSamples);
 
-    // depthVis.display();
+    CImg<double> depthVis(workingWidth, workingHeight);
 
-    const bool display_rectification = true;
+    depthVis = 0.0f;
+
+    double totalDepth = 0.0;
+    size_t numDepth = 0;
+
+    for (auto& pointDepthSamples : depthSamples) {
+        Eigen::Vector2d point = get<0>(pointDepthSamples);
+        vector<double>& depths = get<1>(pointDepthSamples);
+        
+        if (depths.size() < imageCount / 2.0f) {
+            continue;
+        }
+
+        point *= max(depthVis.width(), depthVis.height()) / 2.0;
+        point.x() += depthVis.width() / 2.0;
+        point.y() += depthVis.height() / 2.0;
+
+        // TODO use nth element instead
+        std::sort(depths.begin(), depths.end());
+
+        double d = depths[depths.size() / 2];
+
+        totalDepth += d;
+        numDepth++;
+
+        depthVis.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+    }
+
+    float avgDepth = totalDepth / numDepth;
+    depthVis -= (depthVis.get_sign().abs() - 1) * avgDepth;
+
+    depthVis.display();
+
+    const bool display_rectification = false;
 
     if (display_rectification) {
         CImg<uint8_t> initDown(*initImg);
@@ -180,7 +213,9 @@ int main(int argc, char** argv) {
             polarR.rectify(0, initDown, rectified0, revMap);
             polarR.rectify(1, curDown, rectified1, revMap);
 
-            (rectified0, rectified1).display();
+            rectified0.save(("./results/rectified_" + to_string(imgI) + "_l.png").c_str());
+            rectified1.save(("./results/rectified_" + to_string(imgI) + "_r.png").c_str());
+            // (rectified0, rectified1).display();
 
             // polarS.computeStereo(1, 0.75f, polarF, initDown, curDown);
             // const auto& disp = polarS.getDisparityAtScale(0);

@@ -43,6 +43,11 @@ void ReconstructUtil::computeCanonicalPose(
     }
 }
 
+DepthReconstruction::DepthReconstruction() :
+    robustLossHuberParam(0.000001),
+    inlierThreshold(0.001) {
+}
+
 void DepthReconstruction::init(
         int numCameras,
         int numPoints) {
@@ -94,16 +99,17 @@ void DepthReconstruction::solve() {
     }
 
     std::sort(camInlierCount.begin(), camInlierCount.end());
+    std::reverse(camInlierCount.begin(), camInlierCount.end());
 
-    size_t bestCameraI = get<1>(camInlierCount[camInlierCount.size() - 1]);
+    size_t bestCameraI = get<1>(camInlierCount[0]);
 
     size_t triCount = triangulateDepthUsingPose(bestCameraI);
 
     cout << "Triangulation count = " << triCount << endl;
 
-    cout << "\n\nInitial triangulation via RANSASC-estimated F" << endl;
-    visualize(depthVis, 0, 0.75f, 2.0f, false);
-    depthVis.display();
+    // cout << "\n\nInitial triangulation via RANSASC-estimated F" << endl;
+    // visualize(depthVis, 0, 0.75f, 2.0f, false);
+    // depthVis.display();
     
     vector<bool> cameraMask(cameras.size());
     fill(cameraMask.begin(), cameraMask.end(), false);
@@ -111,19 +117,21 @@ void DepthReconstruction::solve() {
 
     refineCamerasAndDepth(cameraMask);
 
-    cout << "\n\nAfter 2-camera bundle adjustment" << endl;
-    visualize(depthVis, 0, 0.75f, 2.0f, false);
-    depthVis.display();
+    // cout << "\n\nAfter 2-camera bundle adjustment" << endl;
+    // visualize(depthVis, 0, 0.75f, 2.0f, false);
+    // depthVis.display();
 
     std::fill(depth.begin(), depth.end(), 0);
     triCount = triangulateDepthUsingPose(bestCameraI);
     cout << "Triangulation count = " << triCount << endl;
 
-    cout << "\n\nAfter triangulation with post-bundle adjustment pose" << endl;
-    visualize(depthVis, 0, 0.75f, 2.0f, false);
-    depthVis.display();
+    // cout << "\n\nAfter triangulation with post-bundle adjustment pose" << endl;
+    // visualize(depthVis, 0, 0.75f, 2.0f, false);
+    // depthVis.display();
 
-    for (int i = camInlierCount.size() - 2; i >= 0; i--) {
+    const int maxImagesToUse = camInlierCount.size();
+
+    for (int i = 0; i < maxImagesToUse; i++) {
         size_t cameraI = get<1>(camInlierCount[i]);
 
         std::fill(
@@ -134,23 +142,23 @@ void DepthReconstruction::solve() {
         // Prune outliers from estimation of F
         estimateFUsingObs(cameraI);
 
-        size_t inlierCount = estimatePoseUsingDepth(cameraI, 0.001f);
+        size_t inlierC = estimatePoseUsingDepth(cameraI, inlierThreshold);
 
-        printf("Depth-based pose estimation inliers = %d\n", inlierCount);
+        printf("Depth-based pose estimation inliers = %d\n", inlierC);
 
         size_t triCount = triangulateDepthUsingPose(cameraI);
 
-        cout << "\nNew camera depth-based pose estimation and triangulation\n";
-        visualize(depthVis, 0, 0.75f, 2.0f, false);
-        depthVis.display();
+        // cout << "\nNew camera depth-based pose estimation and triangulation\n";
+        // visualize(depthVis, 0, 0.75f, 2.0f, false);
+        // depthVis.display();
 
         cameraMask[cameraI] = true;
 
         refineCamerasAndDepth(cameraMask);
 
-        cout << "\nAfter bundle adjustment\n";
-        visualize(depthVis, 0, 0.75f, 2.0f, false);
-        depthVis.display();
+        // cout << "\nAfter bundle adjustment\n";
+        // visualize(depthVis, 0, 0.75f, 2.0f, false);
+        // depthVis.display();
     }
 
 
@@ -253,11 +261,11 @@ void DepthReconstruction::visualize(
 
     for (size_t i = 0; i < getPointCount(); i++) {
         double depth;
-        size_t inlierCount;
+        size_t inlierC;
 
-        getDepthSample(i, depth, inlierCount);
+        getDepthSample(i, depth, inlierC);
 
-        if (depth > 0 && inlierCount >= minInlierCount) {
+        if (depth > 0 && inlierC >= minInlierCount) {
             depthSamples.push_back(depth);
         }
     }
@@ -266,6 +274,7 @@ void DepthReconstruction::visualize(
 
     inlierDepthIndex = max((size_t) 0, inlierDepthIndex);
     inlierDepthIndex = min(depthSamples.size() - 1, inlierDepthIndex);
+    inlierDepthIndex = max((size_t) 0, inlierDepthIndex);
 
     if (depthSamples.size() > 0) {
         std::nth_element(
@@ -278,12 +287,12 @@ void DepthReconstruction::visualize(
 
     for (size_t i = 0; i < getPointCount(); i++) {
         double depth;
-        size_t inlierCount;
+        size_t inlierC;
 
-        const Eigen::Vector2d& pt = getDepthSample(i, depth, inlierCount);
+        const Eigen::Vector2d& pt = getDepthSample(i, depth, inlierC);
 
         if (depth > 0 &&
-                inlierCount >= minInlierCount &&
+                inlierC >= minInlierCount &&
                 depth < maxDepth) {
             Eigen::Vector2d ptImg = (pt * imageSize) + imageCenter;
 
@@ -303,18 +312,45 @@ void DepthReconstruction::visualize(
 
         for (size_t i = 0; i < getPointCount(); i++) {
             double depth;
-            size_t inlierCount;
+            size_t inlierC;
 
-            const Eigen::Vector2d& pt = getDepthSample(i, depth, inlierCount);
+            const Eigen::Vector2d& pt = getDepthSample(i, depth, inlierC);
 
             if (depth > 0 &&
-                    inlierCount >= minInlierCount &&
+                    inlierC >= minInlierCount &&
                     depth < maxDepth) {
                 printf("(%f, %f, %f),", pt.x(), pt.y(), depth);
             }
         }
 
         printf("]\n\n");
+    }
+}
+
+void DepthReconstruction::getAllDepthSamples(
+        vector<tuple<Eigen::Vector2d, vector<double>>>& depthSamples) {
+    depthSamples.resize(keypoints.size());
+
+    for (int i = 0; i < keypoints.size(); i++) {
+        get<0>(depthSamples[i]) = keypoints[i];
+        get<1>(depthSamples[i]).clear();
+    }
+
+    for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
+        const vector<Observation>& obsLst = observations[cameraI];
+
+        const auto& P = cameras[cameraI].getP();
+
+        for (size_t obsI = 0; obsI < obsLst.size(); obsI++) {
+            const Observation& obs = obsLst[obsI];
+
+            double d = ReconstructUtil::triangulateDepth(
+                    keypoints[obs.pointIndex], obs.point, P);
+            
+            if (d > 0) {
+                get<1>(depthSamples[obs.pointIndex]).push_back(d);
+            }
+        }
     }
 }
 
@@ -385,11 +421,11 @@ size_t DepthReconstruction::estimateFUsingObs(
 
     fundMatEstimator.estimateFundamentalMatrix(Fmatrices[cameraIndex]);
 
-    size_t inlierCount = 0;
+    size_t inlierC = 0;
 
     for (size_t i = 0; i < observations[cameraIndex].size(); i++) {
         if (fundMatEstimator.isInlier(i)) {
-            inlierCount++;
+            inlierC ++;
 
             observationInlierMask[cameraIndex][i] = true;
         } else {
@@ -397,7 +433,7 @@ size_t DepthReconstruction::estimateFUsingObs(
         }
     }
 
-    return inlierCount;
+    return inlierC;
 }
 
 size_t DepthReconstruction::estimatePoseUsingF(
@@ -443,7 +479,7 @@ size_t DepthReconstruction::estimatePoseUsingF(
 
     // Count inliers and mark new outliers
 
-    size_t inlierCount = 0;
+    size_t inlierC = 0;
 
     for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
@@ -453,14 +489,14 @@ size_t DepthReconstruction::estimatePoseUsingF(
                     keypoints[obs.pointIndex], obs.point, candidateP);
 
             if (vote == winner) {
-                inlierCount++;
+                inlierC ++;
             } else {
                 observationInlierMask[cameraIndex][obsI] = false;
             }
         }
     }
 
-    return inlierCount;
+    return inlierC;
 }
 
 size_t DepthReconstruction::triangulateDepthUsingPose(
@@ -543,7 +579,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
     // Perform several iterations of RANSAC
     // TODO compute this based on acceptable probability of success
-    const int max_iters = 1000;
+    const int max_iters = 100;
 
     unique_ptr<ceres::LocalParameterization> quatParameterization(
             new ceres::QuaternionParameterization());
@@ -582,7 +618,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         ceres::Solve(options, &problem, &summary);
         // cout << summary.BriefReport() << endl;
 
-        int inlierCount = 0;
+        int inlierC = 0;
 
         // Compute the number of inliers among those samples we care about
         for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
@@ -603,13 +639,13 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
                 if (residuals[0] * residuals[0] + residuals[1] * residuals[1] < 
                         inlierThreshold * inlierThreshold) {
-                    inlierCount++;
+                    inlierC ++;
                 }
             }
         }
 
-        if (inlierCount > optimalInlierCount) {
-            optimalInlierCount = inlierCount;
+        if (inlierC > optimalInlierCount) {
+            optimalInlierCount = inlierC;
             optimalParam = curParam;
         }
     }
@@ -618,8 +654,8 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
     {
         ceres::Problem problem(pOptions);
 
-        // FIXME don't hardcode parameter
-        ceres::LossFunction* robustLoss = new ceres::HuberLoss(0.00001);
+        ceres::LossFunction* robustLoss =
+            new ceres::HuberLoss(robustLossHuberParam);
 
         for (const auto& cf : costFunctions) {
             problem.AddResidualBlock(
@@ -681,8 +717,7 @@ void DepthReconstruction::refineCamerasAndDepth(
         CamCostFunction;
 
     ceres::Problem problem;
-    // FIXME don't hard-code this parameter
-    ceres::LossFunction* huberLoss = new ceres::HuberLoss(0.00001);
+    ceres::LossFunction* huberLoss = new ceres::HuberLoss(robustLossHuberParam);
     ceres::LocalParameterization* quatParameterization(
             new ceres::QuaternionParameterization());
 
