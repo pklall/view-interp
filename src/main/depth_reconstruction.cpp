@@ -121,9 +121,9 @@ void DepthReconstruction::solve() {
     // visualize(depthVis, 0, 0.75f, 2.0f, false);
     // depthVis.display();
 
-    std::fill(depth.begin(), depth.end(), 0);
-    triCount = triangulateDepthUsingPose(bestCameraI);
-    cout << "Triangulation count = " << triCount << endl;
+    // std::fill(depth.begin(), depth.end(), 0);
+    // triCount = triangulateDepthUsingPose(bestCameraI);
+    // cout << "Triangulation count = " << triCount << endl;
 
     // cout << "\n\nAfter triangulation with post-bundle adjustment pose" << endl;
     // visualize(depthVis, 0, 0.75f, 2.0f, false);
@@ -131,7 +131,7 @@ void DepthReconstruction::solve() {
 
     const int maxImagesToUse = camInlierCount.size();
 
-    for (int i = 0; i < maxImagesToUse; i++) {
+    for (int i = 1; i < maxImagesToUse; i++) {
         size_t cameraI = get<1>(camInlierCount[i]);
 
         std::fill(
@@ -160,71 +160,6 @@ void DepthReconstruction::solve() {
         // visualize(depthVis, 0, 0.75f, 2.0f, false);
         // depthVis.display();
     }
-
-
-    // refineCamerasAndDepth(cameraMask);
-
-    // cout << "\n\nAfter refinement" << endl;
-    // visualize(depthVis, 0, 0.75f, 2.0f, false);
-    // depthVis.display();
-
-    /*
-    for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
-        std::fill(
-                observationInlierMask[cameraI].begin(),
-                observationInlierMask[cameraI].end(),
-                true);
-        size_t poseInlierCount = estimatePoseUsingDepth(cameraI, 0.0005);
-    }
-    */
-
-    /*
-    for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
-        printf("Camera %d\n", cameraI);
-
-        std::fill(depth.begin(), depth.end(), 0);
-
-        std::fill(
-                observationInlierMask[cameraI].begin(),
-                observationInlierMask[cameraI].end(),
-                true);
-
-        size_t triCount = triangulateDepthUsingPose(cameraI);
-
-        cout << "\n\nTriangulation without depth-based pose estimation" << endl;
-        visualize(depthVis, 0, 0.75f, 2.0f, false);
-        depthVis.display();
-    }
-    */
-
-    /*
-    for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
-        if (cameraI == bestCamera) {
-            // Don't re-process the initial camera
-            continue;
-        }
-
-        resetInlierMask(cameraI);
-
-        size_t poseInlierCount = estimatePoseUsingDepth(cameraI, 0.01);
-
-        cout << "Inliers after computing Pose = " << poseInlierCount << endl;
-
-        if (poseInlierCount > 200) {
-            size_t triCount = triangulateDepthUsingPose(cameraI);
-
-            cout << "Triangulation count = " << triCount << endl;
-
-            cameraMask[cameraI] = true;
-
-            refineCamerasAndDepth(cameraMask);
-
-            cout << "\n\nAfter refinement" << endl;
-            visualize(depthVis, 0, 0.75f, 2.0f, false);
-            depthVis.display();
-        }
-    }
-    */
 
     // Set inlierCount to tally the total number of inlier observations
     // used in determining each depth value.
@@ -594,9 +529,9 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
         // Use 5 correspondences to solve for camera orientation
         // TODO What's the correct amount to use here?
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 7; i++) {
             ceres::CostFunction* cf =
-                costFunctions[(iter * 5 + i) % costFunctions.size()].get();
+                costFunctions[(iter * 7 + i) % costFunctions.size()].get();
 
             problem.AddResidualBlock(
                     cf,

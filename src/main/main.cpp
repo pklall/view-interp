@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
     CVOpticalFlow klt(31, 10);
 
     // orb.detectFeatures(*initImg);
-    klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.0075);
+    klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.01);
 
     printf("Feature count = %d\n", klt.featureCount());
 
@@ -136,7 +136,7 @@ int main(int argc, char** argv) {
         Eigen::Vector2d point = get<0>(pointDepthSamples);
         vector<double>& depths = get<1>(pointDepthSamples);
         
-        if (depths.size() < imageCount / 2.0f) {
+        if (depths.size() == 0) {
             continue;
         }
 
