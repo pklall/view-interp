@@ -121,44 +121,92 @@ int main(int argc, char** argv) {
     reconstruct.solve();
 
     // Visualize the result
-    vector<tuple<Eigen::Vector2d, vector<double>>> depthSamples;
+    {
+        CImg<float> depthVis(workingWidth, workingHeight);
 
-    reconstruct.getAllDepthSamples(depthSamples);
+        reconstruct.visualize(depthVis, 1, 0.75, 2.0, false);
 
-    CImg<double> depthVis(workingWidth, workingHeight);
-
-    depthVis = 0.0f;
-
-    double totalDepth = 0.0;
-    size_t numDepth = 0;
-
-    for (auto& pointDepthSamples : depthSamples) {
-        Eigen::Vector2d point = get<0>(pointDepthSamples);
-        vector<double>& depths = get<1>(pointDepthSamples);
-        
-        if (depths.size() == 0) {
-            continue;
-        }
-
-        point *= max(depthVis.width(), depthVis.height()) / 2.0;
-        point.x() += depthVis.width() / 2.0;
-        point.y() += depthVis.height() / 2.0;
-
-        // TODO use nth element instead
-        std::sort(depths.begin(), depths.end());
-
-        double d = depths[depths.size() / 2];
-
-        totalDepth += d;
-        numDepth++;
-
-        depthVis.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+        depthVis.display();
     }
 
-    float avgDepth = totalDepth / numDepth;
-    depthVis -= (depthVis.get_sign().abs() - 1) * avgDepth;
+    {
+        vector<tuple<Eigen::Vector2d, vector<double>>> depthSamples;
 
-    depthVis.display();
+        reconstruct.getAllDepthSamples(depthSamples);
+
+        CImg<double> depthVisMin(workingWidth, workingHeight);
+        CImg<double> depthVisMax(workingWidth, workingHeight);
+        CImg<double> depthVisMed(workingWidth, workingHeight);
+
+        depthVisMin = 0.0f;
+        depthVisMax = 0.0f;
+        depthVisMed = 0.0f;
+
+        for (auto& pointDepthSamples : depthSamples) {
+            Eigen::Vector2d point = get<0>(pointDepthSamples);
+            vector<double>& depths = get<1>(pointDepthSamples);
+
+            if (depths.size() < (imageCount - 1) / 2.0f) {
+                continue;
+            }
+
+            point *= max(depthVisMed.width(), depthVisMed.height()) / 2.0;
+            point.x() += depthVisMed.width() / 2.0;
+            point.y() += depthVisMed.height() / 2.0;
+
+            // TODO use nth element instead
+            std::sort(depths.begin(), depths.end());
+
+            double d;
+
+            d = depths[0];
+            depthVisMin.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+
+            d = depths[depths.size() / 2];
+            depthVisMed.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+
+            d = depths[depths.size() - 1];
+            depthVisMax.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+        }
+
+        {
+            float avgDepth = depthVisMin.sum() / depthVisMin.get_sign().abs().sum();
+            depthVisMin -= (depthVisMin.get_sign().abs() - 1) * avgDepth;
+        }
+
+        {
+            float avgDepth = depthVisMed.sum() / depthVisMed.get_sign().abs().sum();
+            depthVisMed -= (depthVisMed.get_sign().abs() - 1) * avgDepth;
+        }
+
+        {
+            float avgDepth = depthVisMax.sum() / depthVisMax.get_sign().abs().sum();
+            depthVisMax -= (depthVisMax.get_sign().abs() - 1) * avgDepth;
+        }
+
+        bool renderEpipoles = false;
+
+        if (renderEpipoles) {
+            for (int imgI = 1; imgI < imageCount; imgI++) {
+                PolarFundamentalMatrix polarF;
+
+                bool rectificationPossible = reconstruct.getPolarFundamentalMatrix(
+                        imgI - 1,
+                        Eigen::Vector2d(depthVisMed.width() / 2.0, depthVisMed.height() / 2.0),
+                        max(depthVisMed.width() / 2.0, depthVisMed.height() / 2.0),
+                        polarF);
+
+                if (rectificationPossible) {
+                    const Eigen::Vector2d& e = polarF.getEpipole(0);
+                    double zero = 0;
+                    depthVisMed.draw_circle(e.x(), e.y(), 20, &zero);
+                }
+            }
+        }
+
+        (depthVisMin, depthVisMed, depthVisMax).display();
+    }
+
 
     const bool display_rectification = false;
 

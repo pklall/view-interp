@@ -185,9 +185,13 @@ class DepthReconstruction {
             Eigen::Map<const Eigen::Matrix<T, 3, 1>> p3(point3);
             Eigen::Map<const Eigen::Matrix<T, 2, 1>> p2(projectedPoint2);
 
-            Eigen::Quaternion<T> rotation(camera_rotation);
+            Eigen::Quaternion<T> rotation(
+                    camera_rotation[3],
+                    camera_rotation[0],
+                    camera_rotation[1],
+                    camera_rotation[2]);
 
-            rotation.normalize();
+            // rotation.normalize();
 
             Eigen::Matrix<T, 3, 1> p3Trans = (rotation * p3) + translation;
 
@@ -441,6 +445,7 @@ class DepthReconstruction {
         vector<double> depth;
 
         vector<CameraParam> cameras;
+        vector<bool> cameraInlierMask;
 
         CVFundamentalMatrixEstimator fundMatEstimator;
 };

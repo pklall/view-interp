@@ -111,11 +111,13 @@ void DepthReconstruction::solve() {
     // visualize(depthVis, 0, 0.75f, 2.0f, false);
     // depthVis.display();
     
-    vector<bool> cameraMask(cameras.size());
-    fill(cameraMask.begin(), cameraMask.end(), false);
-    cameraMask[bestCameraI] = true;
+    cameraInlierMask.resize(cameras.size());
 
-    refineCamerasAndDepth(cameraMask);
+    fill(cameraInlierMask.begin(), cameraInlierMask.end(), false);
+
+    cameraInlierMask[bestCameraI] = true;
+
+    refineCamerasAndDepth(cameraInlierMask);
 
     // cout << "\n\nAfter 2-camera bundle adjustment" << endl;
     // visualize(depthVis, 0, 0.75f, 2.0f, false);
@@ -152,9 +154,14 @@ void DepthReconstruction::solve() {
         // visualize(depthVis, 0, 0.75f, 2.0f, false);
         // depthVis.display();
 
-        cameraMask[cameraI] = true;
+        cameraInlierMask[cameraI] = true;
 
-        refineCamerasAndDepth(cameraMask);
+        refineCamerasAndDepth(cameraInlierMask);
+
+        cout << "Camera after bundle adjustment: " <<
+            cameras[cameraI].rotation.coeffs() << endl <<
+            "norm = " << cameras[cameraI].rotation.norm() << endl <<
+            cameras[cameraI].translation.transpose() << endl;
 
         // cout << "\nAfter bundle adjustment\n";
         // visualize(depthVis, 0, 0.75f, 2.0f, false);
@@ -272,18 +279,20 @@ void DepthReconstruction::getAllDepthSamples(
     }
 
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
-        const vector<Observation>& obsLst = observations[cameraI];
+        if (cameraInlierMask[cameraI]) {
+            const vector<Observation>& obsLst = observations[cameraI];
 
-        const auto& P = cameras[cameraI].getP();
+            const auto& P = cameras[cameraI].getP();
 
-        for (size_t obsI = 0; obsI < obsLst.size(); obsI++) {
-            const Observation& obs = obsLst[obsI];
+            for (size_t obsI = 0; obsI < obsLst.size(); obsI++) {
+                const Observation& obs = obsLst[obsI];
 
-            double d = ReconstructUtil::triangulateDepth(
-                    keypoints[obs.pointIndex], obs.point, P);
-            
-            if (d > 0) {
-                get<1>(depthSamples[obs.pointIndex]).push_back(d);
+                double d = ReconstructUtil::triangulateDepth(
+                        keypoints[obs.pointIndex], obs.point, P);
+
+                if (d > 0) {
+                    get<1>(depthSamples[obs.pointIndex]).push_back(d);
+                }
             }
         }
     }
@@ -514,7 +523,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
     // Perform several iterations of RANSAC
     // TODO compute this based on acceptable probability of success
-    const int max_iters = 100;
+    const int max_iters = 200;
 
     unique_ptr<ceres::LocalParameterization> quatParameterization(
             new ceres::QuaternionParameterization());
@@ -529,9 +538,9 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
         // Use 5 correspondences to solve for camera orientation
         // TODO What's the correct amount to use here?
-        for (int i = 0; i < 7; i++) {
+        for (int i = 0; i < 5; i++) {
             ceres::CostFunction* cf =
-                costFunctions[(iter * 7 + i) % costFunctions.size()].get();
+                costFunctions[(iter * 5 + i) % costFunctions.size()].get();
 
             problem.AddResidualBlock(
                     cf,
