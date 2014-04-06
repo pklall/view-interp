@@ -130,7 +130,7 @@ int main(int argc, char** argv) {
     }
 
     {
-        vector<tuple<Eigen::Vector2d, vector<double>>> depthSamples;
+        vector<tuple<Eigen::Vector2d, vector<tuple<double, double>>>> depthSamples;
 
         reconstruct.getAllDepthSamples(depthSamples);
 
@@ -144,7 +144,7 @@ int main(int argc, char** argv) {
 
         for (auto& pointDepthSamples : depthSamples) {
             Eigen::Vector2d point = get<0>(pointDepthSamples);
-            vector<double>& depths = get<1>(pointDepthSamples);
+            vector<tuple<double, double>>& depths = get<1>(pointDepthSamples);
 
             if (depths.size() < (imageCount - 1) / 2.0f) {
                 continue;
@@ -155,33 +155,25 @@ int main(int argc, char** argv) {
             point.y() += depthVisMed.height() / 2.0;
 
             // TODO use nth element instead
-            std::sort(depths.begin(), depths.end());
+            // std::sort(depths.begin(), depths.end());
+            // d = get<0>(depths[depths.size() / 2]);
 
             double d;
+            double highestConfidence = std::numeric_limits<double>::min();
 
-            d = depths[0];
-            depthVisMin.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+            for (const auto& sample : depths) {
+                if (get<1>(sample) > highestConfidence) {
+                    d = get<0>(sample);
+                    highestConfidence = get<1>(sample);
+                }
+            }
 
-            d = depths[depths.size() / 2];
             depthVisMed.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
-
-            d = depths[depths.size() - 1];
-            depthVisMax.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
-        }
-
-        {
-            float avgDepth = depthVisMin.sum() / depthVisMin.get_sign().abs().sum();
-            depthVisMin -= (depthVisMin.get_sign().abs() - 1) * avgDepth;
         }
 
         {
             float avgDepth = depthVisMed.sum() / depthVisMed.get_sign().abs().sum();
             depthVisMed -= (depthVisMed.get_sign().abs() - 1) * avgDepth;
-        }
-
-        {
-            float avgDepth = depthVisMax.sum() / depthVisMax.get_sign().abs().sum();
-            depthVisMax -= (depthVisMax.get_sign().abs() - 1) * avgDepth;
         }
 
         bool renderEpipoles = false;

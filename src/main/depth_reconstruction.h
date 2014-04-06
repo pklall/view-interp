@@ -67,39 +67,80 @@ class ReconstructUtil {
         static inline double triangulateDepth(
                 const Eigen::Vector2d& pt0,
                 const Eigen::Vector2d& pt1,
-                const Eigen::Matrix<double, 3, 4>& P1) {
+                const Eigen::Matrix<double, 3, 4>& P1,
+                const Eigen::Matrix<double, 3, 3>& E,
+                double& confidence) {
+            // Depth triangulation begins by projecting pt1 onto the epipolar
+            // line in image 1 associated with pt0.
+            //
+            // Then, we obtain an estimate of confidence based on the angle
+            // between the epipolar line which pt1 was originally on and
+            // the expected epipolar line on which we projected it.
+            //
+            // The rationale behind this estimate of confidence is that
+            // large deviations far away from the epipole should be tolerated
+            // since pose estimation often results in small angular differences
+            // resulting in large deviation further away from the epipole.
+
+            // pt0's epipolar line in image 1
+            Eigen::Vector3d pt0E1 = E * pt0.homogeneous();
+
+            double epipolarDist = pt1.homogeneous().dot(pt0E1);
+
+            // The projection of pt1 onto the epipole in image 1
+            Eigen::Vector2d pt1ProjPt0E1 = pt1 - epipolarDist *
+                Eigen::Vector2d(pt0E1.x(), pt0E1.y());
+
+            // pt1's epipolar line in image 0
+            Eigen::Vector3d pt1E0 = E.transpose() * pt1.homogeneous();
+
+            epipolarDist = pt0.homogeneous().dot(pt0E1);
+
+            Eigen::Vector2d pt0ProjPt1E0 = pt0 - epipolarDist *
+                Eigen::Vector2d(pt1E0.x(), pt1E0.y());
+
+            Eigen::Vector3d pt1E1 = E * pt0ProjPt1E0.homogeneous();
+
+            confidence = Eigen::Vector2d(pt1E1.x(), pt1E1.y()).normalized().dot(
+                    Eigen::Vector2d(pt0E1.x(), pt1E1.y()).normalized());
+
+            // FIXME
+            // confidence = fabs(epipolarDist);
+
             // The following was derived by considering the correspondence
             // pt0 = (x, y) -> pt1 = (x', y')
             // and assuming the camera transformations are [I|0] and P1.
             // Consider (xi, yi, zi) = P1 * (x * depth, y * depth, depth).
             // Then, set x' = xi / zi and y' = yi / zi.
-            // Solve for depth in both expansions, resulting in rational
-            // expressions.  When the denominator of one of these is
-            // near 0, the other should be used (this may happen if, e.g., 
-            // the epipolar line is horizontal and there is no change
-            // in the y-coordinate of the matched point).
+            // Solve for depth in both expansions, resulting in two rational
+            // expressions. The average of these is then used to compute
+            // depth.
 
             const double& x = pt0(0);
             const double& y = pt0(1);
+
+            const double& xp = pt1ProjPt0E1(0);
+            const double& yp = pt1ProjPt0E1(1);
 
             double VX = P1(0, 0) * x + P1(0, 1) * y + P1(0, 2);
             double VY = P1(1, 0) * x + P1(1, 1) * y + P1(1, 2);
             double VZ = P1(2, 0) * x + P1(2, 1) * y + P1(2, 2);
 
             // Solution using x'
-            double numX = P1(0, 3) - P1(2, 3) * pt1(0);
-            double denX = VZ * pt1(0) - VX;
+            double numX = P1(0, 3) - P1(2, 3) * xp;
+            double denX = VZ * xp - VX;
             // Solution using y'
-            double numY = P1(1, 3) - P1(2, 3) * pt1(1);
-            double denY = VZ * pt1(1) - VY;
+            double numY = P1(1, 3) - P1(2, 3) * yp;
+            double denY = VZ * yp - VY;
 
             // Choose the better-conditioned rational expression
-            // FIXME try to combine these for a better estimate?
-            if (fabs(denX) > fabs(denY)) {
-                return numX / denX;
-            } else {
-                return numY / denY;
-            }
+            // if (fabs(denX) > fabs(denY)) {
+                // return numX / denX;
+            // } else {
+                // return numY / denY;
+            // }
+
+            return (numX * denY + numY * denX) / (2.0 * denX * denY);
         }
 
         static inline int selectCandidatePose(
@@ -314,8 +355,16 @@ class DepthReconstruction {
                 float inlierRangeMultiplier,
                 bool printToStdout);
 
+        /**
+         * Returns all depth samples resulting from triangulation with
+         * each inlier camera.
+         *
+         * Results are returned as a list containing each keypoint in the main
+         * image along with a vector of corresponding depth samples, and a
+         * measure of their confidence.
+         */
         void getAllDepthSamples(
-                vector<tuple<Eigen::Vector2d, vector<double>>>& depthSamples);
+                vector<tuple<Eigen::Vector2d, vector<tuple<double, double>>>>& depthSamples);
 
         inline size_t getPointCount() const {
             return keypoints.size();

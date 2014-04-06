@@ -73,9 +73,6 @@ void DepthReconstruction::solve() {
     size_t bestCamera = 0;
 
 
-    // FIXME debugging code
-    CImg<float> depthVis(512, 512);
-    
     vector<tuple<float, size_t>> camInlierCount;
     
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
@@ -107,10 +104,6 @@ void DepthReconstruction::solve() {
 
     cout << "Triangulation count = " << triCount << endl;
 
-    // cout << "\n\nInitial triangulation via RANSASC-estimated F" << endl;
-    // visualize(depthVis, 0, 0.75f, 2.0f, false);
-    // depthVis.display();
-    
     cameraInlierMask.resize(cameras.size());
 
     fill(cameraInlierMask.begin(), cameraInlierMask.end(), false);
@@ -119,40 +112,16 @@ void DepthReconstruction::solve() {
 
     refineCamerasAndDepth(cameraInlierMask);
 
-    // cout << "\n\nAfter 2-camera bundle adjustment" << endl;
-    // visualize(depthVis, 0, 0.75f, 2.0f, false);
-    // depthVis.display();
-
-    // std::fill(depth.begin(), depth.end(), 0);
-    // triCount = triangulateDepthUsingPose(bestCameraI);
-    // cout << "Triangulation count = " << triCount << endl;
-
-    // cout << "\n\nAfter triangulation with post-bundle adjustment pose" << endl;
-    // visualize(depthVis, 0, 0.75f, 2.0f, false);
-    // depthVis.display();
-
     const int maxImagesToUse = camInlierCount.size();
 
     for (int i = 1; i < maxImagesToUse; i++) {
         size_t cameraI = get<1>(camInlierCount[i]);
-
-        std::fill(
-                observationInlierMask[cameraI].begin(),
-                observationInlierMask[cameraI].end(),
-                true);
-
-        // Prune outliers from estimation of F
-        estimateFUsingObs(cameraI);
 
         size_t inlierC = estimatePoseUsingDepth(cameraI, inlierThreshold);
 
         printf("Depth-based pose estimation inliers = %d\n", inlierC);
 
         size_t triCount = triangulateDepthUsingPose(cameraI);
-
-        // cout << "\nNew camera depth-based pose estimation and triangulation\n";
-        // visualize(depthVis, 0, 0.75f, 2.0f, false);
-        // depthVis.display();
 
         cameraInlierMask[cameraI] = true;
 
@@ -162,10 +131,6 @@ void DepthReconstruction::solve() {
             cameras[cameraI].rotation.coeffs() << endl <<
             "norm = " << cameras[cameraI].rotation.norm() << endl <<
             cameras[cameraI].translation.transpose() << endl;
-
-        // cout << "\nAfter bundle adjustment\n";
-        // visualize(depthVis, 0, 0.75f, 2.0f, false);
-        // depthVis.display();
     }
 
     // Set inlierCount to tally the total number of inlier observations
@@ -270,7 +235,7 @@ void DepthReconstruction::visualize(
 }
 
 void DepthReconstruction::getAllDepthSamples(
-        vector<tuple<Eigen::Vector2d, vector<double>>>& depthSamples) {
+        vector<tuple<Eigen::Vector2d, vector<tuple<double, double>>>>& depthSamples) {
     depthSamples.resize(keypoints.size());
 
     for (int i = 0; i < keypoints.size(); i++) {
@@ -283,15 +248,19 @@ void DepthReconstruction::getAllDepthSamples(
             const vector<Observation>& obsLst = observations[cameraI];
 
             const auto& P = cameras[cameraI].getP();
+            const auto& E = cameras[cameraI].getE();
 
             for (size_t obsI = 0; obsI < obsLst.size(); obsI++) {
                 const Observation& obs = obsLst[obsI];
 
+                double confidence;
+
                 double d = ReconstructUtil::triangulateDepth(
-                        keypoints[obs.pointIndex], obs.point, P);
+                        keypoints[obs.pointIndex], obs.point, P, E, confidence);
 
                 if (d > 0) {
-                    get<1>(depthSamples[obs.pointIndex]).push_back(d);
+                    get<1>(depthSamples[obs.pointIndex]).push_back(
+                            make_tuple(d, confidence));
                 }
             }
         }
@@ -446,6 +415,7 @@ size_t DepthReconstruction::estimatePoseUsingF(
 size_t DepthReconstruction::triangulateDepthUsingPose(
         int cameraIndex) {
     const auto& P = cameras[cameraIndex].getP();
+    const auto& E = cameras[cameraIndex].getE();
 
     size_t newSampleCount = 0;
     size_t reverseCount = 0;
@@ -456,8 +426,10 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
         if (observationInlierMask[cameraIndex][obsI] &&
                 depth[obs.pointIndex] == 0) {
 
+            double confidence;
+
             double d = ReconstructUtil::triangulateDepth(
-                    keypoints[obs.pointIndex], obs.point, P);
+                    keypoints[obs.pointIndex], obs.point, P, E, confidence);
 
             if (d > 0 && isfinite(d)) {
                 depth[obs.pointIndex] = d;
