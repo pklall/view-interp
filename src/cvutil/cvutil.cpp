@@ -80,6 +80,24 @@ void slicSuperpixels(
     }
 }
 
+void CVDenseOpticalFlow::compute(
+        const CImg<uint8_t>& img0Gray,
+        const CImg<uint8_t>& img1Gray,
+        double scale,
+        int levels, 
+        int winSize,
+        int iterations) {
+    cv::Mat prevCV = cv::Mat(img0Gray.height(), img0Gray.width(), CV_8UC1,
+            (void*) img0Gray.data());
+    cv::Mat nextCV= cv::Mat(img1Gray.height(), img1Gray.width(), CV_8UC1,
+            (void*) img1Gray.data());
+    int polyN = 5;
+    double polySigma = 1.2;
+
+    cv::calcOpticalFlowFarneback(prevCV, nextCV, flow, scale, levels, winSize,
+            iterations, polyN, polySigma, 0);
+}
+
 CVOpticalFlow::CVOpticalFlow(
         int _wndSize,
         int _pyrLevels) :

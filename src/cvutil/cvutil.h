@@ -35,6 +35,30 @@ inline void decomposeProjectionMatrix(
     cv::cv2eigen(cvT, T);
 }
 
+class CVDenseOpticalFlow {
+    public:
+        void compute(
+                const CImg<uint8_t>& img0Gray,
+                const CImg<uint8_t>& img1Gray,
+                double scale = 0.5,
+                int levels = 3, 
+                int winSize = 15,
+                int iterations = 3);
+
+        inline void getRelativeFlow(
+                int x,
+                int y,
+                float& dx,
+                float& dy) {
+            const cv::Point2f& d = flow.at<cv::Point2f>(y, x);
+            dx = d.x;
+            dy = d.y;
+        }
+
+    private:
+        cv::Mat flow;
+};
+
 class CVOpticalFlow {
     public:
         CVOpticalFlow(

@@ -267,6 +267,31 @@ void DepthReconstruction::getAllDepthSamples(
     }
 }
 
+void DepthReconstruction::getAllDepthSamples(
+        size_t cameraI,
+        vector<tuple<Eigen::Vector2d, double, double>>& depthSamples) {
+    depthSamples.clear();
+
+    const vector<Observation>& obsLst = observations[cameraI];
+
+    const auto& P = cameras[cameraI].getP();
+    const auto& E = cameras[cameraI].getE();
+
+    for (size_t obsI = 0; obsI < obsLst.size(); obsI++) {
+        const Observation& obs = obsLst[obsI];
+
+        double confidence;
+
+        double d = ReconstructUtil::triangulateDepth(
+                keypoints[obs.pointIndex], obs.point, P, E, confidence);
+
+        if (d > 0) {
+            depthSamples.push_back(make_tuple(
+                        obs.point, d, confidence));
+        }
+    }
+}
+
 bool DepthReconstruction::getPolarFundamentalMatrix(
         int cameraIndex,
         const Eigen::Vector2d& imageCenter,

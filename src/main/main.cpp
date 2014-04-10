@@ -2,7 +2,7 @@
 
 #include "cvutil/cvutil.h"
 
-// #include "dense_feature_warp.h"
+#include "sparse_interpolation.hpp"
 
 #include "polar_stereo.h"
 
@@ -40,12 +40,10 @@ int main(int argc, char** argv) {
 
     printf("Image size = %d x %d\n", workingWidth, workingHeight);
 
-    const int numPoints = 10000;
+    const int numPoints = 20000;
 
-    // CVFeatureMatcher orb(numPoints, 127);
     CVOpticalFlow klt(31, 10);
 
-    // orb.detectFeatures(*initImg);
     klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.01);
 
     printf("Feature count = %d\n", klt.featureCount());
@@ -54,30 +52,20 @@ int main(int argc, char** argv) {
 
     CVFundamentalMatrixEstimator fundMatEst;
 
-    // reconstruct.init(imageCount - 1, orb.numKeypoints());
     reconstruct.init(imageCount - 1, klt.featureCount());
 
-    // for (int pointI = 0; pointI < orb.numKeypoints(); pointI++) {
     for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
         Eigen::Vector2f match0;
         Eigen::Vector2f matchOther;
         float error;
 
         klt.getMatch(pointI, match0, matchOther, error);
-        // float x, y;
-        // orb.getKeypoint(pointI, x, y);
 
-        // Eigen::Vector2f match0(x, y);
-        
         match0 -= imageCenter.cast<float>();
         match0 /= imageSize;
 
         reconstruct.setKeypoint(pointI, match0.cast<double>());
     }
-
-
-    // CVFeatureMatcher curOrb(numPoints, 31);
-    // vector<tuple<int, int>> matches(numPoints);
 
     for (int imgI = 1; imgI < imageCount; imgI++) {
         printf("Processing image #%d\n", imgI);
@@ -93,23 +81,14 @@ int main(int argc, char** argv) {
 
         printf("Computing KLT\n");
         klt.compute(*curImg);
-        // curOrb.detectFeatures(*curImg);
-        // matches.clear();
-        // orb.match(curOrb, matches, numPoints);
         printf("Done\n");
 
-        // for (const tuple<int, int> match : matches) {
         for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
             Eigen::Vector2f match0;
             Eigen::Vector2f matchOther;
             float error;
 
             klt.getMatch(pointI, match0, matchOther, error);
-
-            // float x, y;
-            // curOrb.getKeypoint(get<1>(match), x, y);
-            // int pointI = get<0>(match);
-            // Eigen::Vector2f matchOther(x, y);
 
             matchOther -= imageCenter.cast<float>();
             matchOther /= imageSize;
@@ -129,74 +108,121 @@ int main(int argc, char** argv) {
         depthVis.display();
     }
 
-    {
-        vector<tuple<Eigen::Vector2d, vector<tuple<double, double>>>> depthSamples;
+    bool display_dense_flow = false;
 
-        reconstruct.getAllDepthSamples(depthSamples);
+    if (display_dense_flow) {
+        CImg<uint8_t> initDown(*initImg);
+        CImg<uint8_t> curDown;
 
-        CImg<double> depthVisMin(workingWidth, workingHeight);
-        CImg<double> depthVisMax(workingWidth, workingHeight);
+        float scaleFactor = 1024.0f / max(originalWidth, originalHeight);
+        int scaledWidth = scaleFactor * originalWidth;
+        int scaledHeight = scaleFactor * originalHeight; 
+
+        // Resize with moving-average interpolation
+        initDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
+
+        CVDenseOpticalFlow denseFlow;
+
+        for (int imgI = 1; imgI < imageCount; imgI++) {
+            printf("Computing dense flow for image #%d\n", imgI);
+
+            curDown = CImg<uint8_t>::get_load(argv[1 + imgI]);
+
+            if (curDown.spectrum() > 1) {
+                curDown = curDown.get_RGBtoLab().channel(0);
+            }
+
+            curDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
+
+            denseFlow.compute(initDown, curDown);
+
+            CImg<float> flow(scaledWidth, scaledHeight, 2);
+
+            cimg_forXY(flow, x, y) {
+                denseFlow.getRelativeFlow(x, y, flow(x, y, 0), flow(x, y, 1));
+            }
+
+            (flow.get_shared_slice(0), flow.get_shared_slice(1)).display();
+        }
+    }
+
+    bool display_all_depth_samples = false;
+    if (display_all_depth_samples) {
         CImg<double> depthVisMed(workingWidth, workingHeight);
 
-        depthVisMin = 0.0f;
-        depthVisMax = 0.0f;
-        depthVisMed = 0.0f;
+        vector<tuple<Eigen::Vector2d, double, double>> depthSamples;
 
-        for (auto& pointDepthSamples : depthSamples) {
-            Eigen::Vector2d point = get<0>(pointDepthSamples);
-            vector<tuple<double, double>>& depths = get<1>(pointDepthSamples);
-
-            if (depths.size() < (imageCount - 1) / 2.0f) {
+        for (size_t cameraI = 0; cameraI < imageCount; cameraI++) {
+            if (!reconstruct.isInlierCamera(cameraI)) {
                 continue;
             }
 
-            point *= max(depthVisMed.width(), depthVisMed.height()) / 2.0;
-            point.x() += depthVisMed.width() / 2.0;
-            point.y() += depthVisMed.height() / 2.0;
+            depthSamples.clear();
 
-            // TODO use nth element instead
-            // std::sort(depths.begin(), depths.end());
-            // d = get<0>(depths[depths.size() / 2]);
+            reconstruct.getAllDepthSamples(cameraI, depthSamples);
 
-            double d;
-            double highestConfidence = std::numeric_limits<double>::min();
+            depthVisMed = 0.0f;
 
-            for (const auto& sample : depths) {
-                if (get<1>(sample) > highestConfidence) {
-                    d = get<0>(sample);
-                    highestConfidence = get<1>(sample);
+            for (auto& pointDepthSamples : depthSamples) {
+                Eigen::Vector2d point = get<0>(pointDepthSamples);
+                /*
+                vector<tuple<double, double>>& depths = get<1>(pointDepthSamples);
+
+                if (depths.size() < (imageCount - 1) / 2.0f) {
+                    continue;
+                }
+                */
+
+                point *= max(depthVisMed.width(), depthVisMed.height()) / 2.0;
+                point.x() += depthVisMed.width() / 2.0;
+                point.y() += depthVisMed.height() / 2.0;
+
+                // TODO use nth element instead
+                // std::sort(depths.begin(), depths.end());
+                // d = get<0>(depths[depths.size() / 2]);
+
+                double d = get<1>(pointDepthSamples);
+                /*
+                double highestConfidence = std::numeric_limits<double>::min();
+
+                for (const auto& sample : depths) {
+                    if (get<1>(sample) > highestConfidence) {
+                        d = get<0>(sample);
+                        highestConfidence = get<1>(sample);
+                    }
+                }
+                */
+
+                depthVisMed.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+            }
+
+            {
+                float avgDepth = depthVisMed.sum() / depthVisMed.get_sign().abs().sum();
+                depthVisMed -= (depthVisMed.get_sign().abs() - 1) * avgDepth;
+            }
+
+            bool renderEpipoles = false;
+
+            if (renderEpipoles) {
+                for (int imgI = 1; imgI < imageCount; imgI++) {
+                    PolarFundamentalMatrix polarF;
+
+                    bool rectificationPossible = reconstruct.getPolarFundamentalMatrix(
+                            imgI - 1,
+                            Eigen::Vector2d(depthVisMed.width() / 2.0, depthVisMed.height() / 2.0),
+                            max(depthVisMed.width() / 2.0, depthVisMed.height() / 2.0),
+                            polarF);
+
+                    if (rectificationPossible) {
+                        const Eigen::Vector2d& e = polarF.getEpipole(0);
+                        double zero = 0;
+                        depthVisMed.draw_circle(e.x(), e.y(), 20, &zero);
+                    }
                 }
             }
 
-            depthVisMed.draw_circle(point.x() + 0.5, point.y() + 0.5, 5, &d);
+            depthVisMed.display();
         }
-
-        {
-            float avgDepth = depthVisMed.sum() / depthVisMed.get_sign().abs().sum();
-            depthVisMed -= (depthVisMed.get_sign().abs() - 1) * avgDepth;
-        }
-
-        bool renderEpipoles = false;
-
-        if (renderEpipoles) {
-            for (int imgI = 1; imgI < imageCount; imgI++) {
-                PolarFundamentalMatrix polarF;
-
-                bool rectificationPossible = reconstruct.getPolarFundamentalMatrix(
-                        imgI - 1,
-                        Eigen::Vector2d(depthVisMed.width() / 2.0, depthVisMed.height() / 2.0),
-                        max(depthVisMed.width() / 2.0, depthVisMed.height() / 2.0),
-                        polarF);
-
-                if (rectificationPossible) {
-                    const Eigen::Vector2d& e = polarF.getEpipole(0);
-                    double zero = 0;
-                    depthVisMed.draw_circle(e.x(), e.y(), 20, &zero);
-                }
-            }
-        }
-
-        (depthVisMin, depthVisMed, depthVisMax).display();
     }
 
 

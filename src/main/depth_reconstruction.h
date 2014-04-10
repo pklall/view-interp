@@ -366,6 +366,15 @@ class DepthReconstruction {
         void getAllDepthSamples(
                 vector<tuple<Eigen::Vector2d, vector<tuple<double, double>>>>& depthSamples);
 
+        void getAllDepthSamples(
+                size_t cameraI,
+                vector<tuple<Eigen::Vector2d, double, double>>& depthSamples);
+
+        inline bool isInlierCamera(
+                size_t cameraIndex) {
+            return cameraInlierMask[cameraIndex];
+        }
+
         inline size_t getPointCount() const {
             return keypoints.size();
         }
