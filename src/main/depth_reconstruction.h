@@ -370,6 +370,15 @@ class DepthReconstruction {
                 size_t cameraI,
                 vector<tuple<Eigen::Vector2d, double, double>>& depthSamples);
 
+        /**
+         * Returns the depth at each keypoint, triangulated from the given
+         * camera.  Negative values indicate that no data is available for
+         * that keypoint.
+         */
+        void getAllDepthSamples(
+                size_t cameraI,
+                vector<double>& depth);
+
         inline bool isInlierCamera(
                 size_t cameraIndex) {
             return cameraInlierMask[cameraIndex];
@@ -412,6 +421,10 @@ class DepthReconstruction {
 
         inline const vector<Eigen::Vector2d>& getKeypoints() {
             return keypoints;
+        }
+
+        inline const vector<double>& getDepths() {
+            return depth;
         }
 
     private:
@@ -482,6 +495,11 @@ class DepthReconstruction {
         const double robustLossHuberParam;
 
         const double inlierThreshold;
+        
+        /**
+         * The maximum number of depth samples to use when estimating pose.
+         */
+        const int maxDepthBasedPoseEstimationSamples;
 
         /**
          * Fundamental matrix estimate for each camera relative to the main

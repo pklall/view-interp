@@ -44,8 +44,9 @@ void ReconstructUtil::computeCanonicalPose(
 }
 
 DepthReconstruction::DepthReconstruction() :
-    robustLossHuberParam(0.000001),
-    inlierThreshold(0.001) {
+    robustLossHuberParam(0.0000001),
+    inlierThreshold(0.001),
+    maxDepthBasedPoseEstimationSamples(200) {
 }
 
 void DepthReconstruction::init(
@@ -93,18 +94,18 @@ void DepthReconstruction::solve() {
             camInlierCount.push_back(make_tuple(inlierRatio, cameraI));
             
             // FIXME remove debugging code
+            /*
             std::fill(depth.begin(), depth.end(), 0);
             resetInlierMask(cameraI);
             triangulateDepthUsingPose(cameraI);
             {
-                /*
                 CImg<float> depthVis(512, 512);
 
                 visualize(depthVis, 0, 0.99, 1.0, false);
 
                 depthVis.display();
-                */
             }
+            */
         }
     }
 
@@ -305,6 +306,32 @@ void DepthReconstruction::getAllDepthSamples(
             depthSamples.push_back(make_tuple(
                         obs.point, d, confidence));
         }
+    }
+}
+
+void DepthReconstruction::getAllDepthSamples(
+        size_t cameraI,
+        vector<double>& depthSamples) {
+    depthSamples.clear();
+
+    depthSamples.resize(keypoints.size());
+
+    fill(depthSamples.begin(), depthSamples.end(), -1);
+
+    const vector<Observation>& obsLst = observations[cameraI];
+
+    const auto& P = cameras[cameraI].getP();
+    const auto& E = cameras[cameraI].getE();
+
+    for (size_t obsI = 0; obsI < obsLst.size(); obsI++) {
+        const Observation& obs = obsLst[obsI];
+
+        double confidence;
+
+        double d = ReconstructUtil::triangulateDepth(
+                keypoints[obs.pointIndex], obs.point, P, E, confidence);
+
+        depthSamples[obs.pointIndex] = d;
     }
 }
 
@@ -520,6 +547,10 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         // depth has already been estimated.
         if (observationInlierMask[cameraIndex][obsI] &&
                 depth[obs.pointIndex] > 0) {
+
+            if (costFunctions.size() > maxDepthBasedPoseEstimationSamples) {
+                break;
+            }
 
             CamCostFunction* costFunction =
                 new ceres::AutoDiffCostFunction<
