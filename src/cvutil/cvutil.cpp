@@ -112,7 +112,7 @@ void CVOpticalFlow::init(
     cv::Mat baseCV = cv::Mat(base.height(), base.width(), CV_8UC1,
             (void*) base.data());
 
-    cv::goodFeaturesToTrack(baseCV, goodFeatures, maxFeatures, 0.01, minDistance); 
+    cv::goodFeaturesToTrack(baseCV, goodFeatures, maxFeatures, 0.00001, minDistance); 
     
     cv::cornerSubPix(baseCV, goodFeatures, cv::Size(wndSize, wndSize), cv::Size(-1, -1),
             cv::TermCriteria(
@@ -177,7 +177,7 @@ void CVFundamentalMatrixEstimator::init(
 void CVFundamentalMatrixEstimator::estimateFundamentalMatrix(
         Eigen::Matrix3d& fundMat) {
     float inlierEpipolarMaxDist = 1.0f;
-    float targetConfidence = 0.9999f;
+    float targetConfidence = 0.99999f;
 
     inlierMask.resize(points[0].size());
 

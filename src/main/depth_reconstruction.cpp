@@ -72,7 +72,6 @@ void DepthReconstruction::solve() {
     float bestInlierRatio = 0;
     size_t bestCamera = 0;
 
-
     vector<tuple<float, size_t>> camInlierCount;
     
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
@@ -90,8 +89,22 @@ void DepthReconstruction::solve() {
         // due to negatively-facing points, it's probably a bad fit.
         float inlierRatio = poseInlierCount; // / fInlierCount;
 
-        if (poseInlierCount > minInliers) { 
+        if (poseInlierCount > minInliers) {
             camInlierCount.push_back(make_tuple(inlierRatio, cameraI));
+            
+            // FIXME remove debugging code
+            std::fill(depth.begin(), depth.end(), 0);
+            resetInlierMask(cameraI);
+            triangulateDepthUsingPose(cameraI);
+            {
+                /*
+                CImg<float> depthVis(512, 512);
+
+                visualize(depthVis, 0, 0.99, 1.0, false);
+
+                depthVis.display();
+                */
+            }
         }
     }
 
@@ -116,6 +129,9 @@ void DepthReconstruction::solve() {
 
     for (int i = 1; i < maxImagesToUse; i++) {
         size_t cameraI = get<1>(camInlierCount[i]);
+        // size_t DepthReconstruction::computeDepthCorrespondenceCount(int cameraIndex);
+
+        resetInlierMask(cameraI);
 
         size_t inlierC = estimatePoseUsingDepth(cameraI, inlierThreshold);
 
@@ -471,6 +487,22 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
     cout << "Reverse = " << reverseCount << endl;
 
     return newSampleCount;
+}
+
+size_t DepthReconstruction::computeDepthCorrespondenceCount(
+        int cameraIndex) {
+    size_t count = 0;
+
+    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+        const Observation& obs = observations[cameraIndex][obsI];
+
+        if (observationInlierMask[cameraIndex][obsI] &&
+                depth[obs.pointIndex] > 0) {
+            count++;
+        }
+    }
+    
+    return count;
 }
 
 size_t DepthReconstruction::estimatePoseUsingDepth(

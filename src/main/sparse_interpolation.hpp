@@ -24,9 +24,11 @@ class SparseInterp {
                 Scalar pairwiseWeight) {
             A.resize(width * height + numSamples, width * height);
             // Expect at most 6 non-zero elements in each column
-            A.reserve(Eigen::VectorXi::Constant(width * height, 6));
+            // A.reserve(Eigen::VectorXi::Constant(width * height, 6));
 
             B.resize(width * height + numSamples);
+
+            B.fill(Scalar(0));
 
             int neighborhood[4][2] = {{0, 1}, {0, -1}, {1, 0}, {-1, 0}};
 
@@ -42,20 +44,22 @@ class SparseInterp {
                         int ny = y + neighborhood[n][1];
 
                         if (
-                                nx >= 0 ||
-                                nx < width ||
-                                ny >= 0 ||
+                                nx >= 0 &&
+                                nx < width &&
+                                ny >= 0 &&
                                 ny < height) {
                             neighborCount++;
-                            A(idx, coordToIndex(nx, ny)) = Scalar(1);
+
+                            A.insert(idx, coordToIndex(nx, ny)) = Scalar(1);
                         }
                     }
 
-                    A(idx, idx) = -neighborCount;
-
-                    B(idx) = Scalar(0);
+                    // printf("Inserting into A at (%d, %d)\n", idx, idx);
+                    A.insert(idx, idx) = Scalar(-neighborCount);
                 }
             }
+
+            printf("Finished initializing\n");
         }
 
         inline void insertSample(
@@ -63,7 +67,8 @@ class SparseInterp {
             int x,
             int y,
             Scalar val) {
-            A(width * height + sampleIndex, coordToIndex(x, y)) = Scalar(1);
+            printf("Inserting into A at (%d, %d)\n", width * height + sampleIndex, coordToIndex(x, y));
+            A.insert(width * height + sampleIndex, coordToIndex(x, y)) = Scalar(1);
 
             B(width * height + sampleIndex) = val;
         }

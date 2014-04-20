@@ -410,6 +410,10 @@ class DepthReconstruction {
                 double imageSize,
                 PolarFundamentalMatrix& polarF);
 
+        inline const vector<Eigen::Vector2d>& getKeypoints() {
+            return keypoints;
+        }
+
     private:
         void resetSolutionState();
 
@@ -443,6 +447,13 @@ class DepthReconstruction {
          * Returns the number of new depth samples resulting from triangulation.
          */
         size_t triangulateDepthUsingPose(
+                int cameraIndex);
+
+        /**
+         * Returns the number of observations for the given camera for which
+         * a depth estimate already exists.
+         */
+        size_t computeDepthCorrespondenceCount(
                 int cameraIndex);
 
         /**

@@ -2,6 +2,10 @@
 
 #include "cvutil/cvutil.h"
 
+#include "tri_qpbo.h"
+
+#include "sparse_daisy_stereo.h"
+
 #include "sparse_interpolation.hpp"
 
 #include "polar_stereo.h"
@@ -20,17 +24,14 @@ int main(int argc, char** argv) {
 
     const int imageCount = argc - 1;
 
-    unique_ptr<CImg<uint8_t>> initImg(new CImg<uint8_t>());
-    unique_ptr<CImg<uint8_t>> curImg(new CImg<uint8_t>());
+    CImg<uint8_t> initImg;
+    CImg<uint8_t> curImg;
 
     // Load a grayscale image from RGB
-    *initImg = CImg<uint8_t>::get_load(argv[1]);
-    if (initImg->spectrum() > 1) {
-        *initImg = initImg->get_RGBtoLab().channel(0);
-    }
+    initImg = CImg<float>::get_load(argv[1]).RGBtoLab();
 
-    int originalWidth = initImg->width();
-    int originalHeight = initImg->height();
+    int originalWidth = initImg.width();
+    int originalHeight = initImg.height();
 
     const int workingWidth = originalWidth;
     const int workingHeight = originalHeight;
@@ -42,9 +43,12 @@ int main(int argc, char** argv) {
 
     const int numPoints = 20000;
 
-    CVOpticalFlow klt(31, 10);
+    CVOpticalFlow klt(31, 15);
 
-    klt.init(*initImg, numPoints, min(workingWidth, workingHeight) * 0.01);
+    float minDistance = min(workingWidth, workingHeight) * 1.0 / sqrt((float) numPoints);
+    minDistance = max(31.0f, minDistance);
+
+    klt.init(initImg.get_shared_channel(0), numPoints, minDistance);
 
     printf("Feature count = %d\n", klt.featureCount());
 
@@ -54,6 +58,8 @@ int main(int argc, char** argv) {
 
     reconstruct.init(imageCount - 1, klt.featureCount());
 
+    vector<Eigen::Vector2f> keypoints;
+
     for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
         Eigen::Vector2f match0;
         Eigen::Vector2f matchOther;
@@ -61,26 +67,34 @@ int main(int argc, char** argv) {
 
         klt.getMatch(pointI, match0, matchOther, error);
 
+        keypoints.push_back(match0);
+
         match0 -= imageCenter.cast<float>();
         match0 /= imageSize;
 
         reconstruct.setKeypoint(pointI, match0.cast<double>());
     }
 
+    TriQPBO qpbo;
+
+    vector<float> depth(keypoints.size());
+    qpbo.init(initImg, keypoints, depth);
+
+    CImg<uint8_t> colorVis(workingWidth, workingHeight, 1, 3);
+    colorVis.fill(0);
+    qpbo.visualizeTriangulation(colorVis);
+    colorVis.display();
+
     for (int imgI = 1; imgI < imageCount; imgI++) {
         printf("Processing image #%d\n", imgI);
 
-        *curImg = CImg<uint8_t>::get_load(argv[1 + imgI]);
+        curImg = CImg<float>::get_load(argv[1 + imgI]).RGBtoLab();
 
-        if (curImg->spectrum() > 1) {
-            *curImg = curImg->get_RGBtoLab().channel(0);
-        }
-
-        assert(curImg->width() == originalWidth);
-        assert(curImg->height() == originalHeight);
+        assert(curImg.width() == originalWidth);
+        assert(curImg.height() == originalHeight);
 
         printf("Computing KLT\n");
-        klt.compute(*curImg);
+        klt.compute(curImg.get_shared_channel(0));
         printf("Done\n");
 
         for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
@@ -101,22 +115,95 @@ int main(int argc, char** argv) {
 
     // Visualize the result
     {
-        CImg<float> depthVis(workingWidth, workingHeight);
+        CImg<float> depthVis(workingWidth * 0.25, workingHeight * 0.25);
 
-        reconstruct.visualize(depthVis, 1, 0.75, 2.0, false);
+        reconstruct.visualize(depthVis, 1, 0.99, 1.0, false);
 
         depthVis.display();
     }
 
-    bool display_dense_flow = false;
+    const bool display_daisy_stereo = false;
 
+    if (display_daisy_stereo) {
+        SparseDaisyStereo daisyStereo;
+
+        daisyStereo.init(initImg.get_shared_channel(0));
+
+        vector<Eigen::Vector2f> pointSamples;
+
+        for (int y = 0; y < 128; y++) {
+            for (int x = 0; x < 128; x++) {
+                pointSamples.push_back(Eigen::Vector2f(
+                            x * workingWidth / 128.0f,
+                            y * workingHeight / 128.0f));
+            }
+        }
+
+        for (int imgI = 1; imgI < imageCount; imgI++) {
+            printf("Rectifying image #%d\n", imgI);
+
+            curImg = CImg<float>::get_load(argv[1 + imgI]).RGBtoLab();
+
+            PolarFundamentalMatrix polarF;
+
+            bool rectificationPossible = reconstruct.getPolarFundamentalMatrix(
+                    imgI - 1,
+                    Eigen::Vector2d(workingWidth / 2.0, workingHeight / 2.0),
+                    max(workingWidth / 2.0, workingHeight / 2.0),
+                    polarF);
+
+            if (!rectificationPossible) {
+                printf("Rectification not possible, epipoles at infinity.\n");
+                continue;
+            }
+
+            vector<Eigen::Vector2f> matches(pointSamples.size());
+            vector<float> matchDistances(pointSamples.size());
+
+            daisyStereo.match(curImg.get_shared_channel(0), polarF, pointSamples, matches,
+                    matchDistances);
+        }
+    }
+
+    bool display_dense_interp = false;
+    if (display_dense_interp) {
+        float scaleFactor = 256.0f / max(originalWidth, originalHeight);
+        int denseInterpWidth = scaleFactor * originalWidth;
+        int denseInterpHeight = scaleFactor * originalHeight;
+
+        SparseInterp<double> interp(denseInterpWidth, denseInterpHeight);
+        
+        interp.init(reconstruct.getPointCount(), 1.0);
+
+        const int minInlierCount = 1;
+
+        for (size_t i = 0; i < reconstruct.getPointCount(); i++) {
+            double depth;
+            size_t inlierC;
+
+            const Eigen::Vector2d& pt = reconstruct.getDepthSample(i, depth, inlierC);
+
+            if (depth > 0) {
+                Eigen::Vector2d ptImg = (pt * max(denseInterpWidth, denseInterpHeight) / 2.0);
+
+                ptImg.x() += denseInterpWidth / 2.0;
+                ptImg.y() += denseInterpHeight / 2.0;
+
+                interp.insertSample(i, ptImg.x() + 0.5, ptImg.y() + 0.5, depth);
+            }
+        }
+
+        interp.solve();
+    }
+
+    bool display_dense_flow = false;
     if (display_dense_flow) {
-        CImg<uint8_t> initDown(*initImg);
+        CImg<uint8_t> initDown = initImg.get_shared_channel(0);
         CImg<uint8_t> curDown;
 
         float scaleFactor = 1024.0f / max(originalWidth, originalHeight);
         int scaledWidth = scaleFactor * originalWidth;
-        int scaledHeight = scaleFactor * originalHeight; 
+        int scaledHeight = scaleFactor * originalHeight;
 
         // Resize with moving-average interpolation
         initDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
@@ -126,11 +213,7 @@ int main(int argc, char** argv) {
         for (int imgI = 1; imgI < imageCount; imgI++) {
             printf("Computing dense flow for image #%d\n", imgI);
 
-            curDown = CImg<uint8_t>::get_load(argv[1 + imgI]);
-
-            if (curDown.spectrum() > 1) {
-                curDown = curDown.get_RGBtoLab().channel(0);
-            }
+            curDown = CImg<uint8_t>::get_load(argv[1 + imgI]).RGBtoLab().channel(0);
 
             curDown.resize(scaledWidth, scaledHeight, -100, -100, 2);
 
@@ -226,13 +309,13 @@ int main(int argc, char** argv) {
     }
 
 
-    const bool display_rectification = false;
+    const bool display_rectification = true;
 
     if (display_rectification) {
-        CImg<uint8_t> initDown(*initImg);
+        CImg<uint8_t> initDown = initImg.get_shared_channel(0);
         CImg<uint8_t> curDown;
 
-        float scaleFactor = (1024.0f * 1024.0f) / ((float) originalWidth * originalHeight);
+        float scaleFactor = (512.0f) / max((float) originalWidth, (float) originalHeight);
         int scaledWidth = scaleFactor * originalWidth;
         int scaledHeight = scaleFactor * originalHeight; 
 

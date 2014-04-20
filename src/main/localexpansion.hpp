@@ -32,8 +32,8 @@ using namespace std;
  * Type parameters:
  *  N - node type
  *  L - label type
- *  UC - Unary cost class with function: float operator()(node_t, node_t, label_t, label_t)
- *  BC - Binary cost class with function: float operator()(node_t, label_t)
+ *  UC - Unary cost class with function: float operator()(node_t, label_t)
+ *  BC - Binary cost class with function: float operator()(node_t, node_t, label_t, label_t)
  */
 template<class N, class L, class UC, class BC>
 class LocalExpansion {
