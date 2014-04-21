@@ -39,12 +39,14 @@ class TriQPBO {
         void computeFusion();
 
     private:
-        void initDelaunay();
+        void initTriangles();
+
+        void initAdjacency();
 
         void initGModel();
 
-        // Defining this in the header would require pulling in all of
-        // opengm, which dramatically slows compilation.
+        // Definining this in the cpp file prevents pulling all of opengm's
+        // massive headers into this one.
         struct GModelData;
 
         GModelData* gModelData;
@@ -54,20 +56,25 @@ class TriQPBO {
         vector<Eigen::Vector2f> points;
 
         /**
-         * Adjacency list of edges resulting from delaunay triangulation,
-         * annotated with the index of the edge.
+         * Triangle vertices are stored as indices into `points` in CCW order.
+         */
+        vector<array<size_t, 3>> triangles;
+
+        /**
+         * Adjacency list representation of adjacent triangles.
+         * adjacency[a] = {(b_0, idx_0), ..., (b_n, idx_n)}
+         * for pairs of adjacent triangles (a, b) and edge indexed by idx.
          *
          * To avoid counting each edge twice, adjacency[a][b] will exist iff
          * a < b.
          */
         vector<map<size_t, size_t>> adjacency;
-        size_t edgeCount;
 
         /**
-         * Duplicate of adjacency for convenience.  Triangle vertices are
-         * stored in CCW order.
+         * The number of adjacent triangles
          */
-        vector<array<size_t, 3>> triangles;
+        int adjTriCount;
+
 
         /**
          * The values to merge.  Negative values are ignored.

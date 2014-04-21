@@ -73,6 +73,7 @@ int main(int argc, char** argv) {
         reconstruct.setKeypoint(pointI, match0.cast<double>());
     }
 
+    /*
     for (int imgI = 1; imgI < imageCount; imgI++) {
         printf("Processing image #%d\n", imgI);
 
@@ -109,9 +110,19 @@ int main(int argc, char** argv) {
 
         depthVis.display();
     }
+    */
 
     // FIXME
     {
+        vector<double> depth(keypoints.size());
+        TriQPBO qpbo(initImg, keypoints, depth);
+
+        CImg<uint8_t> colorVis(workingWidth, workingHeight, 1, 3);
+        colorVis.fill(0);
+        qpbo.visualizeTriangulation(colorVis);
+        colorVis.display();
+    }
+    if (false) {
         for (int camI = 0; camI < imageCount - 1; camI++) {
             if (reconstruct.isInlierCamera(camI)) {
                 vector<double> depth(keypoints.size());
@@ -133,11 +144,6 @@ int main(int argc, char** argv) {
                 }
 
                 TriQPBO qpbo(initImg, keypoints, depth);
-
-                CImg<uint8_t> colorVis(workingWidth, workingHeight, 1, 3);
-                colorVis.fill(0);
-                qpbo.visualizeTriangulation(colorVis);
-                colorVis.display();
 
                 CImg<double> depthVis(workingWidth, workingHeight);
                 depthVis.fill(0.0);

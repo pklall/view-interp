@@ -70,11 +70,14 @@ TriQPBO::TriQPBO(
     imgLab(lab),
     points(_points),
     existingValue(_initValue),
-    edgeCount(0),
+    adjTriCount(0),
     gModelData(nullptr) {
 
     newValue.resize(existingValue.size());
-    initDelaunay();
+
+    initTriangles();
+
+    initAdjacency();
 
     initGModel();
 }
@@ -165,6 +168,45 @@ void TriQPBO::visualizeTriangulation(
                 points[get<2>(tri)].y(),
                 color);
     }
+
+    // Draw adjacency graph as lines between the centers of triangles
+    uint8_t black[3] = {0, 0, 0};
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const map<size_t, size_t>& adj = adjacency[triI];
+
+        const auto& tri = triangles[triI];
+
+        double cx = 
+            points[get<0>(tri)].x() +
+            points[get<1>(tri)].x() +
+            points[get<2>(tri)].x();
+        cx /= 3.0;
+        double cy =
+            points[get<0>(tri)].y() +
+            points[get<1>(tri)].y() +
+            points[get<2>(tri)].y();
+        cy /= 3.0;
+
+        for (const auto& adjPair : adj) {
+            size_t adjTriI = adjPair.first;
+            
+            const auto& aTri = triangles[adjTriI];
+
+            double cx2 = 
+                points[get<0>(aTri)].x() +
+                points[get<1>(aTri)].x() +
+                points[get<2>(aTri)].x();
+            cx2 /= 3.0;
+            double cy2 =
+                points[get<0>(aTri)].y() +
+                points[get<1>(aTri)].y() +
+                points[get<2>(aTri)].y();
+            cy2 /= 3.0;
+
+            colorVis.draw_line(cx, cy, cx2, cy2, black);
+        }
+    }
 }
 
 struct LineError {
@@ -237,6 +279,7 @@ void TriQPBO::fitCandidateValuesLinear() {
     for (int iter = 0; iter < max_iters; iter++) {
         ceres::Problem problem(pOptions);
 
+        // We should expect the linear offset to be 0, so always start with that
         double m = mEstimates[iter];
         double b = 0;
 
@@ -275,11 +318,7 @@ void TriQPBO::computeFusion() {
     
 }
 
-void TriQPBO::initDelaunay() {
-    adjacency.resize(points.size());
-
-    edgeCount = 0;
-
+void TriQPBO::initTriangles() {
     voronoi_diagram<double> vd;
 
     construct_voronoi(points.begin(), points.end(), &vd);
@@ -319,21 +358,47 @@ void TriQPBO::initDelaunay() {
             size_t c = connectedPoints[(i + 2) % connectedPoints.size()];
 
             triangles.push_back({a, b, c});
+        }
+    }
+}
 
-            size_t pairs[3][2] = {
-                {a, b},
-                {b, c},
-                {c, a}
-            };
+void TriQPBO::initAdjacency() {
+    adjTriCount = 0;
 
-            for (int p = 0; p < 3; p++) {
-                size_t i0 = min(pairs[p][0], pairs[p][1]);
-                size_t i1 = max(pairs[p][0], pairs[p][1]);
+    adjacency.clear();
 
-                if (adjacency[i0].count(i1) == 0) {
-                    adjacency[i0][i1] = edgeCount;
+    adjacency.resize(triangles.size());
 
-                    edgeCount++;
+    // temporary map from edges (a, b) with a < b to a triangle with that edge
+    map<tuple<size_t, size_t>, size_t> edgeTriMap;
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const array<size_t, 3>& tri = triangles[triI];
+
+        for (int i = 0; i < 3; i++) {
+            size_t a = tri[i];
+            size_t b = tri[(i + 1) % 3];
+
+            if (b < a) {
+                swap(a, b);
+            }
+
+            const auto edge = make_tuple(a, b);
+
+            if (edgeTriMap.count(edge) == 0) {
+                edgeTriMap[edge] = triI;
+            } else {
+                size_t triA = triI;
+                size_t triB = edgeTriMap[edge];
+
+                if (triB < triA) {
+                    swap(triA, triB);
+                }
+
+                if (adjacency[triA].count(triB) == 0) {
+                    adjacency[triA][triB] = adjTriCount;
+
+                    adjTriCount++;
                 }
             }
         }
