@@ -73,7 +73,6 @@ int main(int argc, char** argv) {
         reconstruct.setKeypoint(pointI, match0.cast<double>());
     }
 
-    /*
     for (int imgI = 1; imgI < imageCount; imgI++) {
         printf("Processing image #%d\n", imgI);
 
@@ -103,54 +102,38 @@ int main(int argc, char** argv) {
     reconstruct.solve();
 
     // Visualize the result
-    {
+    if (true) {
         CImg<float> depthVis(workingWidth * 0.25, workingHeight * 0.25);
 
         reconstruct.visualize(depthVis, 1, 0.99, 1.0, false);
 
         depthVis.display();
     }
-    */
 
-    // FIXME
     {
-        vector<double> depth(keypoints.size());
-        TriQPBO qpbo(initImg, keypoints, depth);
+        TriQPBO qpbo(initImg, keypoints);
+
+        for (int camI = 0; camI < imageCount - 1; camI++) {
+            if (reconstruct.isInlierCamera(camI)) {
+                vector<double> depth(keypoints.size());
+
+                reconstruct.getAllDepthSamples(camI, depth);
+
+                qpbo.addCandidateVertexDepths(depth, false);
+            }
+        }
 
         CImg<uint8_t> colorVis(workingWidth, workingHeight, 1, 3);
         colorVis.fill(0);
         qpbo.visualizeTriangulation(colorVis);
         colorVis.display();
-    }
-    if (false) {
-        for (int camI = 0; camI < imageCount - 1; camI++) {
-            if (reconstruct.isInlierCamera(camI)) {
-                vector<double> depth(keypoints.size());
 
-                // depth = reconstruct.getDepths();
+        qpbo.solve();
 
-                // vector<double> sortedDepth = depth;
-                // std::sort(sortedDepth.begin(), sortedDepth.end());
-
-                // const double& maxDepth = sortedDepth[sortedDepth.size() * 0.75];
-                reconstruct.getAllDepthSamples(camI, depth);
-
-                for (double& d : depth) {
-                    if (d < 0.0) {
-                        d = 0.0;
-                    } else {
-                        // d *= 1.0f / maxDepth;
-                    }
-                }
-
-                TriQPBO qpbo(initImg, keypoints, depth);
-
-                CImg<double> depthVis(workingWidth, workingHeight);
-                depthVis.fill(0.0);
-                qpbo.denseInterp(depthVis);
-                depthVis.display();
-            }
-        }
+        CImg<double> depthVis(workingWidth, workingHeight);
+        depthVis.fill(0.0);
+        qpbo.denseInterp(depthVis);
+        depthVis.display();
     }
 
 

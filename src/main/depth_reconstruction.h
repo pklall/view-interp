@@ -183,10 +183,21 @@ class DepthReconstruction {
          */
         struct CameraParam {
             Eigen::Vector3d translation;
-            Eigen::Quaterniond rotation;
+            // Store w, x, y, z, where 'w' is the real part
+            // This allows easy integration with ceres-solver's QuaternionParametrization
+            Eigen::Vector4d rotation;
+
+            inline Eigen::Matrix3d getRotMatrix() {
+                Eigen::Quaterniond rotationQ(rotation[0], rotation[1],
+                        rotation[2], rotation[3]);
+
+                Eigen::Matrix3d R = rotationQ.toRotationMatrix();
+
+                return R;
+            }
 
             inline Eigen::Matrix<double, 3, 4> getP() {
-                Eigen::Matrix3d R = rotation.toRotationMatrix();
+                Eigen::Matrix3d R = getRotMatrix();
 
                 Eigen::Matrix<double, 3, 4> P;
 
@@ -206,7 +217,7 @@ class DepthReconstruction {
                     -translation.z(), 0, translation.x(),
                     translation.y(), -translation.x(), 0;
 
-                return tx * rotation.toRotationMatrix().transpose();
+                return tx * getRotMatrix().transpose();
             }
         };
 
@@ -227,10 +238,10 @@ class DepthReconstruction {
             Eigen::Map<const Eigen::Matrix<T, 2, 1>> p2(projectedPoint2);
 
             Eigen::Quaternion<T> rotation(
-                    camera_rotation[3],
                     camera_rotation[0],
                     camera_rotation[1],
-                    camera_rotation[2]);
+                    camera_rotation[2],
+                    camera_rotation[3]);
 
             // rotation.normalize();
 
@@ -346,6 +357,8 @@ class DepthReconstruction {
             observations[cameraIndex].push_back({pointIndex, point});
         }
 
+        void solveSloppy();
+
         void solve();
 
         void visualize(
@@ -436,9 +449,14 @@ class DepthReconstruction {
         /**
          * Estimates the specified camera's fundamental matrix using its
          * observations alone.
+         *
+         * Default inlier determines whether weaker keypoints not used
+         * are marked as inliers or outliers.
          */
         size_t estimateFUsingObs(
-                int cameraIndex);
+                int cameraIndex,
+                int maxObservationsToUse = 20000,
+                bool defaultInlier = true);
 
         /**
          * Estimates camera pose from the fundamental matrix.

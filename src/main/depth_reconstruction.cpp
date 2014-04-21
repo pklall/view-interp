@@ -46,7 +46,7 @@ void ReconstructUtil::computeCanonicalPose(
 DepthReconstruction::DepthReconstruction() :
     robustLossHuberParam(0.0000001),
     inlierThreshold(0.001),
-    maxDepthBasedPoseEstimationSamples(200) {
+    maxDepthBasedPoseEstimationSamples(1000) {
 }
 
 void DepthReconstruction::init(
@@ -63,6 +63,43 @@ void DepthReconstruction::init(
     for (Eigen::Vector2d& pt : keypoints) {
         pt = Eigen::Vector2d(0, 0);
     }
+}
+
+void DepthReconstruction::solveSloppy() {
+    resetSolutionState();
+
+    const size_t minInliers = 200;
+
+    float bestInlierRatio = 0;
+    size_t bestCamera = 0;
+
+    cameraInlierMask.resize(cameras.size());
+
+    fill(cameraInlierMask.begin(), cameraInlierMask.end(), false);
+
+    for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
+        cout << "Estimating F for camera " << cameraI << endl;
+
+        size_t fInlierCount = estimateFUsingObs(cameraI, 500);
+
+        cout << "Inliers after computing F = " << fInlierCount << endl;
+
+        size_t poseInlierCount = estimatePoseUsingF(cameraI);
+
+        cout << "Inliers after computing Pose = " << poseInlierCount << endl;
+
+        // If the pose estimated from F results in many more outliers,
+        // due to negatively-facing points, it's probably a bad fit.
+        float inlierRatio = poseInlierCount; // / fInlierCount;
+
+        if (poseInlierCount > minInliers) {
+            resetInlierMask(cameraI);
+
+            cameraInlierMask[cameraI] = true;
+        }
+    }
+
+    fill(inlierCount.begin(), inlierCount.end(), 1);
 }
 
 void DepthReconstruction::solve() {
@@ -93,19 +130,8 @@ void DepthReconstruction::solve() {
         if (poseInlierCount > minInliers) {
             camInlierCount.push_back(make_tuple(inlierRatio, cameraI));
             
-            // FIXME remove debugging code
-            /*
-            std::fill(depth.begin(), depth.end(), 0);
+            // Clear the inlier count
             resetInlierMask(cameraI);
-            triangulateDepthUsingPose(cameraI);
-            {
-                CImg<float> depthVis(512, 512);
-
-                visualize(depthVis, 0, 0.99, 1.0, false);
-
-                depthVis.display();
-            }
-            */
         }
     }
 
@@ -145,7 +171,7 @@ void DepthReconstruction::solve() {
         refineCamerasAndDepth(cameraInlierMask);
 
         cout << "Camera after bundle adjustment: " <<
-            cameras[cameraI].rotation.coeffs() << endl <<
+            cameras[cameraI].rotation << endl <<
             "norm = " << cameras[cameraI].rotation.norm() << endl <<
             cameras[cameraI].translation.transpose() << endl;
     }
@@ -393,11 +419,19 @@ void DepthReconstruction::resetInlierMask(
 }
 
 size_t DepthReconstruction::estimateFUsingObs(
-        int cameraIndex) {
+        int cameraIndex,
+        int maxObservationsToUse,
+        bool defaultInlier) {
     fundMatEstimator.init();
+
+    int numObs = 0;
 
     for (const Observation& obs : observations[cameraIndex]) {
         fundMatEstimator.addMatch(keypoints[obs.pointIndex], obs.point);
+        numObs++;
+        if (numObs > maxObservationsToUse) {
+            break;
+        }
     }
 
     fundMatEstimator.estimateFundamentalMatrix(Fmatrices[cameraIndex]);
@@ -405,7 +439,12 @@ size_t DepthReconstruction::estimateFUsingObs(
     size_t inlierC = 0;
 
     for (size_t i = 0; i < observations[cameraIndex].size(); i++) {
-        if (fundMatEstimator.isInlier(i)) {
+        if (i > maxObservationsToUse) {
+            observationInlierMask[cameraIndex][i] = defaultInlier;
+            if (defaultInlier) {
+                inlierC++;
+            }
+        } else if (fundMatEstimator.isInlier(i)) {
             inlierC ++;
 
             observationInlierMask[cameraIndex][i] = true;
@@ -455,7 +494,9 @@ size_t DepthReconstruction::estimatePoseUsingF(
 
     const auto translation = pose.block<3, 1>(0, 3);
 
-    cameras[cameraIndex].rotation = Eigen::Quaterniond(rotation).normalized();
+    const auto rotationQ = Eigen::Quaterniond(rotation).normalized();
+    cameras[cameraIndex].rotation = Eigen::Vector4d(rotationQ.w(),
+            rotationQ.x(), rotationQ.y(), rotationQ.z());
     cameras[cameraIndex].translation = translation;
 
     // Count inliers and mark new outliers
@@ -594,7 +635,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         CameraParam curParam;
 
         curParam.translation = Eigen::Vector3d(0, 0, 0);
-        curParam.rotation = Eigen::Quaterniond(1, 0, 0, 0);
+        curParam.rotation = Eigen::Vector4d(1, 0, 0, 0);
 
         // Use 5 correspondences to solve for camera orientation
         // TODO What's the correct amount to use here?
@@ -606,9 +647,9 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
                     cf,
                     NULL, // least-squares
                     curParam.translation.data(),
-                    curParam.rotation.coeffs().data());
+                    curParam.rotation.data());
 
-            problem.SetParameterization(curParam.rotation.coeffs().data(),
+            problem.SetParameterization(curParam.rotation.data(),
                     quatParameterization.get());
         }
 
@@ -636,7 +677,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
                 computeError(
                         curParam.translation.data(),
-                        curParam.rotation.coeffs().data(),
+                        curParam.rotation.data(),
                         point3.data(),
                         keypoints[obs.pointIndex].data(),
                         residuals);
@@ -666,10 +707,10 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
                     cf.get(),
                     robustLoss,
                     optimalParam.translation.data(),
-                    optimalParam.rotation.coeffs().data());
+                    optimalParam.rotation.data());
 
             problem.SetParameterization(
-                    optimalParam.rotation.coeffs().data(),
+                    optimalParam.rotation.data(),
                     quatParameterization.get());
         }
 
@@ -695,7 +736,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
             computeError(
                     optimalParam.translation.data(),
-                    optimalParam.rotation.coeffs().data(),
+                    optimalParam.rotation.data(),
                     point3.data(),
                     keypoints[obs.pointIndex].data(),
                     residuals);
@@ -748,11 +789,11 @@ void DepthReconstruction::refineCamerasAndDepth(
                             costFunction,
                             huberLoss,
                             cameras[camI].translation.data(),
-                            cameras[camI].rotation.coeffs().data(),
+                            cameras[camI].rotation.data(),
                             &(depth[obs.pointIndex]));
 
                     problem.SetParameterization(
-                            cameras[camI].rotation.coeffs().data(),
+                            cameras[camI].rotation.data(),
                             quatParameterization);
                 }
             }

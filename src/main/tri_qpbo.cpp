@@ -65,21 +65,21 @@ struct TriQPBO::GModelData {
 
 TriQPBO::TriQPBO(
         const CImg<uint8_t>& lab,
-        const vector<Eigen::Vector2f>& _points,
-        const vector<double>& _initValue) :
+        const vector<Eigen::Vector2f>& _points) :
     imgLab(lab),
     points(_points),
-    existingValue(_initValue),
     adjTriCount(0),
     gModelData(nullptr) {
 
-    newValue.resize(existingValue.size());
+    vertexCandidates.resize(points.size());
 
     initTriangles();
 
     initAdjacency();
 
     initGModel();
+
+    fill(triangleValues.begin(), triangleValues.end(), -1.0);
 }
 
 TriQPBO::~TriQPBO() {
@@ -100,9 +100,7 @@ void TriQPBO::denseInterp(
         const double y1 = points[get<1>(tri)].y();
         const double x2 = points[get<2>(tri)].x();
         const double y2 = points[get<2>(tri)].y();
-        const double& v0 = existingValue[get<0>(tri)];
-        const double& v1 = existingValue[get<1>(tri)];
-        const double& v2 = existingValue[get<2>(tri)];
+        const double& v = triangleValues[i];
 
         int nx0 = x0, ny0 = y0, nx1 = x1, ny1 = y1, nx2 = x2, ny2 = y2;
         if (ny0>ny1) cimg::swap(nx0,nx1,ny0,ny1);
@@ -127,8 +125,7 @@ void TriQPBO::denseInterp(
                         ((y2 - y0) * (x - x2) + (x0 - x2) * (y - x2)) / 
                         ((y1 - y2) * (x0 - x2) + (x2 - x1) * (y0 - y2));
                     double l2 = 1.0 - l1 - l2;
-                    double v = v0 * l0 + v1 * l1 + v2 * l2;
-                    result(x, y) = v0;
+                    result(x, y) = v;
                 }
             }
         }
@@ -173,7 +170,7 @@ void TriQPBO::visualizeTriangulation(
     uint8_t black[3] = {0, 0, 0};
 
     for (size_t triI = 0; triI < triangles.size(); triI++) {
-        const map<size_t, size_t>& adj = adjacency[triI];
+        const auto& adj = adjacency[triI];
 
         const auto& tri = triangles[triI];
 
@@ -209,6 +206,49 @@ void TriQPBO::visualizeTriangulation(
     }
 }
 
+void TriQPBO::addCandidateVertexDepths(
+        vector<double>& depths,
+        bool fitLinear) {
+    assert(depths.size() == points.size());
+
+    if (fitLinear) {
+        fitCandidateValuesLinear(depths);
+    }
+
+    for (size_t i = 0; i < depths.size(); i++) {
+        if (depths[i] > 0 && isfinite(depths[i])) {
+            vertexCandidates[i].push_back(depths[i]);
+        }
+    }
+}
+
+void TriQPBO::solve() {
+    vector<double> candidates;
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const array<size_t, 3>& tri = triangles[triI];
+        
+        candidates.clear();
+
+        for (const size_t& vI : tri) {
+            candidates.insert(candidates.end(),
+                    vertexCandidates[vI].begin(),
+                    vertexCandidates[vI].end());
+        }
+
+        // FIXME
+        // sort(candidates.begin(), candidates.end());
+
+
+        if (candidates.size() == 0) {
+            triangleValues[triI] = 0;
+            continue;
+        }
+
+        triangleValues[triI] = candidates[(triI & 0x1) % candidates.size()];
+    }
+}
+
 struct LineError {
     LineError(
             double _x,
@@ -220,34 +260,44 @@ struct LineError {
     template <typename T>
         bool operator()(
                 const T* const m,
-                const T* const b,
+                // const T* const b,
                 T* residuals) const {
-            residuals[0] = m[0] * T(x) + b[0] - T(y);
+            // residuals[0] = m[0] * T(x) + b[0] - T(y);
+            residuals[0] = m[0] * T(x) - T(y);
+            
+            return true;
         }
 
     double x, y;
 };
 
-void TriQPBO::fitCandidateValuesLinear() {
+void TriQPBO::fitCandidateValuesLinear(
+        vector<double>& depths,
+        int maxPointsToUse) {
     // 1 residuals
     // 1 parameters in block 1 (slope)
     // 1 parameters in block 2 (offset)
-    typedef ceres::AutoDiffCostFunction<LineError, 1, 1, 1>
-        LineCostFunction;
+    // typedef ceres::AutoDiffCostFunction<LineError, 1, 1, 1> LineCostFunction;
+    typedef ceres::AutoDiffCostFunction<LineError, 1, 1> LineCostFunction;
 
     vector<unique_ptr<LineCostFunction>> costFunctions;
 
     vector<double> mEstimates;
 
     for (size_t i = 0; i < points.size(); i++) {
-        if (newValue[i] > 0 && existingValue[i] > 0) {
+        if (depths[i] > 0 && isfinite(depths[i])) {
+            for (const double& existingValue : vertexCandidates[i]) {
+                LineCostFunction* costFunction =
+                    new LineCostFunction(new LineError(depths[i], existingValue));
 
-            LineCostFunction* costFunction =
-                new LineCostFunction(new LineError(newValue[i], existingValue[i]));
+                costFunctions.push_back(unique_ptr<LineCostFunction>(costFunction));
 
-            costFunctions.push_back(unique_ptr<LineCostFunction>(costFunction));
+                mEstimates.push_back(existingValue / depths[i]);
 
-            mEstimates.push_back(existingValue[i] / newValue[i]);
+                if (costFunctions.size() > maxPointsToUse) {
+                    break;
+                }
+            }
         }
     }
 
@@ -255,6 +305,7 @@ void TriQPBO::fitCandidateValuesLinear() {
         return;
     }
 
+    /*
     // Perform RANSAC by randomly selecting cost function terms, solving for
     // model parameters, and counting inliers from the resulting fit.
 
@@ -271,51 +322,65 @@ void TriQPBO::fitCandidateValuesLinear() {
 
     // Perform several iterations of RANSAC
     // TODO compute this based on acceptable probability of success
-    const int max_iters = min(200, (int) mEstimates.size());
+    const int max_iters = min(1000, (int) mEstimates.size());
 
-    unique_ptr<ceres::LossFunction> robustLoss(
-        new ceres::HuberLoss(0.000001));
+    // FIXME don't hardcode parameter
+    unique_ptr<ceres::LossFunction> robustLoss(new ceres::HuberLoss(0.00000001));
+
+    ceres::Problem problem(pOptions);
+
+    double m, b;
+
+    for (const auto& cf : costFunctions) {
+        problem.AddResidualBlock(
+                cf.get(),
+                robustLoss.get(),
+                // &m,
+                // &b);
+                &m);
+    }
+
+    ceres::Solver::Options options;
+    // Use default solver
+    // options.linear_solver_type = ???;
+    options.max_num_iterations = 100;
+    options.minimizer_progress_to_stdout = false;
+
+    ceres::Solver::Summary summary;
 
     for (int iter = 0; iter < max_iters; iter++) {
-        ceres::Problem problem(pOptions);
-
+        m = mEstimates[iter];
         // We should expect the linear offset to be 0, so always start with that
-        double m = mEstimates[iter];
-        double b = 0;
+        b = 0;
 
-        for (const auto& cf : costFunctions) {
-            problem.AddResidualBlock(
-                    cf.get(),
-                    robustLoss.get(),
-                    &m,
-                    &b);
-        }
+        ceres::Problem::EvaluateOptions options;
 
-        ceres::Solver::Options options;
-        // Use default solver
-        // options.linear_solver_type = ???;
-        options.max_num_iterations = 100;
-        options.minimizer_progress_to_stdout = false;
+        double cost;
 
-        ceres::Solver::Summary summary;
-        ceres::Solve(options, &problem, &summary);
+        problem.Evaluate(options, &cost, nullptr, nullptr, nullptr);
 
-        double finalCost = summary.final_cost;
-
-        if (finalCost < optimalCost) {
-            optimalCost = finalCost;
+        if (cost < optimalCost) {
+            optimalCost = cost;
             optimalM = m;
             optimalB = b;
         }
     }
 
-    for (double& d : newValue) {
-        d = d * optimalM + optimalB;
-    }
-}
 
-void TriQPBO::computeFusion() {
-    
+    m = optimalM;
+    b = optimalB;
+
+    ceres::Solve(options, &problem, &summary);
+    */
+    sort(mEstimates.begin(), mEstimates.end());
+    double m = mEstimates[mEstimates.size() / 2];
+    double b = 0;
+
+    printf("m = %f\n, b = %f\n", m, b);
+
+    for (double& d : depths) {
+        d = d * m + b;
+    }
 }
 
 void TriQPBO::initTriangles() {
@@ -360,6 +425,10 @@ void TriQPBO::initTriangles() {
             triangles.push_back({a, b, c});
         }
     }
+
+    triangleValues.resize(triangles.size());
+
+    fill(triangleValues.begin(), triangleValues.end(), -1);
 }
 
 void TriQPBO::initAdjacency() {
@@ -396,7 +465,7 @@ void TriQPBO::initAdjacency() {
                 }
 
                 if (adjacency[triA].count(triB) == 0) {
-                    adjacency[triA][triB] = adjTriCount;
+                    adjacency[triA][triB] = {(size_t) adjTriCount, a, b};
 
                     adjTriCount++;
                 }

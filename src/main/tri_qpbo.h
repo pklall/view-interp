@@ -13,8 +13,7 @@ class TriQPBO {
     public:
         TriQPBO(
                 const CImg<uint8_t>& lab,
-                const vector<Eigen::Vector2f>& points,
-                const vector<double>& initValue);
+                const vector<Eigen::Vector2f>& points);
 
         ~TriQPBO();
 
@@ -24,21 +23,27 @@ class TriQPBO {
         void visualizeTriangulation(
                 CImg<uint8_t>& colorVis);
 
-        inline void setCandidateValue(
-                size_t idx,
-                double value) {
-            newValue[idx] = value;
-        }
+        /**
+         * Note that this may modify depths in-place if fitLinear is true!
+         */
+        void addCandidateVertexDepths(
+                vector<double>& depths,
+                bool fitLinear);
 
-        inline vector<double>& getCandidateValueArray() {
-            return newValue;
-        }
-
-        void fitCandidateValuesLinear();
-
-        void computeFusion();
+        void solve();
 
     private:
+        /**
+         * Uses a RANSAC-like procedure to robustly solve for a linear (plus
+         * offset) relationship between candidate and current values.
+         *
+         * This can be used to merge new observations computed with an
+         * unknown scale.
+         */
+        void fitCandidateValuesLinear(
+                vector<double>& depths,
+                int maxPointsToUse = 20000);
+
         void initTriangles();
 
         void initAdjacency();
@@ -49,11 +54,22 @@ class TriQPBO {
         // massive headers into this one.
         struct GModelData;
 
+        struct TriAdj {
+            size_t id;
+            size_t edgePt0;
+            size_t edgePt1;
+        };
+
         GModelData* gModelData;
 
         const CImg<uint8_t>& imgLab;
 
-        vector<Eigen::Vector2f> points;
+        const vector<Eigen::Vector2f> points;
+
+        /**
+         * The vertex values to merge.  Negative values are considered invalid.
+         */
+        vector<vector<double>> vertexCandidates;
 
         /**
          * Triangle vertices are stored as indices into `points` in CCW order.
@@ -68,18 +84,16 @@ class TriQPBO {
          * To avoid counting each edge twice, adjacency[a][b] will exist iff
          * a < b.
          */
-        vector<map<size_t, size_t>> adjacency;
+        vector<map<size_t, TriAdj>> adjacency;
 
         /**
          * The number of adjacent triangles
          */
-        int adjTriCount;
-
+        size_t adjTriCount;
 
         /**
-         * The values to merge.  Negative values are ignored.
+         * The current triangle labels.
          */
-        vector<double> existingValue;
-        vector<double> newValue;
+        vector<double> triangleValues;
 };
 
