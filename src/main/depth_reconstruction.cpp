@@ -176,6 +176,20 @@ void DepthReconstruction::solve() {
             cameras[cameraI].translation.transpose() << endl;
     }
 
+    // Refine camera pose estimates using bundle-adjusted depth
+    for (int i = 1; i < maxImagesToUse; i++) {
+        size_t cameraI = get<1>(camInlierCount[i]);
+
+        resetInlierMask(cameraI);
+
+        size_t inlierC = estimatePoseUsingDepth(cameraI, inlierThreshold);
+
+        cout << "Camera after bundle adjustment: " <<
+            cameras[cameraI].rotation << endl <<
+            "norm = " << cameras[cameraI].rotation.norm() << endl <<
+            cameras[cameraI].translation.transpose() << endl;
+    }
+
     // Set inlierCount to tally the total number of inlier observations
     // used in determining each depth value.
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
