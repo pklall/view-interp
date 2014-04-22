@@ -651,9 +651,9 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         curParam.translation = Eigen::Vector3d(0, 0, 0);
         curParam.rotation = Eigen::Vector4d(1, 0, 0, 0);
 
-        // Use 5 correspondences to solve for camera orientation
+        // Use 6 correspondences to solve for camera orientation
         // TODO What's the correct amount to use here?
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 6; i++) {
             ceres::CostFunction* cf =
                 costFunctions[(iter * 5 + i) % costFunctions.size()].get();
 

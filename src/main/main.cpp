@@ -111,29 +111,36 @@ int main(int argc, char** argv) {
     }
 
     {
-        TriQPBO qpbo(initImg, keypoints);
-
-        for (int camI = 0; camI < imageCount - 1; camI++) {
-            if (reconstruct.isInlierCamera(camI)) {
-                vector<double> depth(keypoints.size());
-
-                reconstruct.getAllDepthSamples(camI, depth);
-
-                qpbo.addCandidateVertexDepths(depth, false);
-            }
-        }
-
+        /*
         CImg<uint8_t> colorVis(workingWidth, workingHeight, 1, 3);
         colorVis.fill(0);
         qpbo.visualizeTriangulation(colorVis);
         colorVis.display();
+        */
 
-        qpbo.solve();
+        for (int camI = -1; camI < imageCount - 1; camI++) {
+            if (camI < 0 || reconstruct.isInlierCamera(camI)) {
+                TriQPBO qpbo(initImg, keypoints);
 
-        CImg<double> depthVis(workingWidth, workingHeight);
-        depthVis.fill(0.0);
-        qpbo.denseInterp(depthVis);
-        depthVis.display();
+                vector<double> depth(keypoints.size());
+
+                if (camI < 0) {
+                    depth = reconstruct.getDepths();
+                } else {
+                    reconstruct.getAllDepthSamples(camI, depth);
+                }
+
+                qpbo.addCandidateVertexDepths(depth, false);
+                qpbo.solve();
+
+                CImg<double> depthVis(workingWidth, workingHeight);
+                depthVis.fill(0.0);
+                qpbo.denseInterp(depthVis);
+                double medianDepth = depthVis.median();
+                depthVis.min(medianDepth * 10);
+                depthVis.display();
+            }
+        }
     }
 
 

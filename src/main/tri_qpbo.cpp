@@ -237,15 +237,14 @@ void TriQPBO::solve() {
         }
 
         // FIXME
-        // sort(candidates.begin(), candidates.end());
-
+        sort(candidates.begin(), candidates.end());
 
         if (candidates.size() == 0) {
             triangleValues[triI] = 0;
             continue;
         }
 
-        triangleValues[triI] = candidates[(triI & 0x1) % candidates.size()];
+        triangleValues[triI] = candidates[candidates.size() - 1];
     }
 }
 

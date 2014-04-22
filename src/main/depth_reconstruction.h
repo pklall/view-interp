@@ -70,6 +70,23 @@ class ReconstructUtil {
                 const Eigen::Matrix<double, 3, 4>& P1,
                 const Eigen::Matrix<double, 3, 3>& E,
                 double& confidence) {
+            // FIXME
+            {
+                confidence = 1.0;
+
+                Eigen::Matrix<double, 3, 4> P0;
+                P0 <<
+                    1, 0, 0, 0,
+                    0, 1, 0, 0,
+                    0, 0, 1, 0;
+
+                Eigen::Vector3d tri;
+
+                triangulate(pt0, pt1, P0, P1, tri);
+
+                return tri.z();
+            }
+
             // Depth triangulation begins by projecting pt1 onto the epipolar
             // line in image 1 associated with pt0.
             //
@@ -83,6 +100,7 @@ class ReconstructUtil {
             // resulting in large deviation further away from the epipole.
 
             // pt0's epipolar line in image 1
+            /*
             Eigen::Vector3d pt0E1 = E * pt0.homogeneous();
 
             double epipolarDist = pt1.homogeneous().dot(pt0E1);
@@ -103,6 +121,7 @@ class ReconstructUtil {
 
             confidence = Eigen::Vector2d(pt1E1.x(), pt1E1.y()).normalized().dot(
                     Eigen::Vector2d(pt0E1.x(), pt1E1.y()).normalized());
+            */
 
             // FIXME
             // confidence = fabs(epipolarDist);
@@ -119,8 +138,8 @@ class ReconstructUtil {
             const double& x = pt0(0);
             const double& y = pt0(1);
 
-            const double& xp = pt1ProjPt0E1(0);
-            const double& yp = pt1ProjPt0E1(1);
+            const double& xp = pt1(0); // pt1ProjPt0E1(0);
+            const double& yp = pt1(1); // pt1ProjPt0E1(1);
 
             double VX = P1(0, 0) * x + P1(0, 1) * y + P1(0, 2);
             double VY = P1(1, 0) * x + P1(1, 1) * y + P1(1, 2);
