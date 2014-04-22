@@ -244,7 +244,7 @@ void TriQPBO::solve() {
             continue;
         }
 
-        triangleValues[triI] = candidates[candidates.size() - 1];
+        triangleValues[triI] = candidates[0];
     }
 }
 

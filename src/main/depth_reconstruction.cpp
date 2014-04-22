@@ -45,8 +45,8 @@ void ReconstructUtil::computeCanonicalPose(
 
 DepthReconstruction::DepthReconstruction() :
     robustLossHuberParam(0.0000001),
-    inlierThreshold(0.001),
-    maxDepthBasedPoseEstimationSamples(1000) {
+    inlierThreshold(0.010),
+    maxDepthBasedPoseEstimationSamples(2000) {
 }
 
 void DepthReconstruction::init(
@@ -638,7 +638,7 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
     // Perform several iterations of RANSAC
     // TODO compute this based on acceptable probability of success
-    const int max_iters = 200;
+    const int max_iters = 300;
 
     unique_ptr<ceres::LocalParameterization> quatParameterization(
             new ceres::QuaternionParameterization());
@@ -651,11 +651,11 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         curParam.translation = Eigen::Vector3d(0, 0, 0);
         curParam.rotation = Eigen::Vector4d(1, 0, 0, 0);
 
-        // Use 6 correspondences to solve for camera orientation
+        // Use 3 correspondences to solve for camera orientation
         // TODO What's the correct amount to use here?
-        for (int i = 0; i < 6; i++) {
+        for (int i = 0; i < 3; i++) {
             ceres::CostFunction* cf =
-                costFunctions[(iter * 5 + i) % costFunctions.size()].get();
+                costFunctions[(iter * 3 + i) % costFunctions.size()].get();
 
             problem.AddResidualBlock(
                     cf,
