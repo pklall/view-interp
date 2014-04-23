@@ -123,19 +123,26 @@ int main(int argc, char** argv) {
         TriQPBO qpbo(initImg, keypoints, depth);
         printf("done\n");
 
+        /*
         CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
         colorVis.fill(0);
         qpbo.visualizeTriangulation(colorVis);
         colorVis.display();
+        */
 
-        qpbo.solve();
+        for (int i = 0; i < 10; i++) {
+            CImg<double> depthVis(workingWidth, workingHeight);
+            depthVis.fill(0.0);
+            qpbo.denseInterp(depthVis);
+            double medianDepth = depthVis.median();
+            depthVis.min(medianDepth * 10);
+            depthVis.max(0.0);
+            depthVis.display();
 
-        CImg<double> depthVis(workingWidth, workingHeight);
-        depthVis.fill(0.0);
-        qpbo.denseInterp(depthVis);
-        double medianDepth = depthVis.median();
-        depthVis.min(medianDepth * 10);
-        depthVis.display();
+            for (int j = 0; j < 10; j++) {
+                qpbo.solve();
+            }
+        }
 
         /*
         for (int camI = -1; camI < imageCount - 1; camI++) {

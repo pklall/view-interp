@@ -279,7 +279,9 @@ void TriQPBO::solve() {
             }
         }
 
-        mergeCandidateValues(newTriangleValues);
+        size_t numChanged = mergeCandidateValues(newTriangleValues);
+
+        printf("Number of label flips = %d\n", numChanged);
     }
 }
 
@@ -310,12 +312,21 @@ size_t TriQPBO::mergeCandidateValues(
 
             size_t pairId = adjPair.second.id;
 
-            float cost00 = 1;
-            float cost01 = 1;
-            float cost10 = 1;
-            float cost11 = 1;
+            array<float, 4> cost;
 
-            gModelData->setBinaryTerm(pairId, cost00, cost01, cost10, cost11);
+            for (int i = 0; i < 4; i++) {
+                const double& label0 = ((i & 0x1) == 0) ?
+                    triangleValues[triI] : candidates[triI];
+                const double& label1 = ((i & 0x2) == 0) ?
+                    triangleValues[adjTriI] : candidates[adjTriI];
+
+                cost[i] =
+                    trianglePairCost[pairId] *
+                    min(fabs(label0 - label1) / (2.0 * adjTriValueVariance),
+                            1.0);
+            }
+
+            gModelData->setBinaryTerm(pairId, cost[0], cost[1], cost[2], cost[3]);
         }
     }
     
