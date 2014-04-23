@@ -38,6 +38,15 @@ class TriQPBO {
 
     private:
         /**
+         * Uses QPBO to fuse the candidate labels with the existing triangle
+         * labeling.
+         *
+         * Returns the number of modified labels.
+         */
+        size_t mergeCandidateValues(
+                const vector<double> candidates);
+
+        /**
          * Uses a RANSAC-like procedure to robustly solve for a linear (plus
          * offset) relationship between candidate and current values.
          *
@@ -49,6 +58,8 @@ class TriQPBO {
                 int maxPointsToUse = 20000);
 
         void initTriangles();
+
+        void initTriangleLabelsMedian();
 
         void initTriangleColorStats();
 

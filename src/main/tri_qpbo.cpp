@@ -107,6 +107,8 @@ TriQPBO::TriQPBO(
 
     initTriangles();
 
+    initTriangleLabelsMedian();
+
     initTriangleColorStats();
 
     initAdjacency();
@@ -114,8 +116,6 @@ TriQPBO::TriQPBO(
     initTrianglePairCost();
 
     initGModel();
-
-    fill(triangleValues.begin(), triangleValues.end(), -1.0);
 }
 
 TriQPBO::~TriQPBO() {
@@ -210,7 +210,12 @@ void TriQPBO::visualizeTriangulation(
 
             size_t pairId = adjPair.second.id;
 
-            float dist = trianglePairCost[pairId];
+            float dist =  trianglePairCost[pairId] *
+                min(
+                        fabs(
+                            triangleValues[triI] -
+                            triangleValues[adjTriI]) / (2 * adjTriValueVariance),
+                       1.0);
             color[0] = dist;
             color[1] = dist;
             color[2] = dist;
@@ -261,57 +266,87 @@ void TriQPBO::addCandidateVertexDepths(
 }
 
 void TriQPBO::solve() {
-    vector<double> candidates;
+    vector<double> newTriangleValues(triangles.size());
 
-    for (size_t triI = 0; triI < triangles.size(); triI++) {
-        const array<size_t, 3>& tri = triangles[triI];
+    for (int i = 0; i < 3; i++) {
+        for (size_t triI = 0; triI < triangles.size(); triI++) {
+            const array<size_t, 3>& tri = triangles[triI];
 
-        candidates.clear();
-
-        for (const size_t& vI : tri) {
-            candidates.insert(candidates.end(),
-                    vertexCandidates[vI].begin(),
-                    vertexCandidates[vI].end());
+            if (vertexCandidates[tri[i]].size() > 0) {
+                newTriangleValues[triI] = vertexCandidates[tri[i]][0];
+            } else {
+                newTriangleValues[triI] = -1;
+            }
         }
 
-        // FIXME
-        sort(candidates.begin(), candidates.end());
-
-        if (candidates.size() == 0) {
-            triangleValues[triI] = 0;
-            continue;
-        }
-
-        triangleValues[triI] = candidates[0];
+        mergeCandidateValues(newTriangleValues);
     }
+}
 
-       /*
-    qpbo = unique_ptr<QPBO>(new QPBO(model));
-    qpbo->infer();
+size_t TriQPBO::mergeCandidateValues(
+        const vector<double> candidates) {
+    // Update the factor graph...
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const auto& adj = adjacency[triI];
+        const auto& tri = triangles[triI];
+
+        // Update unary term
+        float cost0 = 0;
+        float cost1 = 0;
+
+        if (triangleValues[triI] < 0) {
+            cost0 = 100000000000.0f;
+        }
+
+        if (candidates[triI] < 0) {
+            cost1 = 100000000000.0f;
+        }
+
+        gModelData->setUnaryTerm(triI, cost0, cost1);
+
+        // Update binary terms
+        for (const auto& adjPair : adj) {
+            size_t adjTriI = adjPair.first;
+
+            size_t pairId = adjPair.second.id;
+
+            float cost00 = 1;
+            float cost01 = 1;
+            float cost10 = 1;
+            float cost11 = 1;
+
+            gModelData->setBinaryTerm(pairId, cost00, cost01, cost10, cost11);
+        }
+    }
+    
+    // Perform QPBO...
+
+    printf("Creating QPBO...\n");
+    gModelData->qpbo = unique_ptr<GModelData::QPBO>(
+            new GModelData::QPBO(gModelData->model));
+    printf("Done\n");
+
+    printf("Performing inference...\n");
+    gModelData->qpbo->infer();
+    printf("Done\n");
 
     vector<bool> optimalVariables;
     vector<size_t> labels;
 
-    qpbo->partialOptimality(optimalVariables);
+    gModelData->qpbo->partialOptimality(optimalVariables);
+    gModelData->qpbo->arg(labels);
 
-    qpbo->arg(labels);
+    size_t numChanged = 0;
 
-    int nodeIndex = 0;
-
-    int numChanged = 0;
-
-    for (const node_t& node : nodes) {
-        if (optimalVariables[nodeIndex] && labels[nodeIndex] == 1) {
-            (*labeling)[node] = candidateGenerator(node);
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        if (optimalVariables[triI] && labels[triI] == 1) {
+            triangleValues[triI] = candidates[triI];
 
             numChanged++;
         }
-
-        nodeIndex++;
     }
 
     return numChanged;
-    */
 }
 
 struct LineError {
@@ -492,6 +527,36 @@ void TriQPBO::initTriangles() {
     fill(triangleValues.begin(), triangleValues.end(), -1);
 }
 
+void TriQPBO::initTriangleLabelsMedian() {
+    triangleValues.resize(triangles.size());
+
+    fill(triangleValues.begin(), triangleValues.end(), -1.0);
+
+    vector<double> candidates;
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const array<size_t, 3>& tri = triangles[triI];
+
+        candidates.clear();
+
+        for (const size_t& vI : tri) {
+            candidates.insert(candidates.end(),
+                    vertexCandidates[vI].begin(),
+                    vertexCandidates[vI].end());
+        }
+
+        if (candidates.size() == 0) {
+            continue;
+        }
+
+        sort(candidates.begin(), candidates.end());
+
+        const double triLabel = candidates[candidates.size() / 2];
+
+        triangleValues[triI] = triLabel;
+    }
+}
+
 void TriQPBO::initTriangleColorStats() {
     triangleLabMeanVar.resize(triangles.size());
 
@@ -629,18 +694,16 @@ void TriQPBO::initTrianglePairCost() {
         }
     }
     
-    {
-        float var = 0;
+    float var = 0;
 
-        for (float c : trianglePairCost) {
-            var += c * c;
-        }
+    for (float c : trianglePairCost) {
+        var += c * c;
+    }
 
-        var /= trianglePairCost.size() - 1;
+    var /= trianglePairCost.size() - 1;
 
-        for (float& c : trianglePairCost) {
-            c = exp(-(c * c) / (var));
-        }
+    for (float& c : trianglePairCost) {
+        c = exp(-(c * c) / (var));
     }
 
     vector<float> sortable = trianglePairCost;
@@ -673,56 +736,28 @@ void TriQPBO::initTrianglePairCost() {
     vector<float> candidates;
 
     for (size_t triI = 0; triI < triangles.size(); triI++) {
-        const array<size_t, 3>& tri = triangles[triI];
 
-        candidates.clear();
-
-        for (const size_t& vI : tri) {
-            candidates.insert(candidates.end(),
-                    vertexCandidates[vI].begin(),
-                    vertexCandidates[vI].end());
-        }
-
-        if (candidates.size() == 0) {
-            continue;
-        }
-
-        sort(candidates.begin(), candidates.end());
-
-        const float triLabel = candidates[candidates.size() / 2];
+        const double& triLabel = triangleValues[triI];
 
         for (auto& pair : adjacency[triI]) {
             size_t adjTriI = pair.first;
             size_t edgeId = pair.second.id;
 
             if (trianglePairCost[edgeId] < medianEdgeCost) {
-                const array<size_t, 3>& aTri = triangles[triI];
-
-                candidates.clear();
-
-                for (const size_t& vI : aTri) {
-                    candidates.insert(candidates.end(),
-                            vertexCandidates[vI].begin(),
-                            vertexCandidates[vI].end());
-                }
-
-                if (candidates.size() == 0) {
-                    continue;
-                }
-
-                sort(candidates.begin(), candidates.end());
-
-                const float adjTriLabel = candidates[candidates.size() / 2];
+                const double& adjTriLabel = triangleValues[adjTriI];
 
                 adjMedianDepthDiff.push_back(fabs(adjTriI - adjTriLabel));
             }
         }
     }
 
-    const CImg<float> adjMedianDepthDiffCImg(adjMedianDepthDiff.data(),
-            adjMedianDepthDiff.size(), 1, 1, 1, true);
+    adjTriValueVariance = 0;
 
-    adjTriValueVariance = adjMedianDepthDiffCImg.variance(1);
+    for (float f : adjMedianDepthDiff) {
+        adjTriValueVariance += f;
+    }
+
+    adjTriValueVariance /= adjMedianDepthDiff.size() - 1;
 }
 
 void TriQPBO::initGModel() {
