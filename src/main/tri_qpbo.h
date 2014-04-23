@@ -12,7 +12,7 @@
 class TriQPBO {
     public:
         TriQPBO(
-                const CImg<uint8_t>& lab,
+                const CImg<float>& lab,
                 const vector<Eigen::Vector2f>& points);
 
         ~TriQPBO();
@@ -21,7 +21,7 @@ class TriQPBO {
                 CImg<double>& result);
 
         void visualizeTriangulation(
-                CImg<uint8_t>& colorVis);
+                CImg<float>& colorVis);
 
         /**
          * Note that this may modify depths in-place if fitLinear is true!
@@ -29,6 +29,9 @@ class TriQPBO {
         void addCandidateVertexDepths(
                 vector<double>& depths,
                 bool fitLinear);
+
+        void addCandidateVertexDepths(
+                const vector<double>& depths);
 
         void solve();
 
@@ -46,6 +49,8 @@ class TriQPBO {
 
         void initTriangles();
 
+        void initTriangleColorStats();
+
         void initAdjacency();
 
         void initGModel();
@@ -62,7 +67,7 @@ class TriQPBO {
 
         GModelData* gModelData;
 
-        const CImg<uint8_t>& imgLab;
+        const CImg<float> imgLab;
 
         const vector<Eigen::Vector2f> points;
 
@@ -75,6 +80,11 @@ class TriQPBO {
          * Triangle vertices are stored as indices into `points` in CCW order.
          */
         vector<array<size_t, 3>> triangles;
+        
+        /**
+         * Average Lab color among all pixels in each triangle.
+         */
+        vector<array<float, 3>> triangleAvgLab;
 
         /**
          * Adjacency list representation of adjacent triangles.

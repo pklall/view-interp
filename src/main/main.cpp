@@ -22,11 +22,15 @@ int main(int argc, char** argv) {
 
     const int imageCount = argc - 1;
 
-    CImg<uint8_t> initImg;
-    CImg<uint8_t> curImg;
+    CImg<float> initImg;
+    CImg<uint8_t> initImgGray;
+    CImg<float> curImg;
+    CImg<uint8_t> curImgGray;
 
     // Load a grayscale image from RGB
     initImg = CImg<float>::get_load(argv[1]).RGBtoLab();
+
+    initImgGray = initImg.get_shared_channel(0);
 
     int originalWidth = initImg.width();
     int originalHeight = initImg.height();
@@ -46,7 +50,7 @@ int main(int argc, char** argv) {
     float minDistance = min(workingWidth, workingHeight) * 1.0 / sqrt((float) numPoints);
     minDistance = max(5.0f, minDistance);
 
-    klt.init(initImg.get_shared_channel(0), numPoints, minDistance);
+    klt.init(initImgGray, numPoints, minDistance);
 
     printf("Feature count = %d\n", klt.featureCount());
 
@@ -78,11 +82,13 @@ int main(int argc, char** argv) {
 
         curImg = CImg<float>::get_load(argv[1 + imgI]).RGBtoLab();
 
+        curImgGray = curImg.get_shared_channel(0);
+
         assert(curImg.width() == originalWidth);
         assert(curImg.height() == originalHeight);
 
         printf("Computing KLT\n");
-        klt.compute(curImg.get_shared_channel(0));
+        klt.compute(curImgGray);
         printf("Done\n");
 
         for (int pointI = 0; pointI < klt.featureCount(); pointI++) {
@@ -111,13 +117,27 @@ int main(int argc, char** argv) {
     }
 
     {
-        /*
-        CImg<uint8_t> colorVis(workingWidth, workingHeight, 1, 3);
+        TriQPBO qpbo(initImg, keypoints);
+
+        CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
         colorVis.fill(0);
         qpbo.visualizeTriangulation(colorVis);
         colorVis.display();
-        */
 
+        const vector<double>& depth = reconstruct.getDepths();
+
+        qpbo.addCandidateVertexDepths(depth);
+
+        qpbo.solve();
+
+        CImg<double> depthVis(workingWidth, workingHeight);
+        depthVis.fill(0.0);
+        qpbo.denseInterp(depthVis);
+        double medianDepth = depthVis.median();
+        depthVis.min(medianDepth * 10);
+        depthVis.display();
+
+        /*
         for (int camI = -1; camI < imageCount - 1; camI++) {
             if (camI < 0 || reconstruct.isInlierCamera(camI)) {
                 TriQPBO qpbo(initImg, keypoints);
@@ -141,6 +161,7 @@ int main(int argc, char** argv) {
                 depthVis.display();
             }
         }
+        */
     }
 
 
@@ -226,7 +247,7 @@ int main(int argc, char** argv) {
 #if false
     bool display_dense_flow = false;
     if (display_dense_flow) {
-        CImg<uint8_t> initDown = initImg.get_channel(0);
+        CImg<uint8_t> initDown = initImgGray;
         CImg<uint8_t> curDown;
 
         float scaleFactor = 1024.0f / max(originalWidth, originalHeight);
@@ -343,7 +364,7 @@ int main(int argc, char** argv) {
 #if false
     const bool display_rectification = false;
     if (display_rectification) {
-        CImg<uint8_t> initDown = initImg.get_channel(0);
+        CImg<uint8_t> initDown = initImgGray;
         CImg<uint8_t> curDown;
 
         float scaleFactor = (512.0f) / max((float) originalWidth, (float) originalHeight);
