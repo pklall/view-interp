@@ -117,7 +117,9 @@ int main(int argc, char** argv) {
     }
 
     {
+        printf("initializing qpbo\n");
         TriQPBO qpbo(initImg, keypoints);
+        printf("done\n");
 
         CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
         colorVis.fill(0);

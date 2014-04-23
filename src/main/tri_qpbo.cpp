@@ -108,6 +108,8 @@ TriQPBO::TriQPBO(
 
     initAdjacency();
 
+    initTrianglePairCost();
+
     initGModel();
 
     fill(triangleValues.begin(), triangleValues.end(), -1.0);
@@ -160,11 +162,12 @@ void TriQPBO::visualizeTriangulation(
         CImg<float>& colorVis) {
     float color[3];
 
+    /*
     for (int triI = 0; triI < triangles.size(); triI++) {
         const auto& tri = triangles[triI];
 
         for (int c = 0; c < 3; c++) {
-            color[c] = triangleAvgLab[triI][c];
+            color[c] = get<0>(triangleLabMeanVar[triI])[c];
         }
 
         colorVis.draw_triangle(
@@ -176,9 +179,12 @@ void TriQPBO::visualizeTriangulation(
                 points[get<2>(tri)].y(),
                 color);
     }
+    */
 
     // Draw adjacency graph as lines between the centers of triangles
-    float black[3] = {0, 0, 0};
+    color[0] = 0;
+    color[1] = 0;
+    color[2] = 0;
 
     for (size_t triI = 0; triI < triangles.size(); triI++) {
         const auto& adj = adjacency[triI];
@@ -198,6 +204,13 @@ void TriQPBO::visualizeTriangulation(
 
         for (const auto& adjPair : adj) {
             size_t adjTriI = adjPair.first;
+
+            size_t pairId = adjPair.second.id;
+
+            float dist = trianglePairCost[pairId];
+            color[0] = dist;
+            color[1] = dist;
+            color[2] = dist;
             
             const auto& aTri = triangles[adjTriI];
 
@@ -212,7 +225,7 @@ void TriQPBO::visualizeTriangulation(
                 points[get<2>(aTri)].y();
             cy2 /= 3.0;
 
-            colorVis.draw_line(cx, cy, cx2, cy2, black);
+            colorVis.draw_line(cx, cy, cx2, cy2, color);
         }
     }
 }
@@ -479,12 +492,16 @@ void TriQPBO::initTriangles() {
 }
 
 void TriQPBO::initTriangleColorStats() {
-    triangleAvgLab.resize(triangles.size());
+    triangleLabMeanVar.resize(triangles.size());
+
+    array<vector<float>, 3> pixValues;
 
     for (int i = 0; i < triangles.size(); i++) {
         const auto& tri = triangles[i];
 
-        triangleAvgLab[i].fill(0);
+        for (vector<float>& pixels : pixValues) {
+            pixels.clear();
+        }
 
         // The following based on the draw_triangle method from CImg.h
         // Note that the gouroud shading and color interpolation implementations
@@ -502,8 +519,6 @@ void TriQPBO::initTriangleColorStats() {
         if (ny0>ny2) cimg::swap(nx0,nx2,ny0,ny2);
         if (ny1>ny2) cimg::swap(nx1,nx2,ny1,ny2);
 
-        int numPixels = 0;
-
         cimg_forC(imgLab, c) {
             if (ny0<imgLab.height() && ny2>=0) {
                 _cimg_for_triangle1(imgLab,xl,xr,y,nx0,ny0,nx1,ny1,nx2,ny2) {
@@ -517,18 +532,24 @@ void TriQPBO::initTriangleColorStats() {
                     for (int x = max(xleft, 0);
                             x <= min(xright, imgLab.width() - 1);
                             x++) {
-                        triangleAvgLab[i][c] += (float) imgLab(x, y, 0, c);
-
-                        numPixels++;
+                        pixValues[c].push_back(imgLab(x, y, 0, c));
                     }
                 }
             }
         }
 
-        numPixels /= 3;
-
         for (int c = 0; c < 3; c++) {
-            triangleAvgLab[i][c] /= numPixels;
+            const vector<float>& pixels = pixValues[c];
+            const CImg<float> pixelsCImg(pixels.data(), pixels.size(), 1, 1, 1,
+                    true);
+
+            float mean;
+            float var;
+
+            var = pixelsCImg.variance_mean(1, mean);
+            
+            get<0>(triangleLabMeanVar[i])[c] = mean;
+            get<1>(triangleLabMeanVar[i])[c] = var;
         }
     }
 }
@@ -573,6 +594,45 @@ void TriQPBO::initAdjacency() {
                 }
             }
         }
+    }
+}
+
+void TriQPBO::initTrianglePairCost() {
+    trianglePairCost.resize(adjTriCount);
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        for (auto& pair : adjacency[triI]) {
+            size_t adjTriI = pair.first;
+
+            size_t edgeId = pair.second.id;
+
+            const Eigen::Vector3f& u0 = get<0>(triangleLabMeanVar[triI]);
+            const Eigen::Vector3f& sigma0 = get<1>(triangleLabMeanVar[triI]);
+
+            const Eigen::Vector3f& u1 = get<0>(triangleLabMeanVar[adjTriI]);
+            const Eigen::Vector3f& sigma1 = get<1>(triangleLabMeanVar[adjTriI]);
+
+            // See wikipedia for Bhattacharyya distance of multivariate normal
+            // distributions.
+
+            auto sigma = Eigen::DiagonalMatrix<float, 3>((sigma0 + sigma1) * 0.5f);
+            auto sigmaInv = sigma.inverse();
+
+            float bDist = (1.0/8.0) * (u0 - u1).transpose() * sigmaInv * (u0 - u1) + 0.5 * log(sigma.diagonal().prod() / sqrt(sigma0.prod() * sigma1.prod()));
+
+            trianglePairCost[edgeId] = bDist;
+        }
+    }
+
+    const CImg<float> triPairCostCImg(trianglePairCost.data(), adjTriCount,
+            1, 1, 1, true);
+
+    float var = triPairCostCImg.variance(1);
+
+    float var2 = var * var;
+
+    for (float& c : trianglePairCost) {
+        c = exp(-c / (2 * var2));
     }
 }
 

@@ -53,6 +53,8 @@ class TriQPBO {
 
         void initAdjacency();
 
+        void initTrianglePairCost();
+
         void initGModel();
 
         // Definining this in the cpp file prevents pulling all of opengm's
@@ -84,7 +86,7 @@ class TriQPBO {
         /**
          * Average Lab color among all pixels in each triangle.
          */
-        vector<array<float, 3>> triangleAvgLab;
+        vector<tuple<Eigen::Vector3f, Eigen::Vector3f>> triangleLabMeanVar;
 
         /**
          * Adjacency list representation of adjacent triangles.
@@ -95,6 +97,8 @@ class TriQPBO {
          * a < b.
          */
         vector<map<size_t, TriAdj>> adjacency;
+
+        vector<float> trianglePairCost;
 
         /**
          * The number of adjacent triangles
