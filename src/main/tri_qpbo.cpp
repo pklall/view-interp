@@ -94,13 +94,16 @@ struct TriQPBO::GModelData {
 
 TriQPBO::TriQPBO(
         const CImg<float>& lab,
-        const vector<Eigen::Vector2f>& _points) :
+        const vector<Eigen::Vector2f>& _points,
+        const vector<double>& values) :
     imgLab(lab),
     gModelData(nullptr),
     points(_points),
     adjTriCount(0) {
 
     vertexCandidates.resize(points.size());
+
+    addCandidateVertexDepths(values);
 
     initTriangles();
 
@@ -438,8 +441,6 @@ void TriQPBO::fitCandidateValuesLinear(
     double m = mEstimates[mEstimates.size() / 2];
     double b = 0;
 
-    printf("m = %f\n, b = %f\n", m, b);
-
     for (double& d : depths) {
         d = d * m + b;
     }
@@ -620,20 +621,108 @@ void TriQPBO::initTrianglePairCost() {
 
             float bDist = (1.0/8.0) * (u0 - u1).transpose() * sigmaInv * (u0 - u1) + 0.5 * log(sigma.diagonal().prod() / sqrt(sigma0.prod() * sigma1.prod()));
 
+            if (!isfinite(bDist)) {
+                bDist = 0.0;
+            }
+
             trianglePairCost[edgeId] = bDist;
         }
     }
+    
+    {
+        float var = 0;
 
-    const CImg<float> triPairCostCImg(trianglePairCost.data(), adjTriCount,
-            1, 1, 1, true);
+        for (float c : trianglePairCost) {
+            var += c * c;
+        }
 
-    float var = triPairCostCImg.variance(1);
+        var /= trianglePairCost.size() - 1;
 
-    float var2 = var * var;
-
-    for (float& c : trianglePairCost) {
-        c = exp(-c / (2 * var2));
+        for (float& c : trianglePairCost) {
+            c = exp(-(c * c) / (var));
+        }
     }
+
+    vector<float> sortable = trianglePairCost;
+    std::nth_element(
+            &(sortable.front()),
+            &(sortable[sortable.size() / 2]),
+            &(sortable.back()));
+    float medianEdgeCost = sortable[sortable.size() / 2];
+
+    /*
+    // Multiply pairwise costs by edge length
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        for (auto& pair : adjacency[triI]) {
+            size_t adjTriI = pair.first;
+
+            size_t edgeId = pair.second.id;
+
+            float edgeLength = (points[pair.second.edgePt0] -
+                    points[pair.second.edgePt1]).norm();
+
+            trianglePairCost[edgeId] *= edgeLength;
+        }
+    }
+    */
+
+    // Tabulate the difference in median depths for adjacent triangles
+    // with above-median pairwise cost.
+    vector<float> adjMedianDepthDiff;
+
+    vector<float> candidates;
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const array<size_t, 3>& tri = triangles[triI];
+
+        candidates.clear();
+
+        for (const size_t& vI : tri) {
+            candidates.insert(candidates.end(),
+                    vertexCandidates[vI].begin(),
+                    vertexCandidates[vI].end());
+        }
+
+        if (candidates.size() == 0) {
+            continue;
+        }
+
+        sort(candidates.begin(), candidates.end());
+
+        const float triLabel = candidates[candidates.size() / 2];
+
+        for (auto& pair : adjacency[triI]) {
+            size_t adjTriI = pair.first;
+            size_t edgeId = pair.second.id;
+
+            if (trianglePairCost[edgeId] < medianEdgeCost) {
+                const array<size_t, 3>& aTri = triangles[triI];
+
+                candidates.clear();
+
+                for (const size_t& vI : aTri) {
+                    candidates.insert(candidates.end(),
+                            vertexCandidates[vI].begin(),
+                            vertexCandidates[vI].end());
+                }
+
+                if (candidates.size() == 0) {
+                    continue;
+                }
+
+                sort(candidates.begin(), candidates.end());
+
+                const float adjTriLabel = candidates[candidates.size() / 2];
+
+                adjMedianDepthDiff.push_back(fabs(adjTriI - adjTriLabel));
+            }
+        }
+    }
+
+    const CImg<float> adjMedianDepthDiffCImg(adjMedianDepthDiff.data(),
+            adjMedianDepthDiff.size(), 1, 1, 1, true);
+
+    adjTriValueVariance = adjMedianDepthDiffCImg.variance(1);
 }
 
 void TriQPBO::initGModel() {

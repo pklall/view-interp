@@ -117,18 +117,16 @@ int main(int argc, char** argv) {
     }
 
     {
+        const vector<double>& depth = reconstruct.getDepths();
+
         printf("initializing qpbo\n");
-        TriQPBO qpbo(initImg, keypoints);
+        TriQPBO qpbo(initImg, keypoints, depth);
         printf("done\n");
 
         CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
         colorVis.fill(0);
         qpbo.visualizeTriangulation(colorVis);
         colorVis.display();
-
-        const vector<double>& depth = reconstruct.getDepths();
-
-        qpbo.addCandidateVertexDepths(depth);
 
         qpbo.solve();
 

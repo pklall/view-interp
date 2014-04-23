@@ -13,7 +13,8 @@ class TriQPBO {
     public:
         TriQPBO(
                 const CImg<float>& lab,
-                const vector<Eigen::Vector2f>& points);
+                const vector<Eigen::Vector2f>& points,
+                const vector<double>& values);
 
         ~TriQPBO();
 
@@ -98,12 +99,20 @@ class TriQPBO {
          */
         vector<map<size_t, TriAdj>> adjacency;
 
-        vector<float> trianglePairCost;
-
         /**
          * The number of adjacent triangles
          */
         size_t adjTriCount;
+
+        /**
+         * The estimated variance in value between similar adjacent triangles.
+         */
+        float adjTriValueVariance;
+
+        /**
+         * Pairwise energy term coefficient between adjacent triangles.
+         */
+        vector<float> trianglePairCost;
 
         /**
          * The current triangle labels.
