@@ -357,6 +357,10 @@ size_t TriQPBO::mergeCandidateValues(
         }
     }
 
+    float error = gModelData->model.evaluate(labels);
+
+    printf("RESIDUAL = %f\n", error);
+
     return numChanged;
 }
 

@@ -44,14 +44,16 @@ void ReconstructUtil::computeCanonicalPose(
 }
 
 DepthReconstruction::DepthReconstruction() :
-    robustLossHuberParam(0.0000001),
-    inlierThreshold(0.010),
-    maxDepthBasedPoseEstimationSamples(2000) {
+    robustLossHuberParam(0.00001),
+    inlierThreshold(0.010) {
 }
 
 void DepthReconstruction::init(
         int numCameras,
-        int numPoints) {
+        int numPoints,
+        int numGoodPoints) {
+    numPointsToUse = numGoodPoints;
+
     Fmatrices.resize(numCameras);
     cameras.resize(numCameras);
     observations.resize(numCameras);
@@ -80,7 +82,7 @@ void DepthReconstruction::solveSloppy() {
     for (size_t cameraI = 0; cameraI < cameras.size(); cameraI++) {
         cout << "Estimating F for camera " << cameraI << endl;
 
-        size_t fInlierCount = estimateFUsingObs(cameraI, 500);
+        size_t fInlierCount = estimateFUsingObs(cameraI);
 
         cout << "Inliers after computing F = " << fInlierCount << endl;
 
@@ -105,7 +107,7 @@ void DepthReconstruction::solveSloppy() {
 void DepthReconstruction::solve() {
     resetSolutionState();
 
-    const size_t minInliers = 200;
+    const size_t minInliers = 100;
 
     float bestInlierRatio = 0;
     size_t bestCamera = 0;
@@ -129,9 +131,6 @@ void DepthReconstruction::solve() {
 
         if (poseInlierCount > minInliers) {
             camInlierCount.push_back(make_tuple(inlierRatio, cameraI));
-            
-            // Clear the inlier count
-            resetInlierMask(cameraI);
         }
     }
 
@@ -158,7 +157,7 @@ void DepthReconstruction::solve() {
         size_t cameraI = get<1>(camInlierCount[i]);
         // size_t DepthReconstruction::computeDepthCorrespondenceCount(int cameraIndex);
 
-        resetInlierMask(cameraI);
+        // resetInlierMask(cameraI);
 
         size_t inlierC = estimatePoseUsingDepth(cameraI, inlierThreshold);
 
@@ -173,10 +172,12 @@ void DepthReconstruction::solve() {
         cout << "Camera after bundle adjustment: " <<
             cameras[cameraI].rotation << endl <<
             "norm = " << cameras[cameraI].rotation.norm() << endl <<
-            cameras[cameraI].translation.transpose() << endl;
+            cameras[cameraI].translation.transpose() << endl <<
+            "norm = " << cameras[cameraI].translation.norm() << endl;
     }
 
     // Refine camera pose estimates using bundle-adjusted depth
+    /*
     for (int i = 1; i < maxImagesToUse; i++) {
         size_t cameraI = get<1>(camInlierCount[i]);
 
@@ -189,6 +190,7 @@ void DepthReconstruction::solve() {
             "norm = " << cameras[cameraI].rotation.norm() << endl <<
             cameras[cameraI].translation.transpose() << endl;
     }
+    */
 
     // Set inlierCount to tally the total number of inlier observations
     // used in determining each depth value.
@@ -433,9 +435,7 @@ void DepthReconstruction::resetInlierMask(
 }
 
 size_t DepthReconstruction::estimateFUsingObs(
-        int cameraIndex,
-        int maxObservationsToUse,
-        bool defaultInlier) {
+        int cameraIndex) {
     fundMatEstimator.init();
 
     int numObs = 0;
@@ -443,7 +443,7 @@ size_t DepthReconstruction::estimateFUsingObs(
     for (const Observation& obs : observations[cameraIndex]) {
         fundMatEstimator.addMatch(keypoints[obs.pointIndex], obs.point);
         numObs++;
-        if (numObs > maxObservationsToUse) {
+        if (numObs > numPointsToUse) {
             break;
         }
     }
@@ -452,13 +452,10 @@ size_t DepthReconstruction::estimateFUsingObs(
 
     size_t inlierC = 0;
 
-    for (size_t i = 0; i < observations[cameraIndex].size(); i++) {
-        if (i > maxObservationsToUse) {
-            observationInlierMask[cameraIndex][i] = defaultInlier;
-            if (defaultInlier) {
-                inlierC++;
-            }
-        } else if (fundMatEstimator.isInlier(i)) {
+    for (size_t i = 0;
+            i < observations[cameraIndex].size() && i < numPointsToUse;
+            i++) {
+        if (fundMatEstimator.isInlier(i)) {
             inlierC ++;
 
             observationInlierMask[cameraIndex][i] = true;
@@ -483,7 +480,9 @@ size_t DepthReconstruction::estimatePoseUsingF(
     array<size_t, 5> poseBallots;
     poseBallots.fill(0);
 
-    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+    for (size_t obsI = 0;
+            obsI < observations[cameraIndex].size() && obsI < numPointsToUse;
+            obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
 
         // Only inliers get to vote
@@ -517,7 +516,9 @@ size_t DepthReconstruction::estimatePoseUsingF(
 
     size_t inlierC = 0;
 
-    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+    for (size_t obsI = 0;
+            obsI < observations[cameraIndex].size() && obsI < numPointsToUse;
+            obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
 
         if (observationInlierMask[cameraIndex][obsI]) {
@@ -543,7 +544,9 @@ size_t DepthReconstruction::triangulateDepthUsingPose(
     size_t newSampleCount = 0;
     size_t reverseCount = 0;
 
-    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+    for (size_t obsI = 0;
+            obsI < observations[cameraIndex].size() && obsI < numPointsToUse;
+            obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
 
         if (observationInlierMask[cameraIndex][obsI] &&
@@ -575,7 +578,9 @@ size_t DepthReconstruction::computeDepthCorrespondenceCount(
         int cameraIndex) {
     size_t count = 0;
 
-    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+    for (size_t obsI = 0;
+            obsI < observations[cameraIndex].size() && obsI < numPointsToUse;
+            obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
 
         if (observationInlierMask[cameraIndex][obsI] &&
@@ -595,18 +600,15 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
     vector<unique_ptr<CamCostFunction>> costFunctions;
 
-    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+    for (size_t obsI = 0;
+            obsI < observations[cameraIndex].size() && obsI < numPointsToUse;
+            obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
 
         // Create a new cost function for each inlier observation for which
         // depth has already been estimated.
         if (observationInlierMask[cameraIndex][obsI] &&
                 depth[obs.pointIndex] > 0) {
-
-            if (costFunctions.size() > maxDepthBasedPoseEstimationSamples) {
-                break;
-            }
-
             CamCostFunction* costFunction =
                 new ceres::AutoDiffCostFunction<
                 // 2 residuals
@@ -619,6 +621,8 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         }
     }
 
+    printf("Depth-based pose estimation # points = %d\n", costFunctions.size());
+
     if (costFunctions.size() == 0) {
         return 0;
     }
@@ -628,8 +632,11 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
     std::random_shuffle(costFunctions.begin(), costFunctions.end());
 
     // Keep track of the currently-optimal score and value
-    int optimalInlierCount = 0;
+    float optimalScore = std::numeric_limits<float>::max();
+    // int optimalScore = 0;
     CameraParam optimalParam;
+
+    CameraParam curParam;
 
     ceres::Problem::Options pOptions;
     // This ensures that ceres don't delete our cost functions
@@ -643,10 +650,25 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
     unique_ptr<ceres::LocalParameterization> quatParameterization(
             new ceres::QuaternionParameterization());
 
+    ceres::Problem globalProblem(pOptions);
+
+    ceres::LossFunction* robustLoss =
+        new ceres::HuberLoss(robustLossHuberParam);
+
+    for (const auto& cf : costFunctions) {
+        globalProblem.AddResidualBlock(
+                cf.get(),
+                robustLoss,
+                curParam.translation.data(),
+                curParam.rotation.data());
+    }
+
+    globalProblem.SetParameterization(
+            curParam.rotation.data(),
+            quatParameterization.get());
+
     for (int iter = 0; iter < max_iters; iter++) {
         ceres::Problem problem(pOptions);
-
-        CameraParam curParam;
 
         curParam.translation = Eigen::Vector3d(0, 0, 0);
         curParam.rotation = Eigen::Vector4d(1, 0, 0, 0);
@@ -662,10 +684,10 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
                     NULL, // least-squares
                     curParam.translation.data(),
                     curParam.rotation.data());
-
-            problem.SetParameterization(curParam.rotation.data(),
-                    quatParameterization.get());
         }
+
+        problem.SetParameterization(curParam.rotation.data(),
+                quatParameterization.get());
 
         ceres::Solver::Options options;
         // Use default solver
@@ -677,10 +699,18 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
         ceres::Solve(options, &problem, &summary);
         // cout << summary.BriefReport() << endl;
 
-        int inlierC = 0;
+        double cost;
+
+        globalProblem.Evaluate(ceres::Problem::EvaluateOptions(), &cost,
+                nullptr, nullptr, nullptr);
 
         // Compute the number of inliers among those samples we care about
-        for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+        /*
+        int inlierC = 0;
+
+        for (size_t obsI = 0;
+                obsI < observations[cameraIndex].size() && obsI < numPointsToUse;
+                obsI++) {
             const Observation& obs = observations[cameraIndex][obsI];
 
             if (observationInlierMask[cameraIndex][obsI] &&
@@ -702,48 +732,46 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
                 }
             }
         }
+        */
 
-        if (inlierC > optimalInlierCount) {
-            optimalInlierCount = inlierC;
+        // if (inlierC > optimalScore) {
+            // optimalScore = inlierC;
+            // optimalParam = curParam;
+        // }
+        if (cost < optimalScore) {
+            optimalScore = cost;
             optimalParam = curParam;
         }
     }
 
     // Refine with all points and a robust kernel
     {
-        ceres::Problem problem(pOptions);
-
-        ceres::LossFunction* robustLoss =
-            new ceres::HuberLoss(robustLossHuberParam);
-
-        for (const auto& cf : costFunctions) {
-            problem.AddResidualBlock(
-                    cf.get(),
-                    robustLoss,
-                    optimalParam.translation.data(),
-                    optimalParam.rotation.data());
-
-            problem.SetParameterization(
-                    optimalParam.rotation.data(),
-                    quatParameterization.get());
-        }
-
         ceres::Solver::Options options;
         // Use default solver
         // options.linear_solver_type = ???;
         options.max_num_iterations = 100;
         options.minimizer_progress_to_stdout = false;
 
+        curParam = optimalParam;
+
         ceres::Solver::Summary summary;
-        ceres::Solve(options, &problem, &summary);
+        ceres::Solve(options, &globalProblem, &summary);
+
+        optimalParam = curParam;
     }
 
     // Update inlier masks
-    for (size_t obsI = 0; obsI < observations[cameraIndex].size(); obsI++) {
+    size_t inlierCount = 0;
+    for (size_t obsI = 0;
+            obsI < observations[cameraIndex].size() && obsI < numPointsToUse;
+            obsI++) {
         const Observation& obs = observations[cameraIndex][obsI];
 
         if (observationInlierMask[cameraIndex][obsI] &&
                 depth[obs.pointIndex] > 0) {
+            inlierCount++;
+
+            /*
             double residuals[2];
 
             Eigen::Vector3d point3 = get3DPoint(obs.pointIndex);
@@ -757,17 +785,22 @@ size_t DepthReconstruction::estimatePoseUsingDepth(
 
             if (residuals[0] * residuals[0] + residuals[1] * residuals[1] < 
                     inlierThreshold * inlierThreshold) {
+                inlierCount++;
             } else {
                 observationInlierMask[cameraIndex][obsI] = false;
             }
+            */
         }
     }
 
+    return inlierCount;
+
     // Since we may have solved for an incorrect (i.e. backwards-facing)
     // pose, we must have another "election" to find the correct one.
-    Fmatrices[cameraIndex] = optimalParam.getE();
+    // Fmatrices[cameraIndex] = optimalParam.getE();
 
-    return estimatePoseUsingF(cameraIndex);
+    // FIXME this resets any scale which was previously determined
+    // return estimatePoseUsingF(cameraIndex);
 }
 
 void DepthReconstruction::refineCamerasAndDepth(
@@ -782,7 +815,9 @@ void DepthReconstruction::refineCamerasAndDepth(
 
     for (size_t camI = 0; camI < cameras.size(); camI++) {
         if (cameraMask[camI]) {
-            for (size_t obsI = 0; obsI < observations[camI].size(); obsI++) {
+            for (size_t obsI = 0;
+                    obsI < observations[camI].size() && obsI < numPointsToUse;
+                    obsI++) {
                 const Observation& obs = observations[camI][obsI];
 
                 // Create a new cost function for each inlier observation for which
@@ -822,6 +857,6 @@ void DepthReconstruction::refineCamerasAndDepth(
 
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    cout << summary.FullReport() << endl;
+    // cout << summary.FullReport() << endl;
 }
 

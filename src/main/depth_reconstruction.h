@@ -175,10 +175,10 @@ class ReconstructUtil {
                     0, 0, 1, 0;
                 triangulate(pt0, pt1, P0, candidates[i], tri);
 
-                if (tri.z() > 0) {
+                if (tri.z() > 0 && isfinite(tri.z())) {
                     Eigen::Vector3d transTri = candidates[i] * tri.homogeneous();
 
-                    if (transTri.z() > 0) {
+                    if (transTri.z() > 0 && isfinite(transTri.z())) {
                         return i;
                     }
                 }
@@ -361,7 +361,8 @@ class DepthReconstruction {
 
         void init(
                 int numCameras,
-                int numPoints);
+                int numPoints,
+                int numGoodPoints);
 
         inline void setKeypoint(
                 size_t pointIndex,
@@ -468,14 +469,9 @@ class DepthReconstruction {
         /**
          * Estimates the specified camera's fundamental matrix using its
          * observations alone.
-         *
-         * Default inlier determines whether weaker keypoints not used
-         * are marked as inliers or outliers.
          */
         size_t estimateFUsingObs(
-                int cameraIndex,
-                int maxObservationsToUse = 20000,
-                bool defaultInlier = true);
+                int cameraIndex);
 
         /**
          * Estimates camera pose from the fundamental matrix.
@@ -534,9 +530,10 @@ class DepthReconstruction {
         const double inlierThreshold;
         
         /**
-         * The maximum number of depth samples to use when estimating pose.
+         * The maximum number of observations to actually use when solving
+         * for camera pose.
          */
-        const int maxDepthBasedPoseEstimationSamples;
+        int numPointsToUse;
 
         /**
          * Fundamental matrix estimate for each camera relative to the main

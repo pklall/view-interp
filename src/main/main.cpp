@@ -52,13 +52,15 @@ int main(int argc, char** argv) {
 
     klt.init(initImgGray, numPoints, minDistance);
 
+    const int numGoodPoints = klt.sortFeatures(min(workingWidth, workingHeight) * 1.0 / sqrt(2000));
+
     printf("Feature count = %d\n", klt.featureCount());
 
     DepthReconstruction reconstruct;
 
     CVFundamentalMatrixEstimator fundMatEst;
 
-    reconstruct.init(imageCount - 1, klt.featureCount());
+    reconstruct.init(imageCount - 1, klt.featureCount(), numGoodPoints);
 
     vector<Eigen::Vector2f> keypoints;
 
@@ -117,30 +119,64 @@ int main(int argc, char** argv) {
     }
 
     {
-        const vector<double>& depth = reconstruct.getDepths();
-
-        printf("initializing qpbo\n");
-        TriQPBO qpbo(initImg, keypoints, depth);
-        printf("done\n");
-
         /*
-        CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
-        colorVis.fill(0);
-        qpbo.visualizeTriangulation(colorVis);
-        colorVis.display();
-        */
+        vector<double> depth;
+        unique_ptr<TriQPBO> qpbo;
+        for (int camI = 0; camI < imageCount - 1; camI++) {
+            if (camI < 0 || reconstruct.isInlierCamera(camI)) {
+                reconstruct.getAllDepthSamples(camI, depth);
 
-        for (int i = 0; i < 10; i++) {
+                printf("initializing qpbo\n");
+                if (!qpbo) {
+                    qpbo.reset(new TriQPBO(initImg, keypoints, depth));
+                } else {
+                    qpbo->addCandidateVertexDepths(depth);
+                }
+                printf("done\n");
+
+                   // CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
+                   // colorVis.fill(0);
+                   // qpbo.visualizeTriangulation(colorVis);
+                   // colorVis.display();
+            }
+        }
+
+        while(true) {
             CImg<double> depthVis(workingWidth, workingHeight);
             depthVis.fill(0.0);
-            qpbo.denseInterp(depthVis);
+            qpbo->denseInterp(depthVis);
             double medianDepth = depthVis.median();
             depthVis.min(medianDepth * 10);
             depthVis.max(0.0);
             depthVis.display();
 
-            for (int j = 0; j < 10; j++) {
+            qpbo->solve();
+        }
+        */
+
+        for (int camI = 0; camI < imageCount - 1; camI++) {
+            if (camI < 0 || reconstruct.isInlierCamera(camI)) {
+                vector<double> depth; // reconstruct.getDepths();
+                reconstruct.getAllDepthSamples(camI, depth);
+
+                printf("initializing qpbo\n");
+                TriQPBO qpbo(initImg, keypoints, depth);
+                printf("done\n");
+
+                   // CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
+                   // colorVis.fill(0);
+                   // qpbo.visualizeTriangulation(colorVis);
+                   // colorVis.display();
+
                 qpbo.solve();
+
+                CImg<double> depthVis(workingWidth, workingHeight);
+                depthVis.fill(0.0);
+                qpbo.denseInterp(depthVis);
+                double medianDepth = depthVis.median();
+                depthVis.min(medianDepth * 10);
+                depthVis.max(0.0);
+                depthVis.display();
             }
         }
 

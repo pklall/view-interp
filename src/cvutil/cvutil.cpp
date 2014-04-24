@@ -109,6 +109,9 @@ void CVOpticalFlow::init(
         const CImg<uint8_t>& base,
         int maxFeatures,
         double minDistance) {
+    imgWidth = base.width();
+    imgHeight = base.height();
+
     cv::Mat baseCV = cv::Mat(base.height(), base.width(), CV_8UC1,
             (void*) base.data());
 
@@ -124,6 +127,45 @@ void CVOpticalFlow::init(
     matches.resize(goodFeatures.size());
     matchMask.resize(goodFeatures.size());
     matchError.resize(goodFeatures.size());
+}
+
+int CVOpticalFlow::sortFeatures(
+        int gridSize) {
+    if (gridSize <= 0) {
+        return goodFeatures.size();
+    }
+
+    // Round up
+    int gridCellsX = (imgWidth + gridSize - 1) / gridSize;
+    int gridCellsY = (imgHeight + gridSize - 1) / gridSize;
+
+    if (goodFeatures.size() < gridCellsX * gridCellsY) {
+        // Do nothing if there are fewer features than grid cells
+        return goodFeatures.size();
+    }
+
+    vector<bool> placedFeatures(goodFeatures.size());
+
+    fill(placedFeatures.begin(), placedFeatures.end(), false);
+
+    // Place the best features in each cell first.
+    // Note that this relies on features being sorted from best to worst,
+    // which OpenCV should already have done.
+    for (size_t i = 0; i < goodFeatures.size(); i++) {
+        const cv::Point2f& feat = goodFeatures[i];
+
+        int gridX = feat.x / gridSize;
+        int gridY = feat.y / gridSize;
+
+        size_t cell = gridY * gridCellsX + gridX;
+
+        if (!placedFeatures[cell]) {
+            placedFeatures[cell] = true;
+            swap(goodFeatures[i], goodFeatures[cell]);
+        }
+    }
+
+    return gridCellsX * gridCellsY;
 }
 
 void CVOpticalFlow::compute(

@@ -70,6 +70,13 @@ class CVOpticalFlow {
                 int maxFeatures,
                 double minDistance);
 
+        /**
+         * Sorts features such that the first features in the list will
+         * be the best features in their grid cell.
+         */
+        int sortFeatures(
+                int gridSize);
+
         void compute(
                 const CImg<uint8_t>& other);
 
@@ -96,6 +103,7 @@ class CVOpticalFlow {
         }
 
     private:
+        int imgWidth, imgHeight;
         int wndSize;
         int pyrLevels;
         vector<cv::Mat> basePyr;
