@@ -13,8 +13,9 @@ class TriQPBO {
     public:
         TriQPBO(
                 const CImg<float>& lab,
-                const vector<Eigen::Vector2f>& points,
-                const vector<double>& values);
+                const vector<Eigen::Vector2f>& points);
+
+        void init();
 
         ~TriQPBO();
 
@@ -37,6 +38,24 @@ class TriQPBO {
         void solve();
 
     private:
+        template<typename T>
+        inline T unaryCost(
+                size_t vertexIndex,
+                T candidateValue) {
+            T cost = T(0);
+
+            for (const double& c : vertexCandidates[vertexIndex]) {
+                T val = T(c);
+
+                cost += min(abs(candidateValue - val),
+                        T(adjTriValueVariance * 2.0));
+            }
+
+            cost /= T(vertexCandidates.size());
+
+            return cost;
+        }
+
         /**
          * Uses QPBO to fuse the candidate labels with the existing triangle
          * labeling.
@@ -59,7 +78,7 @@ class TriQPBO {
 
         void initTriangles();
 
-        void initTriangleLabelsMedian();
+        void initTriangleLabels();
 
         void initTriangleColorStats();
 

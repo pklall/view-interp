@@ -94,20 +94,19 @@ struct TriQPBO::GModelData {
 
 TriQPBO::TriQPBO(
         const CImg<float>& lab,
-        const vector<Eigen::Vector2f>& _points,
-        const vector<double>& values) :
+        const vector<Eigen::Vector2f>& _points) :
     imgLab(lab),
     gModelData(nullptr),
     points(_points),
     adjTriCount(0) {
 
     vertexCandidates.resize(points.size());
+}
 
-    addCandidateVertexDepths(values);
-
+void TriQPBO::init() {
     initTriangles();
 
-    initTriangleLabelsMedian();
+    initTriangleLabels();
 
     initTriangleColorStats();
 
@@ -542,7 +541,7 @@ void TriQPBO::initTriangles() {
     fill(triangleValues.begin(), triangleValues.end(), -1);
 }
 
-void TriQPBO::initTriangleLabelsMedian() {
+void TriQPBO::initTriangleLabels() {
     triangleValues.resize(triangles.size());
 
     fill(triangleValues.begin(), triangleValues.end(), -1.0);
@@ -564,11 +563,28 @@ void TriQPBO::initTriangleLabelsMedian() {
             continue;
         }
 
-        sort(candidates.begin(), candidates.end());
+        double bestLabel = -1;
+        double bestCost = std::numeric_limits<double>::max();
 
-        const double triLabel = candidates[candidates.size() / 2];
+        for (double& label : candidates) {
+            double cost = 0;
 
-        triangleValues[triI] = triLabel;
+            for (const size_t& vI : tri) {
+                cost += unaryCost(vI, label);
+            }
+
+            if (cost < bestCost) {
+                bestLabel = label;
+            }
+        }
+        
+        triangleValues[triI] = bestLabel;
+        
+        // sort(candidates.begin(), candidates.end());
+
+        // const double triLabel = candidates[candidates.size() / 2];
+
+        // triangleValues[triI] = triLabel;
     }
 }
 

@@ -119,41 +119,39 @@ int main(int argc, char** argv) {
     }
 
     {
-        /*
         vector<double> depth;
-        unique_ptr<TriQPBO> qpbo;
+        TriQPBO qpbo(initImg, keypoints);
+
         for (int camI = 0; camI < imageCount - 1; camI++) {
             if (camI < 0 || reconstruct.isInlierCamera(camI)) {
                 reconstruct.getAllDepthSamples(camI, depth);
 
-                printf("initializing qpbo\n");
-                if (!qpbo) {
-                    qpbo.reset(new TriQPBO(initImg, keypoints, depth));
-                } else {
-                    qpbo->addCandidateVertexDepths(depth);
-                }
-                printf("done\n");
+                qpbo.addCandidateVertexDepths(depth);
 
-                   // CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
-                   // colorVis.fill(0);
-                   // qpbo.visualizeTriangulation(colorVis);
-                   // colorVis.display();
+                // CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
+                // colorVis.fill(0);
+                // qpbo.visualizeTriangulation(colorVis);
+                // colorVis.display();
             }
         }
+
+        printf("initializing qpbo\n");
+        qpbo.init();
+        printf("done\n");
 
         while(true) {
             CImg<double> depthVis(workingWidth, workingHeight);
             depthVis.fill(0.0);
-            qpbo->denseInterp(depthVis);
+            qpbo.denseInterp(depthVis);
             double medianDepth = depthVis.median();
             depthVis.min(medianDepth * 10);
             depthVis.max(0.0);
             depthVis.display();
 
-            qpbo->solve();
+            qpbo.solve();
         }
-        */
 
+        /*
         for (int camI = 0; camI < imageCount - 1; camI++) {
             if (camI < 0 || reconstruct.isInlierCamera(camI)) {
                 vector<double> depth; // reconstruct.getDepths();
@@ -179,6 +177,7 @@ int main(int argc, char** argv) {
                 depthVis.display();
             }
         }
+        */
 
         /*
         for (int camI = -1; camI < imageCount - 1; camI++) {
