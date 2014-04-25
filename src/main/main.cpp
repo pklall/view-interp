@@ -144,11 +144,18 @@ int main(int argc, char** argv) {
             depthVis.fill(0.0);
             qpbo.denseInterp(depthVis);
             double medianDepth = depthVis.median();
-            depthVis.min(medianDepth * 10);
+            depthVis.min(medianDepth * 30);
             depthVis.max(0.0);
             depthVis.display();
 
-            qpbo.solve();
+            printf("Enter unary cost factor...\n");
+
+            float unaryCostFactor;
+
+            cin >> unaryCostFactor;
+            // unaryCostFactor << cin;
+
+            qpbo.solve(1, unaryCostFactor);
         }
 
         /*

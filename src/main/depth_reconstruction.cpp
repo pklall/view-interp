@@ -161,7 +161,7 @@ void DepthReconstruction::solve() {
 
         size_t inlierC = estimatePoseUsingDepth(cameraI, inlierThreshold);
 
-        printf("Depth-based pose estimation inliers = %d\n", inlierC);
+        // printf("Depth-based pose estimation inliers = %d\n", inlierC);
 
         size_t triCount = triangulateDepthUsingPose(cameraI);
 

@@ -35,7 +35,12 @@ class TriQPBO {
         void addCandidateVertexDepths(
                 const vector<double>& depths);
 
-        void solve();
+        void solveAlphaExpansion(
+                int numIters);
+
+        void solve(
+                int numIters,
+                float unaryCostFactor);
 
     private:
         template<typename T>
@@ -47,11 +52,25 @@ class TriQPBO {
             for (const double& c : vertexCandidates[vertexIndex]) {
                 T val = T(c);
 
-                cost += min(abs(candidateValue - val),
-                        T(adjTriValueVariance * 2.0));
+                cost += min(abs(candidateValue - val), T(adjTriValueVariance * 5.0));
             }
 
             cost /= T(vertexCandidates.size());
+
+            return cost;
+        }
+
+        template<typename T>
+        inline T unaryCostTri(
+                size_t triIndex,
+                T candidateValue) {
+            T cost = T(0);
+
+            for (const size_t& vI : triangles[triIndex]) {
+                cost += unaryCost(vI, candidateValue);
+            }
+
+            cost /= T(3.0);
 
             return cost;
         }
@@ -63,7 +82,9 @@ class TriQPBO {
          * Returns the number of modified labels.
          */
         size_t mergeCandidateValues(
-                const vector<double> candidates);
+                const vector<double>& candidates,
+                const vector<float>& candidateUnaryCosts,
+                float unaryCostFactor);
 
         /**
          * Uses a RANSAC-like procedure to robustly solve for a linear (plus
@@ -137,7 +158,7 @@ class TriQPBO {
         /**
          * The estimated variance in value between similar adjacent triangles.
          */
-        float adjTriValueVariance;
+        double adjTriValueVariance;
 
         /**
          * Pairwise energy term coefficient between adjacent triangles.
@@ -148,5 +169,10 @@ class TriQPBO {
          * The current triangle labels.
          */
         vector<double> triangleValues;
+        
+        /**
+         * The unary cost associated with each current triangle label.
+         */
+        vector<float> triangleValueUnaryCosts;
 };
 
