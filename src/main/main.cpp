@@ -44,15 +44,17 @@ int main(int argc, char** argv) {
     printf("Image size = %d x %d\n", workingWidth, workingHeight);
 
     const int numPoints = 20000;
+    const int numMainPoints = 3000;
 
-    CVOpticalFlow klt(31, 15);
+    const int windowSize = 31;
+    CVOpticalFlow klt(windowSize, 15);
 
     float minDistance = min(workingWidth, workingHeight) * 1.0 / sqrt((float) numPoints);
     minDistance = max(5.0f, minDistance);
 
     klt.init(initImgGray, numPoints, minDistance);
 
-    const int numGoodPoints = klt.sortFeatures(min(workingWidth, workingHeight) * 1.0 / sqrt(2000));
+    const int numGoodPoints = klt.sortFeatures(min(workingWidth, workingHeight) * 1.0 / sqrt(numMainPoints));
 
     printf("Feature count = %d\n", klt.featureCount());
 
@@ -119,11 +121,20 @@ int main(int argc, char** argv) {
     }
 
     {
+        // const vector<double> rDepths = reconstruct.getDepths();
+        // double minDepth = *(min_element(&(rDepths.front()), &(rDepths[numMainPoints])));
+        // double maxDepth = *(max_element(&(rDepths.front()), &(rDepths[numMainPoints])));
+        // printf("depth range = [%f, %f]\n", minDepth, maxDepth);
+
         vector<double> depth;
+
         TriQPBO qpbo(initImg, keypoints);
+
+        // qpbo.addCandidateVertexDepths(rDepths);
 
         for (int camI = 0; camI < imageCount - 1; camI++) {
             if (camI < 0 || reconstruct.isInlierCamera(camI)) {
+                depth.clear();
                 reconstruct.getAllDepthSamples(camI, depth);
 
                 qpbo.addCandidateVertexDepths(depth);
@@ -146,16 +157,17 @@ int main(int argc, char** argv) {
             double medianDepth = depthVis.median();
             depthVis.min(medianDepth * 30);
             depthVis.max(0.0);
-            depthVis.display();
+            (initImg, depthVis).display();
 
             printf("Enter unary cost factor...\n");
 
-            float unaryCostFactor;
+            float unaryCostFactor = 0;
 
-            cin >> unaryCostFactor;
+            // cin >> unaryCostFactor;
             // unaryCostFactor << cin;
 
-            qpbo.solve(1, unaryCostFactor);
+            // qpbo.solveAlphaExpansion(minDepth, maxDepth, 32, 2, unaryCostFactor);
+            qpbo.solve(2, unaryCostFactor);
         }
 
         /*

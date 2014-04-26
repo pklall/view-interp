@@ -3,6 +3,8 @@
 #include "common.h"
 #include <Eigen/Dense>
 #include <vector>
+#include <list>
+#include <set>
 #include <map>
 
 /**
@@ -36,7 +38,11 @@ class TriQPBO {
                 const vector<double>& depths);
 
         void solveAlphaExpansion(
-                int numIters);
+                double minDepth,
+                double maxDepth,
+                int numLabels,
+                int numIters,
+                float unaryCostFactor);
 
         void solve(
                 int numIters,
@@ -52,7 +58,12 @@ class TriQPBO {
             for (const double& c : vertexCandidates[vertexIndex]) {
                 T val = T(c);
 
-                cost += min(abs(candidateValue - val), T(adjTriValueVariance * 5.0));
+                // cost += min(
+                        // abs(candidateValue - val) /
+                        // T(adjTriValueVariance * 5.0), 1.0);
+
+                T c1 = min(candidateValue - val / T(adjTriValueVariance * 5.0), 1.0); 
+                cost += c1;
             }
 
             cost /= T(vertexCandidates.size());

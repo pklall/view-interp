@@ -263,29 +263,35 @@ void TriQPBO::addCandidateVertexDepths(
 }
 
 void TriQPBO::solveAlphaExpansion(
-        int numIters) {
-    vector<double> sortedTriangleValues;
+        double minDepth,
+        double maxDepth,
+        int numLabels,
+        int numIters,
+        float unaryCostFactor) {
+    // vector<double> sortedTriangleValues;
 
-    for (const double& d : triangleValues) {
-        if (d > 0) {
-            sortedTriangleValues.push_back(d);
-        }
-    }
+    // for (const double& d : triangleValues) {
+        // if (d > 0) {
+            // sortedTriangleValues.push_back(d);
+        // }
+    // }
 
-    sort(sortedTriangleValues.begin(), sortedTriangleValues.end());
+    // sort(sortedTriangleValues.begin(), sortedTriangleValues.end());
 
-    const size_t numLabels = min((size_t) 64, sortedTriangleValues.size());
+    // const size_t numLabels = min((size_t) 64, sortedTriangleValues.size());
 
     vector<double> candidates(numLabels);
 
     vector<vector<float>> candidateUnaryCosts(numLabels);
 
     for (int i = 0; i < numLabels; i++) {
-        size_t offset = sortedTriangleValues.size() * 0.25;
-        size_t num = sortedTriangleValues.size() * 0.50;
-        size_t index = i * (num / (float) numLabels) + offset;
+        // size_t offset = sortedTriangleValues.size() * 0.25;
+        // size_t num = sortedTriangleValues.size() * 0.50;
+        // size_t index = i * (num / (float) numLabels) + offset;
 
-        candidates[i] = sortedTriangleValues[index];
+        // candidates[i] = sortedTriangleValues[index];
+        candidates[i] = minDepth +
+            (maxDepth - minDepth) * ((double) i) / (double) numLabels;
 
         candidateUnaryCosts[i].resize(triangles.size());
     }
@@ -325,7 +331,7 @@ void TriQPBO::solveAlphaExpansion(
             std::fill(newTriangleValues.begin(), newTriangleValues.end(), label);
 
             size_t numChanged = mergeCandidateValues(newTriangleValues,
-                    candidateUnaryCosts[cI], 1.0f);
+                    candidateUnaryCosts[cI], unaryCostFactor);
 
             printf("Label: %f\n", label);
             printf("Number of label flips = %d\n", numChanged);
@@ -379,6 +385,7 @@ void TriQPBO::solve(
     }
     
     // Normalize unary costs with respect to all labels for a particular triangle
+    /*
     for (size_t triI = 0; triI < triangles.size(); triI++) {
         float totalCost = 0;
 
@@ -390,28 +397,104 @@ void TriQPBO::solve(
             candidateUnaryCosts[candidateI][triI] /= totalCost;
         }
     }
+    */
 
     fill(triangleValues.begin(), triangleValues.end(), -1);
 
     for (int i = 0; i < numIters; i++) {
         for (size_t cI = 0; cI < candidates.size(); cI++) {
-            // const double& label = candidates[cI];
-            
-            // TODO this is a waste, mergeCandidateValues should take a single
-            //      global candidate value instead
-            // vector<double> newTriangleValues(triangles.size());
-
-            // std::fill(newTriangleValues.begin(), newTriangleValues.end(), label);
-
             const vector<double>& newTriangleValues = candidates[cI];
 
             size_t numChanged = mergeCandidateValues(newTriangleValues,
                     candidateUnaryCosts[cI],
                     unaryCostFactor);
 
-            // printf("Label: %f\n", label);
             printf("Number of label flips = %d\n", numChanged);
         }
+    }
+
+    vector<double> newTriangleValues(triangles.size());
+    vector<float> newTriangleValuesCosts(triangles.size());
+    fill(newTriangleValuesCosts.begin(), newTriangleValuesCosts.end(), 0);
+
+    for (int i = 0; i < 1; i++) {
+        printf("Using adjacent labels for label set\n");
+
+        vector<size_t> toVisit;
+        set<size_t> visited;
+        size_t toVisitFront = 0;
+        vector<double> closeValues;
+
+        for (size_t triI = 0; triI < triangles.size(); triI++) {
+            toVisit.clear();
+            toVisitFront = 0;
+            visited.clear();
+            closeValues.clear();
+
+            toVisit.push_back(triI);
+
+            for (int n = 0; n < 10; n++) {
+                size_t neighbor = toVisit[toVisitFront];
+                toVisitFront++;
+                visited.insert(neighbor);
+
+                const auto& adj = adjacency[neighbor];
+
+                vector<tuple<float, size_t>> pToVisit;
+
+                for (const auto& a : adj) {
+                    if (visited.count(a.first) == 0) {
+                        pToVisit.push_back(make_tuple(trianglePairCost[a.second.id],
+                                    a.first));
+                    }
+                }
+
+                if (pToVisit.size() > 0) {
+                    sort(pToVisit.begin(), pToVisit.end());
+                    toVisit.push_back(get<1>(pToVisit[0]));
+                }
+
+                closeValues.push_back(triangleValues[neighbor]);
+            }
+
+            size_t medianI = closeValues.size() / 2;
+            nth_element(
+                    &(closeValues.front()),
+                    &(closeValues[medianI]),
+                    &(closeValues.back()));
+            newTriangleValues[triI] = closeValues[medianI];
+        }
+
+        /*
+        for (size_t triI = 0; triI < triangles.size(); triI++) {
+            const auto& adj = adjacency[triI];
+            const auto& tri = triangles[triI];
+
+            float lowestCost = std::numeric_limits<float>::max();
+
+            for (const auto& adjPair : adj) {
+                size_t adjTriI = adjPair.first;
+
+                size_t pairId = adjPair.second.id;
+
+                const float& pairCost = trianglePairCost[pairId];
+
+                if (pairCost < lowestCost) {
+                    lowestCost = pairCost;
+                    newTriangleValues[triI] = triangleValues[adjTriI];
+                }
+            }
+
+            // newTriangleValues[triI] = triangleValues[tri[i % 3]];
+        }
+        */
+
+        size_t numChanged = mergeCandidateValues(
+                newTriangleValues,
+                newTriangleValuesCosts,
+                unaryCostFactor);
+
+        printf("Number of label flips = %d\n", numChanged);
     }
 }
 
@@ -442,10 +525,14 @@ size_t TriQPBO::mergeCandidateValues(
                     triangleValues[triI] : candidates[triI];
                 const double& label1 = ((i & 0x2) == 0) ?
                     triangleValues[adjTriI] : candidates[adjTriI];
-
+                
+                // FIXME
+                cost[i] = trianglePairCost[pairId] * fabs(label0 - label1);
+                /*
                 cost[i] =
                     trianglePairCost[pairId] *
-                    min(fabs(label0 - label1) / (3.0 * adjTriValueVariance), 1.0);
+                    min(fabs(label0 - label1) / (10.0 * adjTriValueVariance), 1.0);
+                */
             }
 
             gModelData->setBinaryTerm(pairId, cost[0], cost[1], cost[2], cost[3]);
@@ -456,6 +543,9 @@ size_t TriQPBO::mergeCandidateValues(
             triangleValueUnaryCosts[triI] * totalPairCostFactor;
         float cost1 = unaryCostFactor *
             unaryCosts[triI] * totalPairCostFactor;
+
+        // FIXME
+        cost0 = 5; cost1 = 5;
 
         if (triangleValues[triI] < 0) {
             cost0 = 100000000000.0f;
