@@ -1,5 +1,8 @@
 #include "common.h"
 
+#include <iostream>
+#include <fstream>
+
 #include "cvutil/cvutil.h"
 
 #include "tri_qpbo.h"
@@ -117,7 +120,7 @@ int main(int argc, char** argv) {
 
         reconstruct.visualize(depthVis, 1, 0.99, 1.0, false);
 
-        depthVis.display();
+        // depthVis.display();
     }
 
     {
@@ -150,24 +153,176 @@ int main(int argc, char** argv) {
         qpbo.init();
         printf("done\n");
 
-        while(true) {
-            CImg<double> depthVis(workingWidth, workingHeight);
-            depthVis.fill(0.0);
-            qpbo.denseInterp(depthVis);
-            double medianDepth = depthVis.median();
-            depthVis.min(medianDepth * 30);
-            depthVis.max(0.0);
-            (initImg, depthVis).display();
+        CImg<double> depthVis(workingWidth, workingHeight);
+        depthVis.fill(0.0);
+        qpbo.denseInterp(depthVis);
+        double medianDepth = depthVis.median();
+        depthVis.min(medianDepth * 30);
+        depthVis.max(0.0);
+        // (initImg, depthVis).display();
 
-            printf("Enter unary cost factor...\n");
+        printf("Enter unary cost factor...\n");
 
-            float unaryCostFactor = 0;
+        float unaryCostFactor = 0;
 
-            // cin >> unaryCostFactor;
-            // unaryCostFactor << cin;
+        // cin >> unaryCostFactor;
+        // unaryCostFactor << cin;
 
-            // qpbo.solveAlphaExpansion(minDepth, maxDepth, 32, 2, unaryCostFactor);
-            qpbo.solve(2, unaryCostFactor);
+        // qpbo.solveAlphaExpansion(minDepth, maxDepth, 32, 2, unaryCostFactor);
+        qpbo.solve(2, unaryCostFactor);
+
+        qpbo.solveSmoothHack();
+
+        // Output obj and mtl file:
+        {
+            // Output mtl file
+            /*
+            fstream mtl;
+            mtl.open("results/material.mtl", std::ios_base::out);
+            mtl << "newmtl Textured" << endl;
+            mtl << "Ka 1.000 1.000 1.000" << endl;
+            mtl << "Kd 0.000 0.000 0.000" << endl;
+            mtl << "Ks 0.000 0.000 0.000" << endl;
+            mtl << "illum 1" << endl;
+            mtl << "map_Ka " << argv[1] << endl;
+            mtl.close();
+
+            fstream obj;
+            obj.open("results/model.obj", std::ios_base::out);
+            obj << "mtllib " << "results/material.mtl" << endl;
+            obj << "usemtl Textured" << endl;
+            */
+
+            vector<array<Eigen::Vector3d, 3>> triangles;
+
+            qpbo.getSmoothTriangles(triangles);
+
+            fstream wrl;
+            wrl.open("results/model.wrl", std::ios_base::out);
+
+            vector<double> depths;
+            for (const auto& tri : triangles) {
+                for (const auto& v : tri) {
+                    depths.push_back(v.z());
+                }
+            }
+
+            sort(depths.begin(), depths.end());
+
+            double maxDepth = depths[depths.size() * 0.95];
+
+            wrl << "#VRML V2.0 utf8" << endl;
+            wrl << "Transform { children [" << endl;
+            wrl << "WorldInfo {" << endl;
+            wrl << "info [\"Input Format: pol\"]" << endl;
+            wrl << "}" << endl;
+            wrl << "Shape {" << endl;
+            wrl << "\tappearance Appearance { material" << endl;
+            wrl << "Material {" << endl;
+            wrl << "diffuseColor 1.0 1.0 1.0" << endl;
+            wrl << "transparency 0" << endl;
+            wrl << "}" << endl;
+            wrl << "texture ImageTexture {" << endl;
+            wrl << "url [\"" << argv[1] << "\"]" << endl;
+            wrl << "}}" << endl;
+            wrl << "geometry IndexedFaceSet {" << endl;
+            wrl << "coord\nCoordinate {" << endl;
+            wrl << "point [" << endl;
+
+            size_t vertexIndex = 0;
+            for (const array<Eigen::Vector3d, 3>& tri : triangles) {
+                if (vertexIndex != 0) {
+                    wrl << ",";
+                }
+                for (int i = 0; i < 3; i++) {
+                    if (i != 0) {
+                        wrl << ",";
+                    }
+                    wrl <<
+                        " " << (tri[i].x() / initImg.width()) - 0.5 <<
+                        " " << (tri[i].y() / initImg.height()) - 0.5 <<
+                        " " << -1.0 * min(tri[i].z(), maxDepth) / maxDepth << endl;
+                }
+
+                vertexIndex++;
+            }
+
+            wrl << "]" << endl;
+            wrl << "}" << endl;
+
+            wrl << "colorPerVertex FALSE" << endl;
+
+			wrl << "normal Normal { vector [" << endl;
+            vertexIndex = 0;
+            for (const array<Eigen::Vector3d, 3>& tri : triangles) {
+                if (vertexIndex != 0) {
+                    wrl << ",";
+                }
+                for (int i = 0; i < 3; i++) {
+                    if (i != 0) {
+                        wrl << ",";
+                    }
+                    wrl  <<
+                        " " << 0 <<
+                        " " << 0 <<
+                        " " << 1 << endl;
+                }
+
+                vertexIndex++;
+            }
+
+            wrl << "]}" << endl;
+
+            wrl << "texCoord TextureCoordinate {" << endl;
+
+            wrl << "point [" << endl;
+
+            vertexIndex = 0;
+            for (const array<Eigen::Vector3d, 3>& tri : triangles) {
+                if (vertexIndex != 0) {
+                    wrl << ",";
+                }
+                for (int i = 0; i < 3; i++) {
+                    if (i != 0) {
+                        wrl << ",";
+                    }
+                    wrl  <<
+                        " " << tri[i].x() / initImg.width() <<
+                        " " << tri[i].y() / initImg.height() << endl;
+                }
+
+                vertexIndex++;
+            }
+
+            wrl << "]" << endl;
+            wrl << "}" << endl;
+
+            wrl << "coordIndex [" << endl;
+
+            vertexIndex = 0;
+            for (const array<Eigen::Vector3d, 3>& tri : triangles) {
+                if (vertexIndex != 0) {
+                    wrl << ",";
+                }
+
+                for (int i = 0; i < 3; i++) {
+                    if (i != 0) {
+                        wrl << ",";
+                    }
+
+                    wrl << " " << vertexIndex;
+
+                    vertexIndex++;
+                }
+
+                wrl << ", -1 " << endl;
+            }
+
+            wrl << "]" << endl;
+            wrl << "}" << endl;
+            wrl << "}}]}" << endl;
+
+            wrl.close();
         }
 
         /*

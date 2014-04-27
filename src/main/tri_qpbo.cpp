@@ -498,6 +498,153 @@ void TriQPBO::solve(
     }
 }
 
+// Functors needed for solveSmooth()...
+struct ScaledBinaryEqualityResidual {
+    template<typename T>
+        bool operator()(
+                const T* const a,
+                const T* const b,
+                T* residuals) const {
+            residuals[0] = (a[0] - b[0]) * T(scale);
+            
+            return true;
+        }
+
+    float scale;
+};
+
+struct UnaryStaticResidual {
+    UnaryStaticResidual(double _e) : expected(_e) {}
+
+    template<typename T>
+        bool operator()(
+                const T* const val,
+                T* residuals) const {
+            residuals[0] = val[0] - T(expected);
+            
+            return true;
+        }
+
+    double expected;
+};
+
+struct WeightedLaplaceResidual {
+    template<typename T>
+    bool operator()(
+            T const* const* values,
+            T* residuals) const {
+        T r = values[0];
+
+        for (int i = 0; i < weights.size(); i++) {
+            r -= values[i] * T(weights[i]);
+        }
+
+        residuals[0] = r;
+    }
+
+    vector<float> weights;
+};
+
+void TriQPBO::solveSmooth() {
+    smoothTriangleValues.resize(triangles.size());
+
+    double scale;
+    vector<double> sortedTriangleValues = triangleValues;
+    nth_element(
+            &(sortedTriangleValues.front()),
+            &(sortedTriangleValues[sortedTriangleValues.size() / 2]),
+            &(sortedTriangleValues.back()));
+    scale = 1.0 / sortedTriangleValues[sortedTriangleValues.size() / 2];
+
+    ceres::Problem problem;
+
+    map<size_t, vector<tuple<size_t, double*>>> vertexIndexToSmoothVertexValues;
+
+    ceres::LossFunction* robustLoss =
+        new ceres::HuberLoss(0.00000001);
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const array<size_t, 3> tri = triangles[triI];
+
+        double scaledTriVal = triangleValues[triI] * scale;
+
+        // 1 residual
+        // 1 parameter block
+        ceres::CostFunction* cf =
+            new ceres::AutoDiffCostFunction<UnaryStaticResidual, 1, 1>(
+                    new UnaryStaticResidual(scaledTriVal));
+
+        for (int i = 0; i < 3; i++) {
+            // Set initial value
+            smoothTriangleValues[triI][i] = scaledTriVal;
+
+            vertexIndexToSmoothVertexValues[tri[i]].push_back(
+                    make_tuple(triI, &(smoothTriangleValues[triI][i])));
+
+            problem.AddResidualBlock(
+                    cf,
+                    robustLoss,
+                    &(smoothTriangleValues[triI][i]));
+        }
+    }
+
+    ceres::Solver::Options options;
+    // Use default solver
+    // FIXME lbfgs might converge faster than the default (levenberg marquardt)
+    // options.linear_solver_type = ???;
+    options.max_num_iterations = 1000;
+    options.minimizer_progress_to_stdout = true;
+
+
+    ceres::Solver::Summary summary;
+
+    ceres::Solve(options, &problem, &summary);
+
+    cout << summary.FullReport();
+}
+
+void TriQPBO::solveSmoothHack() {
+    smoothTriangleValues.resize(triangles.size());
+
+    double scale;
+    vector<double> sortedTriangleValues = triangleValues;
+    nth_element(
+            &(sortedTriangleValues.front()),
+            &(sortedTriangleValues[sortedTriangleValues.size() / 2]),
+            &(sortedTriangleValues.back()));
+    scale = 1.0 / sortedTriangleValues[sortedTriangleValues.size() / 2];
+
+    map<size_t, vector<tuple<size_t, double*>>> vertexIndexToSmoothVertexValues;
+
+    for (size_t triI = 0; triI < triangles.size(); triI++) {
+        const array<size_t, 3> tri = triangles[triI];
+
+        double scaledTriVal = triangleValues[triI] * scale;
+
+        for (int i = 0; i < 3; i++) {
+            // Set initial value
+            smoothTriangleValues[triI][i] = scaledTriVal;
+
+            vertexIndexToSmoothVertexValues[tri[i]].push_back(
+                    make_tuple(triI, &(smoothTriangleValues[triI][i])));
+        }
+    }
+    
+    for (auto& pair : vertexIndexToSmoothVertexValues) {
+        double total = 0;
+
+        for (const auto& t : pair.second) {
+            total += *get<1>(t);
+        }
+
+        total /= pair.second.size();
+
+        for (auto& t : pair.second) {
+            *get<1>(t) = total;
+        }
+    }
+}
+
 size_t TriQPBO::mergeCandidateValues(
         const vector<double>& candidates,
         const vector<float>& unaryCosts,

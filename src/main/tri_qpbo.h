@@ -48,11 +48,33 @@ class TriQPBO {
                 int numIters,
                 float unaryCostFactor);
 
+        void solveSmooth();
+
+        void solveSmoothHack();
+
+        inline void getSmoothTriangles(
+                vector<array<Eigen::Vector3d, 3>>& result) {
+            for (size_t triI = 0; triI < triangles.size(); triI++) {
+                const array<size_t, 3>& tri = triangles[triI];
+
+                array<Eigen::Vector3d, 3> vertices;
+
+                for (int vI = 0; vI < 3; vI++) {
+                    vertices[vI] = Eigen::Vector3d(
+                            points[tri[vI]].x(),
+                            points[tri[vI]].y(),
+                            smoothTriangleValues[triI][vI]);
+                }
+
+                result.push_back(vertices);
+            }
+        }
+
     private:
         template<typename T>
         inline T unaryCost(
                 size_t vertexIndex,
-                T candidateValue) {
+                T candidateValue) const {
             T cost = T(0);
 
             for (const double& c : vertexCandidates[vertexIndex]) {
@@ -62,8 +84,8 @@ class TriQPBO {
                         // abs(candidateValue - val) /
                         // T(adjTriValueVariance * 5.0), 1.0);
 
-                T c1 = min(candidateValue - val / T(adjTriValueVariance * 5.0), 1.0); 
-                cost += c1;
+                T c1 = candidateValue - val;
+                cost += c1 * c1;
             }
 
             cost /= T(vertexCandidates.size());
@@ -74,7 +96,7 @@ class TriQPBO {
         template<typename T>
         inline T unaryCostTri(
                 size_t triIndex,
-                T candidateValue) {
+                T candidateValue) const {
             T cost = T(0);
 
             for (const size_t& vI : triangles[triIndex]) {
@@ -185,5 +207,7 @@ class TriQPBO {
          * The unary cost associated with each current triangle label.
          */
         vector<float> triangleValueUnaryCosts;
+
+        vector<array<double, 3>> smoothTriangleValues;
 };
 
