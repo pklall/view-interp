@@ -150,7 +150,27 @@ is used to estimate the fundamental matrix relating each secondary
 image to the primary image.  Outlier correspondences are discarded at this
 stage, and secondary images are sorted by order of the number of inlier
 correspondences found such that those with the most inliers will
-be processed first in the next stage.
+be processed first in the next stage.  Also, secondary images containing
+too few inlier correspondence points, relative to a pre-determined
+threshold, are discarded as outliers.  Note, too, that correspondence
+points are transformed, prior to fundamental-matrix estimation, to normalized
+device coordinates, assuming that the camera has its optical center at the center of each
+photograph and also has no skew.  Thus, the estimated fundamental matrix
+can be used as the essential matrix for the image pair since
+we are only concerned with reconstructing depth up to a constant scale
+factor and all images are assumed to have been captured with the
+same focal length.
+
+An initial set of depth values associated with sparse features in
+the primary image are determined from the first secondary image
+to be processed as follows.  First, the relative pose of this secondary
+image is determined by the previously-estimated essential matrix via
+singular-value-decomposition and the method of \cite{hartley2003multiple}.
+This pose can only be determined up to an ambiguity of four candidate poses,
+so a simple voting procedure is used whereby the selected candidate pose is
+that which maximizes the number of tracked points which, when triangulated,
+are in front of both cameras.  Given a candidate relative pose, triangulation
+is performed according to the method discussed in \cite{hartley1997triangulation}.
 
 \subsection{Depth Reconstruction}
 
@@ -178,7 +198,5 @@ with an application to image-based rendering.
 
 
 \bibliographystyle{acmsiggraph}
-
 \bibliography{template}
-
 \end{document}
