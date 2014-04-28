@@ -83,10 +83,10 @@ processing time.  Furthermore, the recovered geometric representation need
 only be accurate enough to enable rendering of a visualization of the depth
 of the scene.
  
-Shum and Kang \shortcite{shum2000review} presented a review of various image based
-rendering techniques and showed that they can fall onto a spectrum defined
-by the representation of their geometric proxy.  While some systems,
-such as the Lumigraph \cite{gortler1996lumigraph} construct 
+% Shum and Kang \shortcite{shum2000review} presented a review of various image based
+% rendering techniques and showed that they can fall onto a spectrum defined
+% by the representation of their geometric proxy.  While some systems,
+% such as the Lumigraph \cite{gortler1996lumigraph} construct 
 
 \section{Approach}
 
@@ -101,7 +101,7 @@ procedure is first employed to simultaneously estimate the depth of several
 sparse points in the scene as well as the pose of the camera
 for each secondary image relative to that of the camera in the primary image.
 Then, a more dense set of keypoints are used to 
-estimate a dense piecewise-planar approximation of the depth map
+estimate a piecewise-planar approximation of the depth map
 via fusion of depth samples from the various secondary images using
 a probabilistic model.
 Finally, a relief-like representation of the scene geometry can be rendered
@@ -111,13 +111,13 @@ with hardware-acceleration using OpenGL.
 % \begin{equation}
 % \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
 % \end{equation}
-% 
+
 % \begin{eqnarray}
 % x & \ll & y_{1} + \cdots + y_{n} \\
 % & \leq & z
 % \end{eqnarray}
 
-\section{Structure from Motion}
+\subsection{Structure from Motion}
 
 Before a dense depth map can be recovered via multi-view stereo,
 camera parameters, namely translation and rotation, must be known.
@@ -132,11 +132,29 @@ their projection in the primary image.  Thus, instead of having
 to estimate three parameters, x, y and z for each point,
 only a single depth must be computed.  Furthermore, the use
 of a primary view also simplifies the handling of occlusion throughout
-the pipeline such that complicated pruning of occluded feature points
+the pipeline such that pruning of occluded feature points
 is not necessary since we are only concerned with points which
 are visible in the primary image.
 
+The structure from motion algorithm begins by finding good feature points
+to track between images.  The algorithm of \cite{shi1994good}, as implemented
+in \cite{opencv_library}, is used to find good features to track in the
+primary image.
+Furthermore, a uniform, square grid is superimposed over the image and only
+the optimal feature point in each cell is used.
+The KLT feature tracking algorithm is then used to find the points in each
+secondary image corresponding to the feature point in the primary image.
 
+Once sparse point correspondences have been found, a RANSAC procedure
+is used to estimate the fundamental matrix relating each secondary
+image to the primary image.  Outlier correspondences are discarded at this
+stage, and secondary images are sorted by order of the number of inlier
+correspondences found such that those with the most inliers will
+be processed first in the next stage.
+
+\subsection{Depth Reconstruction}
+
+\subsection{Rendering}
 
 % \begin{figure}[ht]
   % \centering
@@ -145,9 +163,6 @@ are visible in the primary image.
   % \caption{Sample illustration.}
 % \end{figure}
 
-\section{Planar depth reconstruction}
-
-This is how planar depth reconstruction works!
 
 \section{Results}
 
