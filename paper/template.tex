@@ -37,14 +37,11 @@
 
 \maketitle
 
-\begin{abstract}
+% \begin{abstract}
 
-% Citations can be done this way~\cite{Jobs95} or this more concise 
-% way~\shortcite{Jobs95}, depending upon the application.
+% TODO 
 
-    TODO Abstract goes here~\cite{furukawa2010accurate}.
-
-\end{abstract}
+% \end{abstract}
 
 % \begin{CRcatlist}
   % \CRcat{I.3.3}{Computer Graphics}{Three-Dimensional Graphics and Realism}{Display Algorithms}
@@ -60,7 +57,7 @@
 
 %% Required for all content. 
 
-\copyrightspace
+% \copyrightspace
 
 \section{Introduction}
 
@@ -74,6 +71,12 @@ enable users to render a scene constructed from a sequence of
 digital photographs taken by the user.  Thus, such a system can enable
 non-expert users to relatively-quickly capture and share a representation of
 a three-dimensional scene.
+ 
+% TODO
+% Shum and Kang \shortcite{shum2000review} presented a review of various image based
+% rendering techniques and showed that they can fall onto a spectrum defined
+% by the representation of their geometric proxy.  While some systems,
+% such as the Lumigraph \cite{gortler1996lumigraph} construct 
 
 This paper presents a system for reconstructing approximate
 piecewise-planar depth-maps for image-based rendering of visualizations
@@ -91,21 +94,22 @@ of semi-dense feature points.  Because the selected
 semi-dense feature points tend to be located on corners
 and gradients, it was found that the resulting triangulation
 produces a compact representation which preserves strong
-edges in the original image.  Unlike the superpixels
-used in similar research, such as \cite{chaurasia2013depth},
-the graph of adjacent segments is of uniform degree,
+edges in the original image.  Furthermore, unlike the superpixels
+used in similar systems, such as \cite{chaurasia2013depth},
+the graph of triangular segments this work uses is of uniform degree,
 and the resulting geometric proxy is much simpler to render on conventional
 rasterization hardware. Furthermore, it ensures a crack-free warp is
 achievable without the need to perform costly hole-filling operations.
 This is particularly useful for rendering applications which wish to
 run on modern mobile devices with limited hardware acceleration capabilities.
 
- 
-% TODO
-% Shum and Kang \shortcite{shum2000review} presented a review of various image based
-% rendering techniques and showed that they can fall onto a spectrum defined
-% by the representation of their geometric proxy.  While some systems,
-% such as the Lumigraph \cite{gortler1996lumigraph} construct 
+Finally, the system requires little processing time compared
+to dense reconstruction methods such as \cite{furukawa2010accurate}.
+Although the reconstruction is much less accurate and significantly simpler,
+in that it is constrained to a single depth-map and cannot reconstruct
+geometry occluded in the primary view,
+the results appear to be adequate for image-based rendering of compelling depth
+visualizations.
 
 \section{Approach}
 
@@ -123,23 +127,13 @@ Then, a more dense set of keypoints are used to
 estimate a piecewise-planar approximation of the depth map
 via fusion of depth samples from the various secondary images using
 a probabilistic model.
-Finally, a relief-like representation of the scene geometry can be rendered
+Finally, a relief-like representation of the scene geometry is rendered
 with hardware-acceleration using OpenGL.
-
-
-% \begin{equation}
-% \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
-% \end{equation}
-
-% \begin{eqnarray}
-% x & \ll & y_{1} + \cdots + y_{n} \\
-% & \leq & z
-% \end{eqnarray}
 
 \subsection{Structure from Motion}
 
 Before a dense depth map can be recovered via multi-view stereo,
-camera parameters, namely translation and rotation, must be known.
+extrinsic camera parameters, namely translation and rotation, must be known.
 To estimate this, a structure from motion algorithm similar to that
 described in \cite{snavely2006photo} was implemented to
 simultaneously solve for the camera pose for each secondary image,
@@ -308,14 +302,11 @@ where the pairwise weight of adjacent triangles, $W(i, j)$, is determined by
     \right)
 \end{equation}
 
-where $\beta$ is the Bhattacharyya distance and $C_x$ is a trivariate normal
-distribution of pixel color, in the Lab color space, of pixels in triangle $x$,
-estimated assuming independence between color channels.
-
-Figure~\ref{fig:delaunay_edges} depicts the intensity of edge weights for
-the triangle graph constructed for one image.
-
-% Pairwise cost
+where $\beta$ is the Bhattacharyya distance \cite{bhattacharyya1946measure}
+and $C_x$ is a trivariate normal distribution of pixel color, in the Lab color
+space, of pixels in triangle $x$, estimated assuming independence between color
+channels. Figure~\ref{fig:delaunay_edges} depicts the intensity of edge weights
+for the triangle graph constructed for one image.  
 
 % QPBO Merging
 
