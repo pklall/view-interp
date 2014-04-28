@@ -72,11 +72,12 @@ digital photographs taken by the user.  Thus, such a system can enable
 non-expert users to relatively-quickly capture and share a representation of
 a three-dimensional scene.
  
-% TODO
-% Shum and Kang \shortcite{shum2000review} presented a review of various image based
-% rendering techniques and showed that they can fall onto a spectrum defined
-% by the representation of their geometric proxy.  While some systems,
-% such as the Lumigraph \cite{gortler1996lumigraph} construct 
+Shum and Kang \shortcite{shum2000review} presented a review of various image based
+rendering techniques and showed that they can fall onto a spectrum defined
+by the representation of their geometric proxy.  While some systems,
+such as the Lumigraph \cite{gortler1996lumigraph} allow rendering without
+any geometry at all, others use an explicitly-estimated geometrical model
+to render.  This work employes the latter approach.
 
 This paper presents a system for reconstructing approximate
 piecewise-planar depth-maps for image-based rendering of visualizations
@@ -102,6 +103,10 @@ rasterization hardware. Furthermore, it ensures a crack-free warp is
 achievable without the need to perform costly hole-filling operations.
 This is particularly useful for rendering applications which wish to
 run on modern mobile devices with limited hardware acceleration capabilities.
+In addition, solving for the geometric proxy directly, as opposed to 
+reconstructing a dense depth map only to later simplify the proxy geometry
+before rendering, eliminates redundent computation of precise measurements
+only to be discarded.
 
 Finally, the system requires little processing time compared
 to dense reconstruction methods such as \cite{furukawa2010accurate}.
