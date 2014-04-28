@@ -120,11 +120,13 @@ int main(int argc, char** argv) {
 
         reconstruct.visualize(depthVis, 1, 0.99, 1.0, false);
 
-        // depthVis.display();
+        depthVis.normalize(0, 255).save_png("results/depth_estimate.png");
+
+        depthVis.display();
     }
 
     {
-        // const vector<double> rDepths = reconstruct.getDepths();
+        const vector<double> rDepths = reconstruct.getDepths();
         // double minDepth = *(min_element(&(rDepths.front()), &(rDepths[numMainPoints])));
         // double maxDepth = *(max_element(&(rDepths.front()), &(rDepths[numMainPoints])));
         // printf("depth range = [%f, %f]\n", minDepth, maxDepth);
@@ -142,24 +144,29 @@ int main(int argc, char** argv) {
 
                 qpbo.addCandidateVertexDepths(depth);
 
-                // CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
-                // colorVis.fill(0);
-                // qpbo.visualizeTriangulation(colorVis);
-                // colorVis.display();
             }
         }
 
         printf("initializing qpbo\n");
         qpbo.init();
         printf("done\n");
+        
+        CImg<float> colorVis(workingWidth, workingHeight, 1, 3);
+        colorVis.fill(0);
+        qpbo.visualizeTriangulation(colorVis);
+        colorVis.display();
+        colorVis.normalize(0, 255).save_png("results/delaunay.png");
 
-        CImg<double> depthVis(workingWidth, workingHeight);
-        depthVis.fill(0.0);
-        qpbo.denseInterp(depthVis);
-        double medianDepth = depthVis.median();
-        depthVis.min(medianDepth * 30);
-        depthVis.max(0.0);
-        // (initImg, depthVis).display();
+        {
+            CImg<double> depthVis(workingWidth, workingHeight);
+            depthVis.fill(0.0);
+            qpbo.denseInterp(depthVis);
+            double medianDepth = depthVis.median();
+            depthVis.min(medianDepth * 30);
+            depthVis.max(0.0);
+            depthVis.normalize(0, 255).save_png("results/initial_triangle_depth.png");
+            // (initImg, depthVis).display();
+        }
 
         printf("Enter unary cost factor...\n");
 
@@ -171,28 +178,35 @@ int main(int argc, char** argv) {
         // qpbo.solveAlphaExpansion(minDepth, maxDepth, 32, 2, unaryCostFactor);
         qpbo.solve(2, unaryCostFactor);
 
+        {
+            CImg<double> depthVis(workingWidth, workingHeight);
+            depthVis.fill(0.0);
+            qpbo.denseInterp(depthVis);
+            double medianDepth = depthVis.median();
+            depthVis.min(medianDepth * 30);
+            depthVis.max(0.0);
+            depthVis.normalize(0, 255).save_png("results/qpbo_triangle_depth.png");
+        }
+        // (initImg, depthVis).display();
+
+        for (int i = 0; i < 1; i++) {
+            qpbo.smoothAvg();
+        }
+
+        {
+            CImg<double> depthVis(workingWidth, workingHeight);
+            depthVis.fill(0.0);
+            qpbo.denseInterp(depthVis);
+            double medianDepth = depthVis.median();
+            depthVis.min(medianDepth * 30);
+            depthVis.max(0.0);
+            depthVis.normalize(0, 255).save_png("results/qpbo_smoothed_triangle_depth.png");
+        }
+
         qpbo.solveSmoothHack();
 
-        // Output obj and mtl file:
+        // Output wrl file
         {
-            // Output mtl file
-            /*
-            fstream mtl;
-            mtl.open("results/material.mtl", std::ios_base::out);
-            mtl << "newmtl Textured" << endl;
-            mtl << "Ka 1.000 1.000 1.000" << endl;
-            mtl << "Kd 0.000 0.000 0.000" << endl;
-            mtl << "Ks 0.000 0.000 0.000" << endl;
-            mtl << "illum 1" << endl;
-            mtl << "map_Ka " << argv[1] << endl;
-            mtl.close();
-
-            fstream obj;
-            obj.open("results/model.obj", std::ios_base::out);
-            obj << "mtllib " << "results/material.mtl" << endl;
-            obj << "usemtl Textured" << endl;
-            */
-
             vector<array<Eigen::Vector3d, 3>> triangles;
 
             qpbo.getSmoothTriangles(triangles);
@@ -209,7 +223,7 @@ int main(int argc, char** argv) {
 
             sort(depths.begin(), depths.end());
 
-            double maxDepth = depths[depths.size() * 0.95];
+            double maxDepth = depths[depths.size() * 0.75];
 
             wrl << "#VRML V2.0 utf8" << endl;
             wrl << "Transform { children [" << endl;
@@ -238,10 +252,12 @@ int main(int argc, char** argv) {
                     if (i != 0) {
                         wrl << ",";
                     }
+                    double depth = -1.0 * (min(tri[i].z(), maxDepth) / maxDepth);
                     wrl <<
-                        " " << (tri[i].x() / initImg.width()) - 0.5 <<
-                        " " << (tri[i].y() / initImg.height()) - 0.5 <<
-                        " " << -1.0 * min(tri[i].z(), maxDepth) / maxDepth << endl;
+                        " " << (depth - 1) * ((tri[i].x() / initImg.width()) - 0.5) <<
+                        " " << (depth - 1) * ((tri[i].y() / initImg.height()) - 0.5) <<
+                        // " " << -1.0 * log(1.0 + tri[i].z()) << endl;
+                        " " << depth << endl;
                 }
 
                 vertexIndex++;
@@ -319,7 +335,6 @@ int main(int argc, char** argv) {
             }
 
             wrl << "]" << endl;
-            wrl << "}" << endl;
             wrl << "}}]}" << endl;
 
             wrl.close();

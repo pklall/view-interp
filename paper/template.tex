@@ -1,0 +1,141 @@
+%%% template.tex
+%%%
+%%% This LaTeX source document can be used as the basis for your technical
+%%% paper or abstract. Intentionally stripped of annotation, the parameters
+%%% and commands should be adjusted for your particular paper - title, 
+%%% author, article DOI, etc.
+%%% The accompanying ``template.annotated.tex'' provides copious annotation
+%%% for the commands and parameters found in the source document. (The code
+%%% is identical in ``template.tex'' and ``template.annotated.tex.'')
+
+\documentclass[conference]{acmsiggraph}
+
+\TOGonlineid{45678}
+\TOGvolume{0}
+\TOGnumber{0}
+\TOGarticleDOI{1111111.2222222}
+\TOGprojectURL{}
+\TOGvideoURL{}
+\TOGdataURL{}
+\TOGcodeURL{}
+
+\title{Planar Depth Reconstruction for Image Based Rendering}
+
+\author{Puneet Lall\thanks{e-mail:pkl5rc@virginia.edu}\\University of Virginia}
+\pdfauthor{Puneet Lall}
+
+%% \keywords{radiosity, global illumination, constant time}
+
+\begin{document}
+
+%% \teaser{
+%%   \includegraphics[height=1.5in]{images/sampleteaser}
+%%   \caption{Spring Training 2009, Peoria, AZ.}
+%% }
+
+\maketitle
+
+\begin{abstract}
+
+% Citations can be done this way~\cite{Jobs95} or this more concise 
+% way~\shortcite{Jobs95}, depending upon the application.
+
+    TODO Abstract goes here~\cite{furukawa2010accurate}.
+
+\end{abstract}
+
+% \begin{CRcatlist}
+  % \CRcat{I.3.3}{Computer Graphics}{Three-Dimensional Graphics and Realism}{Display Algorithms}
+  % \CRcat{I.3.7}{Computer Graphics}{Three-Dimensional Graphics and Realism}{Radiosity};
+% \end{CRcatlist}
+
+% \keywordlist
+
+%% Use this only if you're preparing a technical paper to be published in the 
+%% ACM 'Transactions on Graphics' journal.
+
+% \TOGlinkslist
+
+%% Required for all content. 
+
+\copyrightspace
+
+\section{Introduction}
+
+Image-based rendering provides a practical solution to the task of creating
+3D models for rendering of complex scenes, particularly in the case of
+novice users who wish to quickly create a visualization of a real-world object.
+Rather than requiring users to explicitly create a three-dimensional model using
+sophisticated modeling software, an image-based rendering system may, for example, 
+enable users to render a scene constructed implicitly from a sequence of
+digital photographs taken by the user.  Thus, such a system can enable
+non-expert users to relatively-quickly capture and share a representation of
+a three-dimensional scene.
+
+This paper presents a 
+ 
+Shum and Kang \shortcite{shum2000review} presented a review of various image based
+rendering techniques and showed that they can fall onto a spectrum defined
+by the representation of their geometric proxy.  While some systems,
+such as the Lumigraph \cite{gortler1996lumigraph} construct 
+
+\section{Approach}
+
+Introduction to the approach.  In the following equation:
+
+\begin{equation}
+ \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
+\end{equation}
+
+\begin{eqnarray}
+x & \ll & y_{1} + \cdots + y_{n} \\
+  & \leq & z
+\end{eqnarray}
+
+More stuff!
+
+\section{Structure from Motion}
+
+This part outlines the structure from motion approach.
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=1.5in]{images/samplefigure}
+  \caption{Sample illustration.}
+\end{figure}
+More explanation.  Blah blah blah
+
+Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
+eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad
+minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+aliquip ex ea commodo consequat. Duis aute irure dolor in
+reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+culpa qui officia deserunt mollit anim id est laborum.
+
+Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
+eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad
+minim veniam, quis nostrud exercitation ullamco laboris nisi ut
+aliquip ex ea commodo consequat. Duis aute irure dolor in
+reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
+pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
+culpa qui officia deserunt mollit anim id est laborum.
+
+\section{Planar depth reconstruction}
+
+This is how planar depth reconstruction works!
+
+\section{Results}
+
+Talk about results.
+
+Also talk about limitations.
+
+\section{Conclusion}
+
+In this paper, I have described the implementation of a system for
+reconstruction of a planar representation of dense depth maps from multiple images
+with an application to image-based rendering.
+
+\bibliographystyle{acmsiggraph}
+\bibliography{template}
+\end{document}

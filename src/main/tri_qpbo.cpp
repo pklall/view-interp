@@ -209,12 +209,13 @@ void TriQPBO::visualizeTriangulation(
 
             size_t pairId = adjPair.second.id;
 
-            float dist =  trianglePairCost[pairId] *
+            float dist =  trianglePairCost[pairId];/* *
                 min(
                         fabs(
                             triangleValues[triI] -
                             triangleValues[adjTriI]) / (2 * adjTriValueVariance),
                        1.0);
+                */
             color[0] = dist;
             color[1] = dist;
             color[2] = dist;
@@ -433,7 +434,7 @@ void TriQPBO::solve(
 
             toVisit.push_back(triI);
 
-            for (int n = 0; n < 10; n++) {
+            for (int n = 0; n < 15; n++) {
                 size_t neighbor = toVisit[toVisitFront];
                 toVisitFront++;
                 visited.insert(neighbor);
@@ -463,6 +464,7 @@ void TriQPBO::solve(
                     &(closeValues[medianI]),
                     &(closeValues.back()));
             newTriangleValues[triI] = closeValues[medianI];
+            triangleValues[triI] = newTriangleValues[triI];
         }
 
         /*
@@ -614,12 +616,16 @@ void TriQPBO::solveSmoothHack() {
             &(sortedTriangleValues.back()));
     scale = 1.0 / sortedTriangleValues[sortedTriangleValues.size() / 2];
 
+    for (auto& v : triangleValues) {
+        v *= scale;
+    }
+
     map<size_t, vector<tuple<size_t, double*>>> vertexIndexToSmoothVertexValues;
 
     for (size_t triI = 0; triI < triangles.size(); triI++) {
         const array<size_t, 3> tri = triangles[triI];
 
-        double scaledTriVal = triangleValues[triI] * scale;
+        double scaledTriVal = triangleValues[triI];
 
         for (int i = 0; i < 3; i++) {
             // Set initial value
@@ -642,6 +648,43 @@ void TriQPBO::solveSmoothHack() {
         for (auto& t : pair.second) {
             *get<1>(t) = total;
         }
+    }
+}
+
+void TriQPBO::smoothAvg() {
+    vector<double> newTriangleValues(triangleValues.size());
+
+    double alpha = 0.5;
+
+    for (int iter = 0; iter < 5; iter++) {
+        for (size_t triI = 0; triI < triangles.size(); triI++) {
+            double totalWeight = 0; 
+            double totalValue = 0;
+
+            for (const auto& pair : adjacency[triI]) {
+                size_t adjTriI = pair.first;
+                size_t pairIdx = pair.second.id;
+
+                const double& pairCost = trianglePairCost[pairIdx];
+
+                if (isfinite(triangleValues[adjTriI]) &&
+                        triangleValues[adjTriI] > 0) {
+                    totalWeight += pairCost;
+                    totalValue += triangleValues[adjTriI] * pairCost;
+                }
+            }
+
+            if (isfinite(triangleValues[triI]) && triangleValues[triI] > 0) {
+                newTriangleValues[triI] = triangleValues[triI];
+            }
+
+            if (totalWeight > 0) {
+                newTriangleValues[triI] = newTriangleValues[triI] * alpha +
+                    (1.0 - alpha) * totalValue / totalWeight;
+            }
+        }
+
+        swap(triangleValues, newTriangleValues);
     }
 }
 

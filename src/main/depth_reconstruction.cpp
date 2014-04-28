@@ -176,6 +176,7 @@ void DepthReconstruction::solve() {
     }
 
     // Refine camera pose estimates using bundle-adjusted depth
+    /*
     for (int i = 1; i < maxImagesToUse; i++) {
         size_t cameraI = get<1>(camInlierCount[i]);
 
@@ -188,6 +189,7 @@ void DepthReconstruction::solve() {
             "norm = " << cameras[cameraI].rotation.norm() << endl <<
             cameras[cameraI].translation.transpose() << endl;
     }
+    */
 
     // Recover depth for less-reliable points
     numPointsToUse = keypoints.size();
@@ -205,22 +207,18 @@ void DepthReconstruction::solve() {
 
         cameraInlierMask[cameraI] = true;
 
-        /*
         cout << "Camera after bundle adjustment: " <<
             cameras[cameraI].rotation << endl <<
             "norm = " << cameras[cameraI].rotation.norm() << endl <<
             cameras[cameraI].translation.transpose() << endl <<
             "norm = " << cameras[cameraI].translation.norm() << endl;
-        */
     }
 
-    // printf("Final bundle adjustment on *all* points...\n");
+    printf("Final bundle adjustment on *all* points...\n");
 
-    // refineCamerasAndDepth(cameraInlierMask);
+    refineCamerasAndDepth(cameraInlierMask);
 
-    // printf("Done\n");
-
-    // refineCamerasAndDepth(cameraInlierMask);
+    printf("Done\n");
 
     // Set inlierCount to tally the total number of inlier observations
     // used in determining each depth value.

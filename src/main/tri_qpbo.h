@@ -52,6 +52,8 @@ class TriQPBO {
 
         void solveSmoothHack();
 
+        void smoothAvg();
+
         inline void getSmoothTriangles(
                 vector<array<Eigen::Vector3d, 3>>& result) {
             for (size_t triI = 0; triI < triangles.size(); triI++) {
