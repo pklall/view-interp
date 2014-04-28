@@ -186,7 +186,21 @@ given by (\ref{eq:sfm}).
     \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
 \end{equation}
 
+% TODO show image of depth reconstruction samples
+
 \subsection{Depth Reconstruction}
+
+% TODO show images of each step
+
+The previously-discussed structure-from-motion process recovers
+only a very sparse set of depth samples which is inadequate
+for the intended rendering application.
+To get a more dense set of depth samples additional KLT feature
+correspondences are matched using the same procedure as before.
+In the results displayed below, 20 thousand points are used.
+Instead of adding these to the structure-from-motion problem
+outlined above, which would result in a much-slower.
+% Delaunay triangulation
 
 \subsection{Rendering}
 
@@ -200,15 +214,19 @@ given by (\ref{eq:sfm}).
 
 \section{Results}
 
-Talk about results.
+% TODO show rendered images
 
-Also talk about limitations.
+% Talk about results.
+
+% Also talk about limitations.
 
 \section{Conclusion}
 
 In this paper, I have described the implementation of a system for
 reconstruction of a planar representation of dense depth maps from multiple images
 with an application to image-based rendering.
+
+% TODO
 
 
 \bibliographystyle{acmsiggraph}
