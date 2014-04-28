@@ -9,6 +9,7 @@
 %%% is identical in ``template.tex'' and ``template.annotated.tex.'')
 
 \documentclass[conference]{acmsiggraph}
+\usepackage{amssymb}
 
 \TOGonlineid{0}
 \TOGvolume{0}
@@ -83,6 +84,7 @@ processing time.  Furthermore, the recovered geometric representation need
 only be accurate enough to enable rendering of a visualization of the depth
 of the scene.
  
+% TODO
 % Shum and Kang \shortcite{shum2000review} presented a review of various image based
 % rendering techniques and showed that they can fall onto a spectrum defined
 % by the representation of their geometric proxy.  While some systems,
@@ -170,23 +172,68 @@ This pose can only be determined up to an ambiguity of four candidate poses,
 so a simple voting procedure is used whereby the selected candidate pose is
 that which maximizes the number of tracked points which, when triangulated,
 are in front of both cameras.  Triangulation is performed according to the
-method discussed in \cite{hartley1997triangulation}.
+method discussed in \cite{hartley1997triangulation}.  Finally, points
+for which triangulated depth is negative relative to either camera
+are discarded as outliers.
 
 Next, the system involving sparse triangulated points and the secondary
 image's relative camera pose is optimized using the sparse-bundle-adjustment
 framework of \cite{ceres-solver}.  Specifically, given a set of depth values,
 $\{d_0, ..., d_n\}$, corresponding to keypoints with observations in the
 primary image, $\{(x_0^0, y_0^0), ..., (x_n^0, y_n^0)\}$, and observations
-in a secondary image, with index $i$, denoted as
+in a secondary image, with index $i \in \{0, ..., m\}$, denoted as
 $\{(x_0^i, y_0^i), ..., (x_n^i, y_n^i)\}$, the energy to minimize is
-given by (\ref{eq:sfm}).
+given by
 
 \begin{equation}
     \label{eq:sfm}
-    \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
+    E = \sum_{i=0}^{m} \sum_{j=0}^{n}
+    \rho(
+    \begin{pmatrix}
+        x_i^j\\
+        y_i^j
+    \end{pmatrix}
+    -
+    \pi_j
+    \begin{pmatrix}
+        x_i^0 d_0\\
+        y_i^0 d_0\\
+        d_0
+    \end{pmatrix}
+    )
 \end{equation}
 
+where $\pi_i$ indicates the projection of a point in $\mathbb{R}^3$ onto
+the projection plane of the $i$th camera and
+$\rho$ is the Huber loss function, \cite{huber1964robust}, applied component-wise
+to the projection residual vector.  Note that the use of the robust Huber loss
+function is critical to reduce sensitivity to outliers.
+
+The remaining secondary images are added to the system one-by-one
+by first estimating their pose via a RANSAC-like procedure.
+Three correspondences with existing depth estimates are randomly selected,
+and then the camera pose, defined by translation and a rotation quaternion,
+which reduces the energy given in (\ref{eq:sfm}) using a squared loss-function
+in place of the Huber loss function is determined using the levenberg-marquardt
+solver of \cite{ceres-solver}.  Finally, the pose with the minimum global
+energy, computed over all correspondences, is selected and refined,
+again using levenberg-marquardt to minimize the energy (\ref{eq:sfm}) while
+keeping depth values fixed.  
+One pose is estimated, additional correspondence points are triangulated,
+and the sparse bundle-adjustment procedure is performed again to refine
+the system.  Figure~\ref{fig:initial_depth} shows the resulting sparse depth
+samples recovered for an image sequence.
+
 % TODO show image of depth reconstruction samples
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=3in]{images/backpack}
+  \caption{The primary image from a sequence of images.}
+  \includegraphics[width=3in]{images/initial_depth}
+  \caption{Sparse depth estimates resulting from structure-from-motion. Brighter
+  dots indicate greater distance from the camera.}
+  \label{fig:initial_depth}
+\end{figure}
 
 \subsection{Depth Reconstruction}
 
@@ -199,8 +246,19 @@ To get a more dense set of depth samples additional KLT feature
 correspondences are matched using the same procedure as before.
 In the results displayed below, 20 thousand points are used.
 Instead of adding these to the structure-from-motion problem
-outlined above, which would result in a much-slower.
+outlined above, which would result in a slower process
+which would also be more error-prone due to the lower-quality
+feature points and increased number of outliers, a probabilistic
+approach is used to merge candidate depth samples
+to solve for a plausible piecewise-planar depth map.
+
 % Delaunay triangulation
+
+% Pairwise cost
+
+% QPBO Merging
+
+% Smoothing
 
 \subsection{Rendering}
 
