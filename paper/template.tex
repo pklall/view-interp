@@ -349,6 +349,21 @@ described by \cite{boykov2001fast}.
     \right)
 \end{equation}
 
+Note that to compensate for the existance of feature points
+for which no correct depth estimate exists from any
+secondary image, a final fusion step is performed
+using the median depth of adjacent triangles with
+the greatest color similarity. The resulting depth
+assignment can be seen in Figure~\ref{fig:initial_triangle_depth}.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=3in]{images/initial_triangle_depth}
+  \caption{Result of QPBO-based depth fusion.  Brighter 
+  values indicate greater distance from the camera.}
+  \label{fig:initial_triangle_depth}
+\end{figure}
+
 % Smoothing
 
 \subsection{Rendering}
@@ -369,7 +384,6 @@ reconstruction of a planar representation of dense depth maps from multiple imag
 with an application to image-based rendering.
 
 % TODO
-
 
 \bibliographystyle{acmsiggraph}
 \bibliography{template}
