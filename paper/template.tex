@@ -205,7 +205,7 @@ given by
 \begin{equation}
     \label{eq:sfm}
     E = \sum_{i=0}^{m} \sum_{j=0}^{n}
-    \rho(
+    \rho \left(
     \begin{pmatrix}
         x_i^j\\
         y_i^j
@@ -217,7 +217,7 @@ given by
         y_i^0 d_0\\
         d_0
     \end{pmatrix}
-    )
+    \right)
 \end{equation}
 
 where $\pi_i$ indicates the projection of a point in $\mathbb{R}^3$ onto
@@ -273,11 +273,47 @@ to solve for a plausible piecewise-planar depth map.
   \caption{Delaunay triangulation of semi-dense feature points visualized
       by filling triangles with their average pixel intensity.}
   \label{fig:delaunay}
+  \includegraphics[width=3in]{images/delaunay_edges}
+  \caption{Triangle segment edge weights depicted with brighter lines
+  indicating greater edge weight.  Noteice the lack of edge weights
+  between triangular segments with different colors.}
+  \label{fig:delaunay_edges}
 \end{figure}
 
-Figure~\ref{fig:delaunay} depicts the resulting delaunay triangulation.
+To begin, a delaunay triangulation is computed from the dense KLT samples
+for the primary image in the sequence.
+Figure~\ref{fig:delaunay} depicts one such resulting delaunay triangulation.
+Note that feature points tend to lie along image edges.  Thus, the
+delaunay triangulation provides a compact representation similar
+to that provided by more computationally-expensive and irregular
+superpixelization methods.
 
-% Delaunay triangulation
+An undirected, weighted graph of adjacent triangles,
+$G_{tri} = (V_{tri}, E_{tri})$, is then constructed
+where the pairwise weight of adjacent triangles, $W(i, j)$, is determined by
+
+\begin{equation}
+    W(i, j) = \exp \left(
+        \dfrac{-(\beta(C_i, C_j))^2}
+        {
+            \left(
+                \frac{
+                    (\sum_{(a, b) \in E_{tri}} \beta(C_a, C_b)^2)
+                }
+                {
+                    |E_{tri}| - 1
+                }
+            \right)
+        }
+    \right)
+\end{equation}
+
+where $\beta$ is the Bhattacharyya distance and $C_x$ is a trivariate normal
+distribution of pixel color, in the Lab color space, of pixels in triangle $x$,
+estimated assuming independence between color channels.
+
+Figure~\ref{fig:delaunay_edges} depicts the intensity of edge weights for
+the triangle graph constructed for one image.
 
 % Pairwise cost
 
@@ -287,19 +323,12 @@ Figure~\ref{fig:delaunay} depicts the resulting delaunay triangulation.
 
 \subsection{Rendering}
 
-% \begin{figure}[ht]
-  % \centering
-  % % \includegraphics[width=1.5in]{images/samplefigure}
-  % \includegraphics[width=3in]{images/backpack}
-  % \caption{Sample illustration.}
-% \end{figure}
-
 
 \section{Results}
 
 % TODO show rendered images
 
-% Talk about results.
+% Talk about rendered images
 
 % Also talk about limitations.
 
