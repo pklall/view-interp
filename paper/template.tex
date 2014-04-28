@@ -169,8 +169,22 @@ singular-value-decomposition and the method of \cite{hartley2003multiple}.
 This pose can only be determined up to an ambiguity of four candidate poses,
 so a simple voting procedure is used whereby the selected candidate pose is
 that which maximizes the number of tracked points which, when triangulated,
-are in front of both cameras.  Given a candidate relative pose, triangulation
-is performed according to the method discussed in \cite{hartley1997triangulation}.
+are in front of both cameras.  Triangulation is performed according to the
+method discussed in \cite{hartley1997triangulation}.
+
+Next, the system involving sparse triangulated points and the secondary
+image's relative camera pose is optimized using the sparse-bundle-adjustment
+framework of \cite{ceres-solver}.  Specifically, given a set of depth values,
+$\{d_0, ..., d_n\}$, corresponding to keypoints with observations in the
+primary image, $\{(x_0^0, y_0^0), ..., (x_n^0, y_n^0)\}$, and observations
+in a secondary image, with index $i$, denoted as
+$\{(x_0^i, y_0^i), ..., (x_n^i, y_n^i)\}$, the energy to minimize is
+given by (\ref{eq:sfm}).
+
+\begin{equation}
+    \label{eq:sfm}
+    \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
+\end{equation}
 
 \subsection{Depth Reconstruction}
 
