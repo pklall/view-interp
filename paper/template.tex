@@ -240,7 +240,6 @@ and the sparse bundle-adjustment procedure is performed again to refine
 the system.  Figure~\ref{fig:initial_depth} shows the resulting sparse depth
 samples recovered for an image sequence.
 
-% TODO show image of depth reconstruction samples
 \begin{figure}[ht]
   \centering
   \includegraphics[width=3in]{images/backpack}
@@ -311,9 +310,44 @@ where $\beta$ is the Bhattacharyya distance \cite{bhattacharyya1946measure}
 and $C_x$ is a trivariate normal distribution of pixel color, in the Lab color
 space, of pixels in triangle $x$, estimated assuming independence between color
 channels. Figure~\ref{fig:delaunay_edges} depicts the intensity of edge weights
-for the triangle graph constructed for one image.  
+for the triangle graph constructed for one image.
 
-% QPBO Merging
+Given this delaunay triangulation and weighted edge graph, the system
+then assigns a depth value to each triangle using a probabilistic model.
+A markov random field is formulated consisting of a hidden state
+for each triangle which may take, as possible values, any of the depth
+estimates at each of the three corresponding vertices.
+The probability of a particular assignment of depths to triangles is
+defined to be the product of joint probabilities of adjacent triangles
+as follows
+
+\begin{equation}
+    \label{eq:mrf}
+    P(depth |G, W) = \frac{1}{Z} * \prod_{(i, j) \in E_{tri}}
+    \left(
+        e^{-|depth_i - depth_j| * W(i, j)}
+    \right)
+\end{equation}
+
+where $Z$ is a normalization constant.
+
+By taking the negative log of this expression
+and ignoring the constant normalization coefficient, the
+following energy function is derived, which is
+minimized using the method of Quadratic Pseudo-Boolean Optimization
+of \cite{rother2007optimizing} to iteratively fuse
+candidate depth estimates, proposed by triangulation
+using each secondary image, to the final solution
+in a procedure similar to the method of alpha-expansion
+described by \cite{boykov2001fast}.
+
+\begin{equation}
+    \label{eq:mrf}
+    P(depth |G, W) = \sum_{(i, j) \in E_{tri}}
+    \left(
+        |depth_i - depth_j| * W(i, j)
+    \right)
+\end{equation}
 
 % Smoothing
 
