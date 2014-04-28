@@ -83,6 +83,23 @@ unstructured, photographs and can recover dense depth maps with little
 processing time.  Furthermore, the recovered geometric representation need
 only be accurate enough to enable rendering of a visualization of the depth
 of the scene.
+
+Unlike other systems which solve for depth at each pixel,
+such as \cite{stuhmer2010real}, this system solves
+for a piecewise-planar depth map over a delaunay triangulation
+of semi-dense feature points.  Because the selected
+semi-dense feature points tend to be located on corners
+and gradients, it was found that the resulting triangulation
+produces a compact representation which preserves strong
+edges in the original image.  Unlike the superpixels
+used in similar research, such as \cite{chaurasia2013depth},
+the graph of adjacent segments is of uniform degree,
+and the resulting geometric proxy is much simpler to render on conventional
+rasterization hardware. Furthermore, it ensures a crack-free warp is
+achievable without the need to perform costly hole-filling operations.
+This is particularly useful for rendering applications which wish to
+run on modern mobile devices with limited hardware acceleration capabilities.
+
  
 % TODO
 % Shum and Kang \shortcite{shum2000review} presented a review of various image based
@@ -242,15 +259,23 @@ samples recovered for an image sequence.
 The previously-discussed structure-from-motion process recovers
 only a very sparse set of depth samples which is inadequate
 for the intended rendering application.
-To get a more dense set of depth samples additional KLT feature
+To compute a more dense set of depth samples, additional KLT feature
 correspondences are matched using the same procedure as before.
 In the results displayed below, 20 thousand points are used.
-Instead of adding these to the structure-from-motion problem
-outlined above, which would result in a slower process
-which would also be more error-prone due to the lower-quality
-feature points and increased number of outliers, a probabilistic
+Instead of adding these to the structure-from-motion problem,
+which would result in a slower process, a probabilistic
 approach is used to merge candidate depth samples
 to solve for a plausible piecewise-planar depth map.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=3in]{images/delaunay}
+  \caption{Delaunay triangulation of semi-dense feature points visualized
+      by filling triangles with their average pixel intensity.}
+  \label{fig:delaunay}
+\end{figure}
+
+Figure~\ref{fig:delaunay} depicts the resulting delaunay triangulation.
 
 % Delaunay triangulation
 
