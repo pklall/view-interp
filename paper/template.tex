@@ -95,31 +95,49 @@ of images captured by hand at roughly the same orientation, but at varying
 translational offset.  The system then reconstructs a depth map for the
 first image in the sequence, the primary image, based on the additional
 viewpoints provided by the rest of the images in the sequence,
-the secondary images.
+referred to as secondary images.
 To reconstruct depth, a structure-from-motion
 procedure is first employed to simultaneously estimate the depth of several
 sparse points in the scene as well as the pose of the camera
 for each secondary image relative to that of the camera in the primary image.
-Then, a more dense set of keypoints are used to triangulate the image
-and estimate a dense planar approximation of the depth map.
-Finally, a relief-like representation of the scene can be rendered
+Then, a more dense set of keypoints are used to 
+estimate a dense piecewise-planar approximation of the depth map
+via fusion of depth samples from the various secondary images using
+a probabilistic model.
+Finally, a relief-like representation of the scene geometry can be rendered
 with hardware-acceleration using OpenGL.
 
 
-\begin{equation}
- \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
-\end{equation}
-
-\begin{eqnarray}
-x & \ll & y_{1} + \cdots + y_{n} \\
-  & \leq & z
-\end{eqnarray}
-
-More stuff!
+% \begin{equation}
+% \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
+% \end{equation}
+% 
+% \begin{eqnarray}
+% x & \ll & y_{1} + \cdots + y_{n} \\
+% & \leq & z
+% \end{eqnarray}
 
 \section{Structure from Motion}
 
-This part outlines the structure from motion approach.
+Before a dense depth map can be recovered via multi-view stereo,
+camera parameters, namely translation and rotation, must be known.
+To estimate this, a structure from motion algorithm similar to that
+described in \cite{snavely2006photo} was implemented to
+simultaneously solve for the camera pose for each secondary image,
+relative to the primary image.
+Unlike \cite{snavely2006photo}, however, since we are concerned
+only with the depth of points relative to the primary image,
+points in the scene are assumed to be exactly colinear with
+their projection in the primary image.  Thus, instead of having
+to estimate three parameters, x, y and z for each point,
+only a single depth must be computed.  Furthermore, the use
+of a primary view also simplifies the handling of occlusion throughout
+the pipeline such that complicated pruning of occluded feature points
+is not necessary since we are only concerned with points which
+are visible in the primary image.
+
+
+
 % \begin{figure}[ht]
   % \centering
   % % \includegraphics[width=1.5in]{images/samplefigure}
