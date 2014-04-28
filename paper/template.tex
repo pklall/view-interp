@@ -10,10 +10,11 @@
 
 \documentclass[conference]{acmsiggraph}
 
-\TOGonlineid{45678}
+\TOGonlineid{0}
 \TOGvolume{0}
 \TOGnumber{0}
-\TOGarticleDOI{1111111.2222222}
+%\TOGarticleDOI{1111111.2222222}
+\TOGarticleDOI{}
 \TOGprojectURL{}
 \TOGvideoURL{}
 \TOGdataURL{}
@@ -66,13 +67,21 @@ Image-based rendering provides a practical solution to the task of creating
 3D models for rendering of complex scenes, particularly in the case of
 novice users who wish to quickly create a visualization of a real-world object.
 Rather than requiring users to explicitly create a three-dimensional model using
-sophisticated modeling software, an image-based rendering system may, for example, 
-enable users to render a scene constructed implicitly from a sequence of
+sophisticated, and often complicated, modeling software, an image-based rendering
+system can, for example, 
+enable users to render a scene constructed from a sequence of
 digital photographs taken by the user.  Thus, such a system can enable
 non-expert users to relatively-quickly capture and share a representation of
 a three-dimensional scene.
 
-This paper presents a 
+This paper presents a system for reconstructing approximate
+piecewise-planar depth-maps for image-based rendering of visualizations
+of three-dimensional scenes.  Unlike other image-based rendering systems,
+the goal of this work is to create a system which requires relatively few,
+unstructured, photographs and can recover dense depth maps with little
+processing time.  Furthermore, the recovered geometric representation need
+only be accurate enough to enable rendering of a visualization of the depth
+of the scene.
  
 Shum and Kang \shortcite{shum2000review} presented a review of various image based
 rendering techniques and showed that they can fall onto a spectrum defined
@@ -81,7 +90,21 @@ such as the Lumigraph \cite{gortler1996lumigraph} construct
 
 \section{Approach}
 
-Introduction to the approach.  In the following equation:
+The implemented system for depth reconstruction takes, as input, a sequence
+of images captured by hand at roughly the same orientation, but at varying
+translational offset.  The system then reconstructs a depth map for the
+first image in the sequence, the primary image, based on the additional
+viewpoints provided by the rest of the images in the sequence,
+the secondary images.
+To reconstruct depth, a structure-from-motion
+procedure is first employed to simultaneously estimate the depth of several
+sparse points in the scene as well as the pose of the camera
+for each secondary image relative to that of the camera in the primary image.
+Then, a more dense set of keypoints are used to triangulate the image
+and estimate a dense planar approximation of the depth map.
+Finally, a relief-like representation of the scene can be rendered
+with hardware-acceleration using OpenGL.
+
 
 \begin{equation}
  \sum_{j=1}^{z} j = \frac{z(z+1)}{2}
@@ -97,28 +120,12 @@ More stuff!
 \section{Structure from Motion}
 
 This part outlines the structure from motion approach.
-\begin{figure}[ht]
-  \centering
-  \includegraphics[width=1.5in]{images/samplefigure}
-  \caption{Sample illustration.}
-\end{figure}
-More explanation.  Blah blah blah
-
-Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
-eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad
-minim veniam, quis nostrud exercitation ullamco laboris nisi ut
-aliquip ex ea commodo consequat. Duis aute irure dolor in
-reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
-pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-culpa qui officia deserunt mollit anim id est laborum.
-
-Lorem ipsum dolor sit amet, consectetur adipisicing elit, sed do
-eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad
-minim veniam, quis nostrud exercitation ullamco laboris nisi ut
-aliquip ex ea commodo consequat. Duis aute irure dolor in
-reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla
-pariatur. Excepteur sint occaecat cupidatat non proident, sunt in
-culpa qui officia deserunt mollit anim id est laborum.
+% \begin{figure}[ht]
+  % \centering
+  % % \includegraphics[width=1.5in]{images/samplefigure}
+  % \includegraphics[width=3in]{images/backpack}
+  % \caption{Sample illustration.}
+% \end{figure}
 
 \section{Planar depth reconstruction}
 
