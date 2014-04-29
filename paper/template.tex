@@ -252,8 +252,6 @@ samples recovered for an image sequence.
 
 \subsection{Depth Reconstruction}
 
-% TODO show images of each step
-
 The previously-discussed structure-from-motion process recovers
 only a very sparse set of depth samples which is inadequate
 for the intended rendering application.
@@ -393,18 +391,26 @@ operation on a depth map.
 
 \subsection{Rendering}
 
+After the planar depth map is computed, a relief-like representation
+of the scene and its depth can be rendered.  Note that the system
+does not render the scene with its actual depth because a large
+depth range results in a model which is difficult to easily visualize.
+Instead, the depth is linearly mapped to a pre-determined depth range.
+The resulting triangular mesh is then rendered with OpenGL, textured
+with the primary image.
+Figure~\ref{fig:rendering} shows several rendered images resulting
+from this process.  Note that the entire process of constructing the
+mesh, starting with a set of 10 8-megapixel images, takes less
+than 20 seconds with an unoptimized, single-threaded implementation
+running on a 2.4 GHz Intel processor.
 
-% TODO show rendered images
-
-% Talk about rendered images
-
-% Also talk about limitations.
-
-\section{Conclusion}
+\section{Discussion}
 
 In this paper, I have described the implementation of a system for
 reconstruction of a planar representation of dense depth maps from multiple images
 with an application to image-based rendering.
+
+% TODO Also talk about limitations and future work
 
 \begin{figure}[ht]
   \centering
@@ -416,8 +422,6 @@ with an application to image-based rendering.
   \caption{Depth-based rendering from several different orientations.}
   \label{fig:rendering}
 \end{figure}
-
-% TODO
 
 \bibliographystyle{acmsiggraph}
 \bibliography{template}
