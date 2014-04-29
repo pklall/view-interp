@@ -77,7 +77,7 @@ rendering techniques and showed that they can fall onto a spectrum defined
 by the representation of their geometric proxy.  While some systems,
 such as the Lumigraph \cite{gortler1996lumigraph} allow rendering without
 any geometry at all, others use an explicitly-estimated geometrical model
-to render.  This work employes the latter approach.
+to render.  This work employs the latter approach.
 
 This paper presents a system for reconstructing approximate
 piecewise-planar depth-maps for image-based rendering of visualizations
@@ -105,7 +105,7 @@ This is particularly useful for rendering applications which wish to
 run on modern mobile devices with limited hardware acceleration capabilities.
 In addition, solving for the geometric proxy directly, as opposed to 
 reconstructing a dense depth map only to later simplify the proxy geometry
-before rendering, eliminates redundent computation of precise measurements
+before rendering, eliminates redundant computation of precise measurements
 only to be discarded.
 
 Finally, the system requires little processing time compared
@@ -145,7 +145,7 @@ simultaneously solve for the camera pose for each secondary image,
 relative to the primary image.
 Unlike \cite{snavely2006photo}, however, since we are concerned
 only with the depth of points relative to the primary image,
-points in the scene are assumed to be exactly colinear with
+points in the scene are assumed to be exactly co-linear with
 their projection in the primary image.  Thus, instead of having
 to estimate three parameters, x, y and z for each point,
 only a single depth must be computed.  Furthermore, the use
@@ -273,7 +273,7 @@ to solve for a plausible piecewise-planar depth map.
   \label{fig:delaunay}
   \includegraphics[width=3in]{images/delaunay_edges}
   \caption{Triangle segment edge weights depicted with brighter lines
-  indicating greater edge weight.  Noteice the lack of edge weights
+  indicating greater edge weight.  Notice the lack of edge weights
   between triangular segments with different colors.}
   \label{fig:delaunay_edges}
 \end{figure}
@@ -324,9 +324,7 @@ as follows
 \begin{equation}
     \label{eq:mrf}
     P(depth |G, W) = \frac{1}{Z} * \prod_{(i, j) \in E_{tri}}
-    \left(
         e^{-|depth_i - depth_j| * W(i, j)}
-    \right)
 \end{equation}
 
 where $Z$ is a normalization constant.
@@ -334,7 +332,7 @@ where $Z$ is a normalization constant.
 By taking the negative log of this expression
 and ignoring the constant normalization coefficient, the
 following energy function is derived, which is
-minimized using the method of Quadratic Pseudo-Boolean Optimization
+minimized using the method of Quadratic Pseudo-Boolean Optimization (QPBO)
 of \cite{rother2007optimizing} to iteratively fuse
 candidate depth estimates, proposed by triangulation
 using each secondary image, to the final solution
@@ -349,27 +347,52 @@ described by \cite{boykov2001fast}.
     \right)
 \end{equation}
 
-Note that to compensate for the existance of feature points
+Note that to compensate for the existence of feature points
 for which no correct depth estimate exists from any
 secondary image, a final fusion step is performed
 using the median depth of adjacent triangles with
 the greatest color similarity. The resulting depth
-assignment can be seen in Figure~\ref{fig:initial_triangle_depth}.
+assignment can be seen in Figure~\ref{fig:qpbo_triangle_depth}.
 
 \begin{figure}[ht]
   \centering
-  \includegraphics[width=3in]{images/initial_triangle_depth}
+  \includegraphics[width=3in]{images/qpbo_triangle_depth}
   \caption{Result of QPBO-based depth fusion.  Brighter 
   values indicate greater distance from the camera.}
-  \label{fig:initial_triangle_depth}
+  \label{fig:qpbo_triangle_depth}
+  \includegraphics[width=3in]{images/qpbo_smoothed_triangle_depth}
+  \caption{Result of edge-aware depth smoothing.  Brighter 
+  values indicate greater distance from the camera.}
+  \label{fig:smooth_triangle_depth}
 \end{figure}
 
 % Smoothing
+Finally, depth values are smoothed via an iterative edge-preserving
+operation using a weighted average of adjacent triangle values.
+That is to say that the next depth assigned to a particular triangle, $depth_i^{t+1}$,
+is computed from the current depth, $depth_i^t$, as
+
+\begin{equation}
+    \label{eq:smoothing}
+    depth_i^{t + 1} = \dfrac{
+        \sum_{j \in N(i)}
+        \left(
+            depth_j^{t} * W(i, j)
+        \right)
+    }
+    {
+        \sum_{(i, j) \in E_{tri}}
+            W(i, j)
+    }
+\end{equation}
+
+where $N(i)$ denotes the set of triangles neighboring triangle $i$.
+
+Figure~\ref{fig:smooth_triangle_depth} shows the result of this smoothing
+operation on a depth map.
 
 \subsection{Rendering}
 
-
-\section{Results}
 
 % TODO show rendered images
 
@@ -382,6 +405,17 @@ assignment can be seen in Figure~\ref{fig:initial_triangle_depth}.
 In this paper, I have described the implementation of a system for
 reconstruction of a planar representation of dense depth maps from multiple images
 with an application to image-based rendering.
+
+\begin{figure}[ht]
+  \centering
+  \includegraphics[width=2in]{images/r1}
+  \includegraphics[width=2in]{images/r2}
+  \includegraphics[width=2in]{images/r3}
+  \includegraphics[width=2in]{images/r4}
+  \includegraphics[width=2in]{images/r5}
+  \caption{Depth-based rendering from several different orientations.}
+  \label{fig:rendering}
+\end{figure}
 
 % TODO
 
