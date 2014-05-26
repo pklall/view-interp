@@ -404,21 +404,26 @@ mesh, starting with a set of 10 8-megapixel images, takes less
 than 20 seconds with an unoptimized, single-threaded implementation
 running on a 2.4 GHz Intel processor.
 
-\section{Discussion}
+\section{Conclusion}
 
 In this paper, I have described the implementation of a system for
 reconstruction of a planar representation of dense depth maps from multiple images
-with an application to image-based rendering.
-
-% TODO Also talk about limitations and future work
+with an application to image-based rendering.  The system
+uses a novel method of triangular segmentation to produce a compact
+representation suitable for image-based rendering applications.
+Although the system works for highly-textured scenes with little
+occlusion, future work could address problems posed by
+textureless as well as shiny, specular surfaces.  Finally,
+the system could be optimized to take advantage of modern
+graphics-processing units for a potentially real-time implementation.
 
 \begin{figure}[ht]
   \centering
-  \includegraphics[width=2in]{images/r1}
-  \includegraphics[width=2in]{images/r2}
-  \includegraphics[width=2in]{images/r3}
-  \includegraphics[width=2in]{images/r4}
-  \includegraphics[width=2in]{images/r5}
+  \includegraphics[width=2.5in]{images/r1}
+  \includegraphics[width=2.5in]{images/r2}
+  \includegraphics[width=2.5in]{images/r3}
+  \includegraphics[width=2.5in]{images/r4}
+  \includegraphics[width=2.5in]{images/r5}
   \caption{Depth-based rendering from several different orientations.}
   \label{fig:rendering}
 \end{figure}
