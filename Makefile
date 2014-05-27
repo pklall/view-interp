@@ -1,4 +1,4 @@
-MODULES   := cimg cvutil qpbo poly2tri main
+MODULES   := cimg main
 TARGET    := main
 
 # define DEBUG
